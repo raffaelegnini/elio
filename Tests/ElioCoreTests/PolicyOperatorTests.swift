@@ -20,3 +20,13 @@ import Testing
         #expect(PermissionPolicy.decide(tool: "Write", input: ["file_path": NSHomeDirectory() + "/Desktop/note.txt"], cwd: "/tmp") != .allow)
     }
 }
+
+@Suite struct PolicyPathTests {
+    @Test func newFileInsideSymlinkedDir() {
+        let dir = "/tmp/elio-policy-\(UUID().uuidString)"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        #expect(PermissionPolicy.decide(tool: "Write", input: ["file_path": "/private\(dir)/new.py"], cwd: dir) == .allow)
+        #expect(PermissionPolicy.decide(tool: "Write", input: ["file_path": "\(dir)/sub/new.py"], cwd: "/private\(dir)") == .allow)
+        #expect(PermissionPolicy.decide(tool: "Write", input: ["file_path": "/private/tmp/other.py"], cwd: dir) != .allow)
+    }
+}

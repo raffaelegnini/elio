@@ -96,11 +96,23 @@ public enum PermissionPolicy {
         return .allow
     }
 
+    /// realpath() of the deepest existing ancestor + the components that don't exist yet.
+    static func canonical(_ path: String) -> String {
+        var existing = path, rest: [String] = []
+        while !existing.isEmpty, existing != "/", !FileManager.default.fileExists(atPath: existing) {
+            rest.insert((existing as NSString).lastPathComponent, at: 0)
+            existing = (existing as NSString).deletingLastPathComponent
+        }
+        var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let base = realpath(existing, &buf) != nil ? String(cString: buf) : existing
+        return rest.reduce(base) { ($0 as NSString).appendingPathComponent($1) }
+    }
+
     private static func isInside(_ path: String, _ dir: String) -> Bool {
         guard !path.isEmpty, !dir.isEmpty else { return false }
-        // Symlinks resolved on both sides (/tmp → /private/tmp, ~/Desktop aliases).
-        let p = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: dir)).standardizedFileURL.resolvingSymlinksInPath().path
-        let d = URL(fileURLWithPath: dir).standardizedFileURL.resolvingSymlinksInPath().path
+        // Symlinks resolved on both sides (/tmp → /private/tmp), also for files that don't exist yet.
+        let p = canonical(URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: dir)).standardizedFileURL.path)
+        let d = canonical(URL(fileURLWithPath: dir).standardizedFileURL.path)
         return p == d || p.hasPrefix(d.hasSuffix("/") ? d : d + "/")
     }
 
