@@ -556,6 +556,13 @@ public final class VoiceLoop {
             }
             for sentence in splitter.push(msg.text ?? "") { speakReply(sentence) }
         case .done:
+            if msg.route == .local, (msg.text ?? "").isEmpty {
+                if replyStreaming { speaker.cancelStream(); replyStreaming = false }
+                if let i = turns.lastIndex(where: { $0.role == "elio" }), turns[i].text.isEmpty { turns.remove(at: i) }
+                currentRequestId = nil
+                state = .listening
+                return
+            }
             if msg.route == .local {
                 appendToReply(msg.text ?? "")
                 // Local replies are short and cached: drop the pre-opened stream.
@@ -594,6 +601,7 @@ public final class VoiceLoop {
             routineSpeaking = false
         case "brief", "recap":
             routineSpeaking = true
+            fadeOpening()  // the theme fades out under the briefing voice, not under anything else
         case "taskLog":
             if let entry = TaskLogEntry.fromJSON(msg.payload) {
                 var log = taskLogs[entry.taskId] ?? []
@@ -779,7 +787,7 @@ public final class VoiceLoop {
     }
 
     private func speakingChanged(_ speaking: Bool) {
-        if speaking { fadeOpening() } else { lastSpeechEnd = Date() }
+        if !speaking { lastSpeechEnd = Date() }
         if speaking {
             state = .speaking
             pipeline.speaking = true

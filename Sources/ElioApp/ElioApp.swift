@@ -116,7 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         self.loop = loop
         objectWillChange.send()
         loop.onIntegrationSetup = { [weak self] id in self?.showSettings(tab: .integrations, integration: id) }
-        loop.onRoutineStart = { [weak self] in self?.showDashboard() }
+        loop.onRoutineStart = { [weak self] in self?.showDashboard(forceFront: true) }
         loop.onCard = { card in CardWindows.shared.show(title: card.title, markdown: card.body) }
         loop.onSettingsChanged = { [weak self] cfg in
             Brand.shared.apply(cfg)
@@ -207,7 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         NSApp.activate()
     }
 
-    func showDashboard(review: DiffPayload? = nil) {
+    func showDashboard(review: DiffPayload? = nil, forceFront: Bool = false) {
         guard let loop else { return }
         if let review { dashboardState.reviewing = review }
         if dashboard == nil {
@@ -225,6 +225,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
         dashboard?.makeKeyAndOrderFront(nil)
         NSApp.activate()
+        // macOS won't let a background app take focus; for briefing/recap show it on top anyway.
+        if forceFront { dashboard?.orderFrontRegardless() }
     }
 
     /// Shows the HUD while Elio is engaged, hides it a few seconds after.

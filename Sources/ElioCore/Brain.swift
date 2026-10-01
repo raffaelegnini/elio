@@ -216,13 +216,13 @@ public actor Brain {
             return Replies.stopped(m.lang)
         case .brief:
             Task { await routines.runBrief() }
-            return m.lang == .it ? "Certo, \(config.addressAs), le preparo subito il briefing." : "Of course. Preparing your briefing."
+            return ""  // no spoken reply: the opening theme starts right away
         case .thanks:
             return m.lang == .it ? ["Prego, \(config.addressAs).", "Si figuri, \(config.addressAs).", "È un piacere, \(config.addressAs)."].randomElement()!
                                  : "You're welcome."
         case .recap:
             Task { await routines.runRecap() }
-            return "Certo, \(config.addressAs), le faccio subito il recap della giornata."
+            return ""
         case .done:
             // Only a reminder fired in the last 30 minutes; otherwise it's a normal sentence for Claude.
             guard let text = await memory.acknowledgeLastReminder(within: 1800) else { return nil }
