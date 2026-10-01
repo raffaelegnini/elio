@@ -115,12 +115,71 @@ public struct TaskInfo: Codable, Sendable, Identifiable {
     public var summary: String?
     public var startedAt: Date
     public var endedAt: Date?
+    /// "code" (project agent), "mac" (operator on the whole Mac), "squad" (member of a team).
+    public var kind: String?
+    /// Squad this agent belongs to, and its name/role inside it.
+    public var squad: String?
+    public var member: String?
+    public var role: String?
+    /// Token usage and API-equivalent cost reported by Claude Code.
+    public var tokensIn: Int?
+    public var tokensOut: Int?
+    public var costUSD: Double?
+    public var sessionId: String?
+    /// Last thing the agent said (for the dashboard).
+    public var lastMessage: String?
 
     public init(id: String, title: String, project: String?, status: Status, steps: [String] = [],
                 summary: String? = nil, startedAt: Date = Date(), endedAt: Date? = nil) {
         self.id = id; self.title = title; self.project = project; self.status = status
         self.steps = steps; self.summary = summary; self.startedAt = startedAt; self.endedAt = endedAt
     }
+
+    public var isActive: Bool { status == .running || status == .waitingConfirmation || status == .paused }
+}
+
+/// A message on a squad's board (agent → agent, agent → Elio, Elio → agent).
+public struct SquadMessage: Codable, Sendable, Identifiable {
+    public var id: Int
+    public var squad: String
+    public var from: String
+    public var to: String
+    public var text: String
+    public var at: Date
+
+    public init(id: Int, squad: String, from: String, to: String, text: String, at: Date = Date()) {
+        self.id = id; self.squad = squad; self.from = from; self.to = to; self.text = text; self.at = at
+    }
+}
+
+/// A team of agents working on one goal, coordinated by Elio.
+public struct SquadInfo: Codable, Sendable, Identifiable {
+    public var id: String
+    public var goal: String
+    public var project: String
+    public var startedAt: Date
+    public var endedAt: Date?
+
+    public init(id: String, goal: String, project: String, startedAt: Date = Date()) {
+        self.id = id; self.goal = goal; self.project = project; self.startedAt = startedAt
+    }
+}
+
+/// Claude token usage on this Mac (all Claude Code sessions, Elio's included).
+public struct UsageSnapshot: Codable, Sendable {
+    public struct Bucket: Codable, Sendable {
+        public var input = 0, output = 0, cacheRead = 0, cacheWrite = 0, messages = 0
+        public init() {}
+        public var total: Int { input + output + cacheRead + cacheWrite }
+    }
+    public var today = Bucket()
+    public var window5h = Bucket()
+    public var elioToday = Bucket()
+    /// When the oldest message of the current 5-hour window was sent (the window resets 5 h later).
+    public var windowStart: Date?
+    public var agentsCostUSD: Double = 0
+    public var updatedAt = Date()
+    public init() {}
 }
 
 /// One line of an agent's live activity (thinking, command, output, file edit…).

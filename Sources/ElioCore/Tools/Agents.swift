@@ -84,7 +84,10 @@ public enum ApprovalTool {
         let input = args["input"] as? [String: Any] ?? [:]
         // Agents work in their project; the conversation's free zone is the work folder.
         let cwd = await ctx.tasks.cwd(for: ctx.taskId) ?? ElioPaths.outputDir.path
-        let decision = PermissionPolicy.decide(tool: tool, input: input, cwd: cwd)
+        // The conversation itself and "mac" agents act on the whole Mac for the user.
+        let kind = await ctx.tasks.kind(for: ctx.taskId)
+        let decision = PermissionPolicy.decide(tool: tool, input: input, cwd: cwd,
+                                               onMac: ctx.taskId == nil || kind == "mac")
 
         let allow: Bool
         switch decision {
@@ -209,6 +212,7 @@ public actor TaskRunner {
 
     public func cwd(for id: String?) -> String? { id.flatMap { tasks[$0]?.cwd } }
     public func title(for id: String?) -> String? { id.flatMap { tasks[$0]?.info.title } }
+    public func kind(for id: String?) -> String? { id.flatMap { tasks[$0]?.info.kind } }
 
     public func all() -> [TaskInfo] {
         tasks.values.map(\.info).sorted { $0.startedAt < $1.startedAt } + finished.suffix(10)
@@ -220,22 +224,39 @@ public actor TaskRunner {
         publish(id)
     }
 
-    public func start(title: String, prompt: String, cwd: String) throws -> TaskInfo {
+    public enum Kind: String, Sendable { case code, mac, squad }
+
+    public func start(title: String, prompt: String, cwd: String, kind: Kind = .code,
+                      squad: String? = nil, member: String? = nil, role: String? = nil,
+                      resume sessionId: String? = nil) throws -> TaskInfo {
         let id = String(UUID().uuidString.prefix(8)).lowercased()
         let p = Process()
         p.executableURL = URL(fileURLWithPath: config.claudePath)
         p.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        p.arguments = [
-            "-p", Self.agentPrompt(title: title, prompt: prompt, cwd: cwd),
+        let fullPrompt: String
+        if sessionId != nil {
+            fullPrompt = prompt
+        } else {
+            switch kind {
+            case .code: fullPrompt = Self.agentPrompt(title: title, prompt: prompt, cwd: cwd)
+            case .mac: fullPrompt = Self.macPrompt(title: title, prompt: prompt)
+            case .squad: fullPrompt = Self.memberPrompt(goal: squads[squad ?? ""]?.goal ?? title, name: member ?? "agente",
+                                                         role: role ?? "", task: prompt, cwd: cwd,
+                                                         team: members(of: squad ?? "").filter { $0.member != member })
+            }
+        }
+        // Background agents never start other agents or squads (only Elio coordinates).
+        let forbidden = ["mcp__elio__start_task", "mcp__elio__mac_task", "mcp__elio__squad_start", "mcp__elio__schedule_task"]
+        p.arguments = ["-p", fullPrompt] + (sessionId.map { ["--resume", $0] } ?? []) + [
             "--output-format", "stream-json", "--verbose",
             "--model", config.agentModel,
             "--setting-sources", "project,local",
             "--strict-mcp-config", "--mcp-config", mcpConfig,
             "--permission-prompt-tool", "mcp__elio__approve",
-            "--allowedTools", "Read", "Grep", "Glob", "TodoWrite",
-        ] + (config.browserAutonomy ? ["--chrome"] : []) + [
-            "--disallowedTools", "mcp__elio__start_task",
-        ]
+            "--allowedTools", "Read", "Grep", "Glob", "TodoWrite", "WebSearch", "WebFetch",
+            "mcp__elio__report_progress", "mcp__elio__squad_post", "mcp__elio__squad_inbox",
+        ] + (kind == .mac ? ["--add-dir", FileManager.default.homeDirectoryForCurrentUser.path] : [])
+          + (config.browserAutonomy ? ["--chrome"] : []) + ["--disallowedTools"] + forbidden
         var env = ProcessInfo.processInfo.environment
         env["ELIO_TASK_ID"] = id
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -252,7 +273,16 @@ public actor TaskRunner {
         }
         try p.run()
 
-        let info = TaskInfo(id: id, title: title, project: (cwd as NSString).lastPathComponent, status: .running)
+        var info = TaskInfo(id: id, title: title, project: (cwd as NSString).lastPathComponent, status: .running)
+        info.kind = kind.rawValue
+        info.squad = squad
+        info.member = member
+        info.role = role
+        if let sessionId, let old = finished.last(where: { $0.sessionId == sessionId }) {
+            // A resumed member keeps its identity and running totals.
+            info.tokensIn = old.tokensIn; info.tokensOut = old.tokensOut; info.costUSD = old.costUSD
+            finished.removeAll { $0.sessionId == sessionId }
+        }
         tasks[id] = Running(info: info, cwd: cwd, process: p)
         publish(id)
 
@@ -294,13 +324,29 @@ public actor TaskRunner {
         guard let data = line.data(using: .utf8),
               let ev = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         switch ev["type"] as? String {
+        case "system":
+            if let sid = ev["session_id"] as? String { tasks[id]?.info.sessionId = sid }
         case "assistant":
+            if let message = ev["message"] as? [String: Any], let usage = message["usage"] as? [String: Any],
+               let mid = message["id"] as? String {
+                var calls = usageByCall[id] ?? [:]
+                calls[mid] = Self.tokens(usage)
+                usageByCall[id] = calls
+                let base = baseUsage[id] ?? (tasks[id]?.info.tokensIn ?? 0, tasks[id]?.info.tokensOut ?? 0)
+                baseUsage[id] = base
+                tasks[id]?.info.tokensIn = base.0 + calls.values.reduce(0) { $0 + $1.0 }
+                tasks[id]?.info.tokensOut = base.1 + calls.values.reduce(0) { $0 + $1.1 }
+            }
             let content = ((ev["message"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
             for block in content {
                 switch block["type"] as? String {
                 case "text":
                     let text = (block["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !text.isEmpty { logEntry(TaskLogEntry(taskId: id, kind: .say, title: String(text.prefix(1200)))) }
+                    if !text.isEmpty {
+                        tasks[id]?.info.lastMessage = String(text.prefix(300))
+                        logEntry(TaskLogEntry(taskId: id, kind: .say, title: String(text.prefix(1200))))
+                        publish(id)
+                    }
                 case "tool_use":
                     let name = block["name"] as? String ?? "tool"
                     let input = block["input"] as? [String: Any] ?? [:]
@@ -327,12 +373,88 @@ public actor TaskRunner {
             let text = ev["result"] as? String ?? ""
             tasks[id]?.info.summary = text
             if ev["is_error"] as? Bool == true { tasks[id]?.info.status = .failed }
+            if let cost = ev["total_cost_usd"] as? Double { tasks[id]?.info.costUSD = (tasks[id]?.info.costUSD ?? 0) + cost }
+            if let sid = ev["session_id"] as? String { tasks[id]?.info.sessionId = sid }
         default:
             break
         }
     }
 
     private var lastLogKind: [String: TaskLogEntry.Kind] = [:]
+    private var usageByCall: [String: [String: (Int, Int)]] = [:]
+    private var baseUsage: [String: (Int, Int)] = [:]
+
+    /// (input incl. cache, output) tokens of one API call.
+    static func tokens(_ u: [String: Any]) -> (Int, Int) {
+        let i = (u["input_tokens"] as? Int ?? 0) + (u["cache_read_input_tokens"] as? Int ?? 0)
+            + (u["cache_creation_input_tokens"] as? Int ?? 0)
+        return (i, u["output_tokens"] as? Int ?? 0)
+    }
+
+    public func agentsCost() -> Double {
+        (tasks.values.map(\.info) + finished).compactMap(\.costUSD).reduce(0, +)
+    }
+
+    // MARK: Squads
+
+    private var squads: [String: SquadInfo] = [:]
+    private var board: [SquadMessage] = []
+    private var cursors: [String: Int] = [:]   // "squad/member" → last message id read
+
+    public func createSquad(goal: String, project: String) -> SquadInfo {
+        let s = SquadInfo(id: String(UUID().uuidString.prefix(6)).lowercased(), goal: goal, project: project)
+        squads[s.id] = s
+        broadcast?(ServerMessage(type: .event, text: goal, kind: "squad", payload: s.jsonString()))
+        return s
+    }
+
+    public func squad(_ id: String) -> SquadInfo? { squads[id] }
+    public func allSquads() -> [SquadInfo] { squads.values.sorted { $0.startedAt < $1.startedAt } }
+
+    public func members(of squad: String) -> [TaskInfo] {
+        (tasks.values.map(\.info) + finished).filter { $0.squad == squad }.sorted { $0.startedAt < $1.startedAt }
+    }
+
+    /// Squad and member name of a running agent (for squad_post / squad_inbox).
+    public func identity(of taskId: String?) -> (squad: String, member: String)? {
+        guard let taskId, let info = tasks[taskId]?.info, let s = info.squad, let m = info.member else { return nil }
+        return (s, m)
+    }
+
+    @discardableResult
+    public func post(squad: String, from: String, to: String, text: String) -> SquadMessage {
+        let m = SquadMessage(id: (board.last?.id ?? 0) + 1, squad: squad, from: from, to: to, text: text)
+        board.append(m)
+        if board.count > 500 { board.removeFirst(board.count - 500) }
+        broadcast?(ServerMessage(type: .event, text: text, kind: "squadMessage", payload: m.jsonString()))
+        return m
+    }
+
+    /// Unread messages for a member (addressed to it or to everyone).
+    public func inbox(squad: String, member: String) -> [SquadMessage] {
+        let key = "\(squad)/\(member)"
+        let seen = cursors[key] ?? 0
+        let new = board.filter { $0.squad == squad && $0.id > seen && $0.from != member && ($0.to == member || $0.to == "tutti") }
+        cursors[key] = board.last?.id ?? seen
+        return new
+    }
+
+    public func messages(squad: String) -> [SquadMessage] { board.filter { $0.squad == squad } }
+
+    public func stopSquad(_ id: String) {
+        for t in tasks.values where t.info.squad == id { _ = cancel(t.info.id) }
+        squads[id]?.endedAt = Date()
+    }
+
+    /// Wakes a finished member with a new message (same Claude session, same memory).
+    public func resume(squad: String, member: String, message: String) throws -> Bool {
+        if tasks.values.contains(where: { $0.info.squad == squad && $0.info.member == member }) { return false }
+        guard let old = finished.last(where: { $0.squad == squad && $0.member == member }), let sid = old.sessionId,
+              let cwd = squads[squad]?.project else { return false }
+        _ = try start(title: old.title, prompt: message, cwd: cwd, kind: .squad, squad: squad, member: member,
+                      role: old.role, resume: sid)
+        return true
+    }
 
     private func logEntry(_ entry: TaskLogEntry) {
         lastLogKind[entry.taskId] = entry.kind
@@ -389,6 +511,19 @@ public actor TaskRunner {
         let record = t.info
         if let memory { Task { await memory.recordTask(record) } }
 
+        if let squad = t.info.squad {
+            post(squad: squad, from: t.info.member ?? "agente", to: "elio",
+                 text: "Ho finito (\(t.info.status.rawValue)): \(String((t.info.summary ?? "").prefix(600)))")
+            if !tasks.values.contains(where: { $0.info.squad == squad }) {
+                squads[squad]?.endedAt = Date()
+                let all = members(of: squad)
+                let ok = all.filter { $0.status == .done }.count
+                let text = "La squadra ha finito \"\(squads[squad]?.goal ?? "")\": \(ok) su \(all.count) agenti hanno completato il lavoro."
+                broadcast?(ServerMessage(type: .event, text: text, lang: .it, kind: "squadDone",
+                                         payload: squads[squad]?.jsonString(), speak: true))
+            }
+            return
+        }
         let summary = Self.spokenSummary(t.info.summary)
         let text: String
         switch t.info.status {
@@ -399,7 +534,7 @@ public actor TaskRunner {
         broadcast?(ServerMessage(type: .event, text: text, lang: .it, kind: "taskDone", payload: t.info.jsonString(), speak: true))
 
         // Changes are reviewed in the app, never pushed automatically.
-        if t.info.status == .done, let payload = try? ProjectTools.diff(repo: t.cwd, base: nil, head: nil), !payload.diff.isEmpty {
+        if t.info.kind != "mac", t.info.status == .done, let payload = try? ProjectTools.diff(repo: t.cwd, base: nil, head: nil), !payload.diff.isEmpty {
             broadcast?(ServerMessage(type: .event, text: "Diff \(payload.title)", kind: "diff", payload: payload.jsonString()))
         }
     }

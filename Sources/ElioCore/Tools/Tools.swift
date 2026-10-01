@@ -106,6 +106,25 @@ public enum ToolRegistry {
         SlackTools.send,
         SlackTools.mentions,
         SlackTools.dms,
+        SquadTools.macTask,
+        SquadTools.progress,
+        SquadTools.start,
+        SquadTools.send,
+        SquadTools.status,
+        SquadTools.stop,
+        SquadTools.post,
+        SquadTools.inbox,
+        SquadTools.usage,
+        SpotifyTools.control,
+        SpotifyTools.play,
+        SpotifyTools.setup,
+        SpotifyTools.login,
+        DesktopTools.context,
+        DesktopTools.screenshot,
+        DesktopTools.typeText,
+        DesktopTools.arrange,
+        DesktopTools.find,
+        DesktopTools.clipboard,
     ]
 
     public static func listingJSON() -> String {
@@ -127,7 +146,9 @@ public enum ToolRegistry {
         case "ask_user": 1560
         case "slack_clock_in", "slack_send", "integration_activate": 150   // waits for the user's confirmation
         case "slack_mentions", "slack_dms": 45
-        case "start_task": 60
+        case "start_task", "mac_task", "squad_start", "squad_send": 60
+        case "spotify_login": 150
+        case "spotify_play": 30
         default: 20
         }
         let box = ArgsBox(args)

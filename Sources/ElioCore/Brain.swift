@@ -48,6 +48,11 @@ public actor Brain {
         do { try await claude.warmUp() } catch { log("claude warm-up failed: \(error)") }
         await routines.start(brain: self)
         await sync.start()
+        let tasks = self.tasks
+        await UsageMeter.shared.setAgentsCost { await tasks.agentsCost() }
+        await UsageMeter.shared.start(every: 60) { snap in
+            send(ServerMessage(type: .event, kind: "usage", payload: snap.jsonString()))
+        }
     }
 
     /// Runs a proactive prompt through the conversation session and speaks the result.

@@ -9,15 +9,22 @@ public enum PermissionPolicy {
         case confirm(ConfirmRequest.Risk)
     }
 
-    public static func decide(tool: String, input: [String: Any], cwd: String) -> Decision {
+    /// `operator`: Elio acting on the whole Mac for the user (moving files, settings, debugging).
+    /// Everything runs freely except what is destructive, outward-facing or sends data out.
+    public static func decide(tool: String, input: [String: Any], cwd: String, onMac: Bool = false) -> Decision {
         switch tool {
         case "Read", "Grep", "Glob", "LS", "TodoWrite", "WebSearch", "WebFetch", "NotebookRead":
             return .allow
         case "Edit", "Write", "MultiEdit", "NotebookEdit":
             let path = (input["file_path"] as? String) ?? (input["notebook_path"] as? String) ?? ""
+            if onMac, isInside(path, FileManager.default.homeDirectoryForCurrentUser.path),
+               !isInside(path, FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh").path) {
+                return .allow
+            }
             return isInside(path, cwd) ? .allow : .confirm(.normal)
         case "Bash":
-            return decideBash((input["command"] as? String) ?? "")
+            let command = (input["command"] as? String) ?? ""
+            return onMac ? decideOperatorBash(command) : decideBash(command)
         default:
             if tool.hasPrefix("mcp__elio__") { return .allow }
             // The user asked Elio to drive their browser on its own (Settings → Autonomia).
@@ -63,6 +70,28 @@ public enum PermissionPolicy {
             return activeSafe.contains { part.range(of: $0, options: .regularExpression) != nil }
         }
         return allSafe ? .allow : .confirm(.normal)
+    }
+
+    /// Operator mode: no safe-list, but deletions/sudo/push/messages stay "dangerous" and anything
+    /// that talks to other machines or rewrites credentials needs an OK.
+    public static func decideOperatorBash(_ command: String) -> Decision {
+        let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cmd.isEmpty { return .confirm(.normal) }
+        if dangerous.contains(where: { cmd.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }) {
+            return .confirm(.dangerous)
+        }
+        let outward = [
+            #"\b(curl|wget|nc|ncat|ssh|scp|sftp|rsync|ftp|telnet)\b"#,
+            #"\b(security)\s+(delete|add|import|set)"#,
+            #"\.ssh/|\.aws/|\.gnupg/|Keychains/"#,
+            #"\bmv\s+(-f\s+)?\S+\s+/dev/null"#,
+            #"\b(launchctl)\s+(unload|remove|bootout)\b"#,
+            #"\bcsrutil\b|\bnvram\b|\bfdesetup\b|\bdiskutil\s+(erase|partition|unmount)"#,
+        ]
+        if outward.contains(where: { cmd.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }) {
+            return .confirm(.normal)
+        }
+        return .allow
     }
 
     private static func isInside(_ path: String, _ dir: String) -> Bool {
