@@ -8,7 +8,7 @@
 | Router (Apple FM) | structured `Decision{route, ack}` | 0.7–2.0s, 8/9 correct, acks low quality / invent facts |
 | Router (Apple FM) | route-only enum, prewarm, greedy | ~0.4s, 8/12 correct (claude vs agent confusion) |
 | STT | SpeechAnalyzer `it_IT`, on-device | 5.2s audio → final text in 0.5s, first partial 0.31s, near-perfect |
-| TTS | ElevenLabs Flash v2.5 stream | pending (needs API key) |
+| TTS | ElevenLabs Flash/Turbo v2.5 stream, voices Daniel/George | **TTFB ~0.35–0.4s** warm (1.1s cold connection), 94 chars |
 
 ## Decisions
 - Claude Sonnet warm session = conversational brain. Process kept alive by daemon, respawned on crash.
@@ -17,3 +17,10 @@
 - Agent escalation decided by Claude itself (tool `start_background_task`), not by local router.
 - Acks = pre-generated cached audio clips chosen by route, not generated text.
 - `--setting-sources project` keeps user hooks/plugins out of Jarvis's Claude session.
+
+## Estimated voice round-trip
+end of speech → STT final ~0.3s → Claude TTFT ~0.85s → first sentence buffered → TTS TTFB ~0.4s ≈ **1.6–2s** to first audio.
+Keep one HTTP/WebSocket connection to ElevenLabs warm to avoid ~0.7s cold penalty.
+
+## Secrets
+ElevenLabs key in macOS Keychain: service `jarvis-elevenlabs`, account `jarvis`.
