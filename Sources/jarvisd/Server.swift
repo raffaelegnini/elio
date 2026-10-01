@@ -1,0 +1,97 @@
+import Foundation
+import JarvisCore
+import Network
+
+/// Local WebSocket server on 127.0.0.1. Clients must send `X-Jarvis-Token`;
+/// requests carrying an `Origin` header (i.e. from a browser page) are rejected.
+final class Server: @unchecked Sendable {
+    private let brain: Brain
+    private let token: String
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "jarvis.server")
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    init(brain: Brain, token: String, port: UInt16) throws {
+        self.brain = brain
+        self.token = token
+
+        let ws = NWProtocolWebSocket.Options()
+        ws.autoReplyPing = true
+        ws.setClientRequestHandler(queue) { [token] _, headers in
+            let lower = Dictionary(headers.map { ($0.name.lowercased(), $0.value) }, uniquingKeysWith: { a, _ in a })
+            let authorized = lower["x-jarvis-token"] == token && lower["origin"] == nil
+            return NWProtocolWebSocket.Response(status: authorized ? .accept : .reject, subprotocol: nil)
+        }
+        let params = NWParameters.tcp
+        params.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
+        params.requiredInterfaceType = .loopback
+        params.allowLocalEndpointReuse = true
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else { throw JarvisError.database("bad port") }
+        listener = try NWListener(using: params, on: nwPort)
+    }
+
+    func start() {
+        listener.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
+        listener.stateUpdateHandler = { state in
+            if case .failed(let err) = state { fputs("listener failed: \(err)\n", stderr); exit(1) }
+            if case .ready = state, let port = self.listener.port { fputs("jarvisd listening on 127.0.0.1:\(port)\n", stderr) }
+        }
+        listener.start(queue: queue)
+    }
+
+    private func accept(_ conn: NWConnection) {
+        let sinkId = UUID()
+        conn.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                Task {
+                    await self.brain.subscribe(id: sinkId) { [weak self] msg in self?.send(msg, on: conn) }
+                }
+                self.receive(on: conn)
+            case .failed, .cancelled:
+                Task { await self.brain.unsubscribe(sinkId) }
+            default: break
+            }
+        }
+        conn.start(queue: queue)
+    }
+
+    private func receive(on conn: NWConnection) {
+        conn.receiveMessage { [weak self] data, context, _, error in
+            guard let self else { return }
+            let meta = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
+            if error != nil || meta?.opcode == .close || (data == nil && context?.isFinal == true) {
+                conn.cancel()
+                return
+            }
+            if let data, !data.isEmpty { self.dispatch(data, on: conn) }
+            self.receive(on: conn)
+        }
+    }
+
+    private func dispatch(_ data: Data, on conn: NWConnection) {
+        guard let message = try? decoder.decode(ClientMessage.self, from: data) else {
+            send(ServerMessage(type: .error, text: "invalid message"), on: conn)
+            return
+        }
+        switch message {
+        case .ping:
+            send(ServerMessage(type: .pong), on: conn)
+        case .say(let id, let text):
+            Task {
+                for await reply in await brain.handle(id: id, text: text) {
+                    self.send(reply, on: conn)
+                }
+            }
+        }
+    }
+
+    private func send(_ message: ServerMessage, on conn: NWConnection) {
+        guard let data = try? encoder.encode(message) else { return }
+        let meta = NWProtocolWebSocket.Metadata(opcode: .text)
+        let ctx = NWConnection.ContentContext(identifier: "msg", metadata: [meta])
+        conn.send(content: data, contentContext: ctx, isComplete: true, completion: .idempotent)
+    }
+}
