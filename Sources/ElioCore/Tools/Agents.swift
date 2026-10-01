@@ -262,6 +262,26 @@ public actor TaskRunner {
         return info
     }
 
+    /// pause → SIGSTOP (the agent freezes where it is), resume → SIGCONT, stop → terminate.
+    public func control(_ id: String, action: String) {
+        guard let t = tasks[id] else { return }
+        let pid = t.process.processIdentifier
+        switch action {
+        case "pause" where t.info.status == .running || t.info.status == .waitingConfirmation:
+            kill(pid, SIGSTOP)
+            tasks[id]?.info.status = .paused
+        case "resume" where t.info.status == .paused:
+            kill(pid, SIGCONT)
+            tasks[id]?.info.status = .running
+        case "stop":
+            if t.info.status == .paused { kill(pid, SIGCONT) }
+            _ = cancel(id)
+        default:
+            return
+        }
+        publish(id)
+    }
+
     public func cancel(_ id: String) -> Bool {
         guard let t = tasks[id] else { return false }
         tasks[id]?.info.status = .cancelled
@@ -509,6 +529,16 @@ public enum TaskTools {
         return all.map { t in
             "- [\(t.status.rawValue)] \(t.title) (id \(t.id), \(t.project ?? "")): \(t.summary.map { String($0.prefix(200)) } ?? t.steps.last ?? "")"
         }.joined(separator: "\n")
+    }
+
+    static let control = ElioTool(
+        name: "control_task",
+        description: "Mette in pausa, riprende o ferma un task in background (action: pause, resume, stop).",
+        properties: ["id": prop("Id del task"), "action": prop("pause, resume o stop")],
+        required: ["id", "action"]
+    ) { args, ctx in
+        await ctx.tasks.control(args["id"] as? String ?? "", action: args["action"] as? String ?? "")
+        return "Fatto."
     }
 
     static let cancel = ElioTool(

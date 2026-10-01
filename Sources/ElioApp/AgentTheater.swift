@@ -43,6 +43,9 @@ struct AgentTheater: View {
                 Text("\(task?.project ?? "") · \(entries.count) eventi").font(Theme.mono).foregroundStyle(Theme.dim)
             }
             Spacer()
+            if let task, [.running, .waitingConfirmation, .paused].contains(task.status) {
+                TaskControls(status: task.status) { loop.controlTask(task.id, $0) }
+            }
             if let task, task.status == .running || task.status == .waitingConfirmation {
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
                     Text(Duration.seconds(ctx.date.timeIntervalSince(task.startedAt)).formatted(.time(pattern: .minuteSecond)))

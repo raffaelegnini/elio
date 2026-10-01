@@ -1,5 +1,9 @@
 // swift-tools-version: 6.0
+import Foundation
 import PackageDescription
+
+/// Official ONNX Runtime build (scripts/fetch-onnxruntime.sh), self-contained and bundled in the app.
+let ort = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("vendor/onnxruntime").path
 
 let package = Package(
     name: "Elio",
@@ -14,7 +18,15 @@ let package = Package(
         .target(name: "ElioCore", linkerSettings: [.linkedLibrary("sqlite3")]),
         .executableTarget(name: "eliod", dependencies: ["ElioCore"]),
         .executableTarget(name: "elio", dependencies: ["ElioCore"]),
-        .target(name: "ElioVoice", dependencies: ["ElioCore"]),
+        // Speaker verification runs on ONNX Runtime (bundled into the app by build-app.sh).
+        .target(
+            name: "CSpeaker",
+            cSettings: [.unsafeFlags(["-I\(ort)/include"])],
+            linkerSettings: [.unsafeFlags(["-L\(ort)/lib", "-lonnxruntime",
+                                           "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
+                                           "-Xlinker", "-rpath", "-Xlinker", "\(ort)/lib"])]
+        ),
+        .target(name: "ElioVoice", dependencies: ["ElioCore", "CSpeaker"]),
         .executableTarget(name: "ElioApp", dependencies: ["ElioCore", "ElioVoice"]),
         .executableTarget(name: "voicesim", dependencies: ["ElioCore", "ElioVoice"]),
         .testTarget(name: "ElioCoreTests", dependencies: ["ElioCore"]),

@@ -164,6 +164,7 @@ struct DashboardView: View {
                 ConfirmCard(request: req) { loop.answer(req, approved: $0) }.frame(maxWidth: 520)
             }
             VStack(spacing: 8) {
+                BusyBar(loop: loop)
                 Text(loop.state.label.uppercased())
                     .font(.system(size: 12, weight: .semibold, design: .monospaced)).tracking(4)
                     .foregroundStyle(Theme.tint(loop.state))
@@ -195,7 +196,7 @@ struct DashboardView: View {
                     Text("Nessun agente al lavoro").font(.system(size: 12)).foregroundStyle(Theme.dim)
                 }
                 ForEach(loop.tasks.reversed().prefix(4)) { t in
-                    WorkflowRow(task: t, expanded: true)
+                    WorkflowRow(task: t, expanded: true, control: { loop.controlTask(t.id, $0) })
                         .contentShape(Rectangle())
                         .onTapGesture { state.theater = t.id }
                 }

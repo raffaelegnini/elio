@@ -150,17 +150,18 @@ struct HUDView: View {
     @ViewBuilder
     private var activity: some View {
         VStack(spacing: 8) {
+            BusyBar(loop: loop)
             if let q = loop.questions.first {
                 QuestionCard(question: q) { loop.answer(q, text: $0) }
             }
             if let req = loop.confirmations.first {
                 ConfirmCard(request: req) { loop.answer(req, approved: $0) }
             }
-            let running = loop.tasks.filter { $0.status == .running || $0.status == .waitingConfirmation }
+            let running = loop.tasks.filter { [.running, .waitingConfirmation, .paused].contains($0.status) }
             if !running.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("WORKFLOW ATTIVI").font(Theme.mono).tracking(2).foregroundStyle(Theme.dim)
-                    ForEach(running) { WorkflowRow(task: $0) }
+                    ForEach(running) { t in WorkflowRow(task: t, control: { loop.controlTask(t.id, $0) }) }
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)

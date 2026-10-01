@@ -130,12 +130,12 @@ public enum IntegrationStore {
     }
 
     /// Lines for the system prompt: what's connected and how to use it.
-    public static func promptBlock() -> String {
-        let items = load().filter(\.enabled)
+    public static func promptBlock(includeDisabled: Bool = false) -> String {
+        let items = load().filter { includeDisabled || $0.enabled || $0.needsSecret || !$0.enabled }
         guard !items.isEmpty else { return "Integrazioni configurate: nessuna." }
         return "Integrazioni configurate:\n" + items.map { i in
             var line = "- \(i.name) [id \(i.id), \(i.kind == .api ? "API REST via api_request" : "MCP: tool mcp__\(i.id)__*")]"
-            if i.needsSecret { line += " — IN ATTESA della chiave nelle Impostazioni" }
+            if i.needsSecret { line += " — IN ATTESA della chiave" } else if !i.enabled { line += " — configurata ma NON attiva (integration_activate)" }
             if !i.notes.isEmpty { line += "\n  Note d'uso: " + i.notes.replacingOccurrences(of: "\n", with: "\n  ") }
             return line
         }.joined(separator: "\n")
@@ -250,7 +250,7 @@ public enum IntegrationTools {
         name: "integration_list",
         description: "Elenca le integrazioni configurate, il loro stato e le note d'uso."
     ) { _, _ in
-        IntegrationStore.promptBlock()
+        IntegrationStore.promptBlock(includeDisabled: true)
     }
 
     static let request = ElioTool(

@@ -67,6 +67,14 @@ cat > "$PLIST" <<PLIST
 </plist>
 PLIST
 
+# Speaker verification model (WeSpeaker ResNet34, VoxCeleb, Apache-2.0), downloaded once.
+MODEL="$SUPPORT/models/speaker.onnx"
+if [ ! -f "$MODEL" ]; then
+    mkdir -p "$SUPPORT/models"
+    curl -sL -o "$MODEL" "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx" \
+        || echo "Attenzione: modello vocale non scaricato (riconoscimento della voce disattivato)"
+fi
+
 # Phone PWA files, served by the daemon on 127.0.0.1:8766.
 rm -rf "$SUPPORT/web"
 cp -R "$ROOT/web" "$SUPPORT/web"

@@ -71,6 +71,64 @@ public final class VoiceLoop {
     /// When Elio last stopped talking (its voice may still echo in the room).
     private var lastSpeechEnd = Date.distantPast
     private var emptyWithAEC = 0
+
+    // MARK: Speaker verification
+    private let voiceTap = VoiceTap()
+    private var speakerID: SpeakerID?
+    private var verifyOwner = true
+    private var ownerThreshold: Float = 0.65
+    private var utteranceStart = 0
+    private var bargeChecked = false
+    /// Enrollment in progress: clips of the owner reading the sentences.
+    public private(set) var enrollment: [[Float]]? = nil
+    public private(set) var enrollmentStep = 0
+    public static let enrollmentSentences = [
+        "Buongiorno Elio, oggi vorrei sapere cosa ho in agenda e se qualcuno mi ha scritto.",
+        "Ricordami di chiamare il cliente domani mattina e prepara il riepilogo del progetto.",
+        "Scrivi al team che la nuova versione del sito è pronta e che la rilasciamo stasera.",
+    ]
+    public var isOwnerEnrolled: Bool { speakerID?.isEnrolled ?? false }
+    public var speakerModelAvailable: Bool { speakerID != nil }
+    /// Last verification score, shown in Settings.
+    public private(set) var lastOwnerScore: Float?
+
+    private var ownerGateActive: Bool { verifyOwner && (speakerID?.isEnrolled ?? false) }
+
+    /// True if the audio of the current utterance is the owner (or verification is off).
+    private func isOwner(minSeconds: Double = 0.6) -> Bool? {
+        guard ownerGateActive, let sid = speakerID else { return true }
+        let samples = voiceTap.samples(since: utteranceStart)
+        guard Double(samples.count) / SpeakerID.sampleRate >= minSeconds, let score = sid.score(samples) else { return nil }
+        lastOwnerScore = score
+        VoiceLog.write(String(format: "speaker score %.2f (threshold %.2f)", score, ownerThreshold))
+        return score >= ownerThreshold
+    }
+
+    /// Starts recording the owner's voice: they read `enrollmentSentences` aloud.
+    public func startEnrollment() {
+        guard speakerID != nil else { lastError = "Modello vocale mancante: reinstalla Elio."; return }
+        enrollment = []
+        enrollmentStep = 0
+        speaker.enqueue("Leggi ad alta voce le tre frasi che vedi, una alla volta.")
+        speaker.endUtterance()
+    }
+
+    public func cancelEnrollment() { enrollment = nil; enrollmentStep = 0 }
+
+    public func forgetOwnerVoice() { speakerID?.forget() }
+
+    private func enrollmentClip() {
+        let clip = voiceTap.samples(since: utteranceStart, lead: 0.1)
+        guard Double(clip.count) / SpeakerID.sampleRate >= 1.5 else { return }
+        enrollment?.append(clip)
+        enrollmentStep = enrollment?.count ?? 0
+        guard enrollmentStep >= Self.enrollmentSentences.count, let clips = enrollment else { return }
+        let ok = speakerID?.enroll(clips) ?? false
+        enrollment = nil
+        VoiceLog.write("speaker enrollment \(ok ? "saved" : "failed")")
+        speaker.enqueue(ok ? "Perfetto, \(addressAs): da ora riconosco la sua voce." : "Non sono riuscito a registrarla, riproviamo.")
+        speaker.endUtterance()
+    }
     private var browserShownFor: String?
     private var utteranceArmed = false
     /// Utterance captured while Elio was speaking through the speakers.
@@ -153,9 +211,15 @@ public final class VoiceLoop {
                                         contextWords: [config.assistantName] + config.wakeAliases + ["Slack", "Teamwork", "Bitbucket", "Meet"])
         stt.onVolatile = { [weak self] text in Task { @MainActor in self?.heard(text) } }
         self.stt = stt
+        let voiceTap = self.voiceTap
         audio.onInput = { [pipeline, stt] buffer, db in
             stt.feed(buffer)
+            voiceTap.feed(buffer)
             pipeline.process(buffer, levelDb: db)
+        }
+        Task { [weak self] in
+            let sid = await Task.detached { SpeakerID() }.value
+            self?.speakerID = sid
         }
 
         muted = UserDefaults.standard.bool(forKey: "elio.muted")
@@ -230,12 +294,16 @@ public final class VoiceLoop {
     public var onIntegrationSetup: ((String) -> Void)?
     /// Brief/recap started: the app shows the network lighting up.
     public var onRoutineStart: (() -> Void)?
+    public var onSettingsChanged: ((ElioConfig) -> Void)?
+    public var onOpenView: ((String, String, String) -> Void)?
     private var spokenSentences = 3
     private var briefOpeningEnabled = true
 
     /// Settings saved: apply what the app owns right away (the daemon restarts on its own).
     public func applySettings(_ config: ElioConfig) {
         spokenSentences = config.spokenSentences
+        verifyOwner = config.speakerVerification
+        ownerThreshold = Float(config.speakerThreshold)
         addressAs = config.addressAs
         briefOpeningEnabled = config.briefOpening
         audio.preferBuiltInMicWithBluetooth = config.builtInMicWithBluetooth
@@ -282,6 +350,15 @@ public final class VoiceLoop {
         state = .listening
     }
 
+    /// "Basta" / the stop button: silence Elio *and* stop the work in progress.
+    public func stopEverything() {
+        if currentRequestId != nil || state == .thinking { client.send(.cancelTurn) }
+        interrupt()
+    }
+
+    public func controlTask(_ id: String, _ action: String) { client.send(.taskControl(id: id, action: action)) }
+
+
     /// Typed input from the HUD: same path as voice, skips the wake word.
     public func submit(text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -299,6 +376,8 @@ public final class VoiceLoop {
             inUtterance = true
             utteranceArmed = isArmed
             wakeSeen = false
+            utteranceStart = voiceTap.position
+            bargeChecked = false
             // Drop what the recognizer heard before (background, Elio's own voice).
             stt?.resetSegment()
             partial = ""
@@ -319,8 +398,26 @@ public final class VoiceLoop {
         if speaker.isSpeaking, audio.aecActive || AudioDevices.defaultOutputIsHeadphones() {
             let words = Echo.remove(from: text, spoken: speaker.recentlySpoken())
                 .split(separator: " ").filter { $0.count >= 2 }
-            if !words.isEmpty {
-                VoiceLog.write("barge-in on words: '\(text)'")
+            guard !words.isEmpty else { return }
+            var stop = false
+            if ownerGateActive {
+                // Only the owner's voice interrupts; people chatting nearby don't.
+                if !bargeChecked, let owner = isOwner(minSeconds: 0.8) {
+                    bargeChecked = true
+                    stop = owner
+                }
+            } else {
+                // No voiceprint: only the name, a stop word or an answer to Elio's question interrupt.
+                let said: String = words.map { String($0) }.joined(separator: " ")
+                var pendingAnswer = false
+                if let req = confirmations.first {
+                    pendingAnswer = ConfirmationAnswer.parse(said, risk: req.risk) != .unrelated
+                }
+                let stopWord = BargeIn.detect(text, whileSaying: speaker.recentlySpoken())
+                stop = pendingAnswer || stopWord || WakeWord.strip(text) != nil
+            }
+            if stop {
+                VoiceLog.write("barge-in on: '\(text)'")
                 interrupt()
                 utteranceArmed = true
                 state = .hearing
@@ -354,6 +451,10 @@ public final class VoiceLoop {
     private func endUtterance() async {
         guard let stt else { return }
         var text = await stt.finalizeSegment()
+        if enrollment != nil {
+            enrollmentClip()
+            return
+        }
         let spokeRecently = speaker.isSpeaking || Date().timeIntervalSince(lastSpeechEnd) < 3
         VoiceLog.write("heard: '\(text)'\(spokeRecently ? " (Elio spoke recently)" : "")\(audio.aecActive ? " [aec]" : "")")
         // Safety net: if echo cancellation swallows the user's voice, turn it off by itself.
@@ -382,6 +483,13 @@ public final class VoiceLoop {
         } else {
             return  // background speech, not for Elio
         }
+        // Only the owner can command Elio (when a voiceprint is enrolled).
+        if let owner = isOwner(), !owner {
+            VoiceLog.write("ignored: not the owner's voice ('\(command)')")
+            partial = ""
+            if state == .hearing { state = .listening }
+            return
+        }
         if command.isEmpty {
             activate()
             return
@@ -406,6 +514,11 @@ public final class VoiceLoop {
     // MARK: - Daemon
 
     private func send(_ text: String) {
+        // "Basta" / "stop" / "fermati": stop talking and stop the work in progress, locally.
+        if IntentMatcher().match(text)?.intent == .stop {
+            stopEverything()
+            return
+        }
         if speaker.isSpeaking { speaker.stop() }
         armedUntil = nil
         splitter = SentenceSplitter()
@@ -493,6 +606,14 @@ public final class VoiceLoop {
             }
         case "questionResolved":
             questions.removeAll { $0.id == msg.id }
+        case "settingsChanged":
+            let cfg = ElioConfig.load()
+            applySettings(cfg)
+            onSettingsChanged?(cfg)
+        case "openView":
+            if let p = msg.payload, let obj = try? JSONSerialization.jsonObject(with: Data(p.utf8)) as? [String: String] {
+                onOpenView?(obj["view"] ?? "dashboard", obj["tab"] ?? "", obj["integration"] ?? "")
+            }
         case "integrationUpdated":
             break  // Elio configures integrations itself; Settings just shows the result
         case "task", "taskDone":

@@ -116,7 +116,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     switch model.tab {
                     case .general: GeneralSettings(model: model)
-                    case .voice: VoiceSettings(model: model)
+                    case .voice: VoiceSettings(model: model); if let loop { OwnerVoiceSettings(model: model, loop: loop) }
                     case .brain: BrainSettings(model: model)
                     case .routines: RoutineSettings(model: model)
                     case .integrations: IntegrationSettings(model: model)
@@ -439,5 +439,51 @@ extension Color {
     var hexString: String {
         let c = NSColor(self).usingColorSpace(.sRGB) ?? .yellow
         return String(format: "#%02X%02X%02X", Int(c.redComponent * 255), Int(c.greenComponent * 255), Int(c.blueComponent * 255))
+    }
+}
+
+/// Owner voice enrollment and verification.
+private struct OwnerVoiceSettings: View {
+    @Bindable var model: SettingsModel
+    let loop: VoiceLoop
+
+    var body: some View {
+        Group(title: "Riconoscimento della tua voce",
+              note: "Con la voce registrata solo tu puoi dare comandi a Elio e interromperlo; chi parla intorno a te viene ignorato. L'impronta vocale resta sul Mac.") {
+            if !loop.speakerModelAvailable {
+                Text("Modello vocale non disponibile: reinstalla Elio.").font(.system(size: 12.5)).foregroundStyle(.orange)
+            } else if let clips = loop.enrollment {
+                let i = min(clips.count, VoiceLoop.enrollmentSentences.count - 1)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Leggi ad alta voce (\(clips.count + 1) di \(VoiceLoop.enrollmentSentences.count)):")
+                        .font(.system(size: 12)).foregroundStyle(Theme.dim)
+                    Text("“\(VoiceLoop.enrollmentSentences[i])”")
+                        .font(.system(size: 16, weight: .medium)).foregroundStyle(Theme.text)
+                        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.accent.opacity(0.08)))
+                    ProgressView(value: Double(clips.count), total: Double(VoiceLoop.enrollmentSentences.count)).tint(Theme.accent)
+                    Button("Annulla") { loop.cancelEnrollment() }
+                }
+            } else {
+                HStack(spacing: 10) {
+                    Image(systemName: loop.isOwnerEnrolled ? "person.wave.2.fill" : "person.wave.2")
+                        .foregroundStyle(loop.isOwnerEnrolled ? .green : Theme.dim)
+                    Text(loop.isOwnerEnrolled ? "Voce registrata" : "Voce non ancora registrata").font(.system(size: 12.5))
+                    if let score = loop.lastOwnerScore {
+                        Text(String(format: "ultima somiglianza %.2f", score)).font(Theme.mono).foregroundStyle(Theme.dim)
+                    }
+                    Spacer()
+                    Button(loop.isOwnerEnrolled ? "Registra di nuovo" : "Registra la mia voce") { loop.startEnrollment() }
+                        .buttonStyle(HUDButton(color: Theme.accent, filled: true))
+                    if loop.isOwnerEnrolled { Button("Elimina") { loop.forgetOwnerVoice() } }
+                }
+                Toggle("Solo la mia voce può comandare e interrompere Elio", isOn: $model.config.speakerVerification).font(.system(size: 12.5))
+                HStack {
+                    Text("Severità").font(.system(size: 12.5)).frame(width: 190, alignment: .leading)
+                    Slider(value: $model.config.speakerThreshold, in: 0.45...0.85)
+                    Text(String(format: "%.2f", model.config.speakerThreshold)).font(Theme.mono).frame(width: 40)
+                }
+            }
+        }
     }
 }

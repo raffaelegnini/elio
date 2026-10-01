@@ -117,6 +117,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         objectWillChange.send()
         loop.onIntegrationSetup = { [weak self] id in self?.showSettings(tab: .integrations, integration: id) }
         loop.onRoutineStart = { [weak self] in self?.showDashboard() }
+        loop.onSettingsChanged = { [weak self] cfg in
+            Brand.shared.apply(cfg)
+            WakeWord.configure(name: cfg.assistantName, aliases: cfg.wakeAliases)
+            self?.settings.reload()
+        }
+        loop.onOpenView = { [weak self] view, tab, integration in
+            switch view {
+            case "settings":
+                let tabs: [String: SettingsTab] = ["generale": .general, "voce": .voice, "cervello": .brain,
+                                                   "routine": .routines, "integrazioni": .integrations, "telefono": .phone]
+                self?.showSettings(tab: tabs[tab.lowercased()] ?? (integration.isEmpty ? nil : .integrations),
+                                   integration: integration.isEmpty ? nil : integration)
+            case "archive": self?.showArchive()
+            default: self?.showDashboard()
+            }
+        }
         hud.attach(loop, openReview: { [weak self] diff in self?.showDashboard(review: diff) })
 
         hotKey = HotKey(keyCode: 38 /* J */, modifiers: [.option, .command]) { [weak self] in

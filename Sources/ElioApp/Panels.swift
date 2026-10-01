@@ -64,6 +64,8 @@ struct HUDButton: ButtonStyle {
 struct WorkflowRow: View {
     let task: TaskInfo
     var expanded = false
+    /// pause / resume / stop
+    var control: ((String) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -72,6 +74,9 @@ struct WorkflowRow: View {
                 Text(task.title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
                 Spacer()
                 Text(task.project ?? "").font(Theme.mono).foregroundStyle(Theme.dim)
+                if let control, [.running, .waitingConfirmation, .paused].contains(task.status) {
+                    TaskControls(status: task.status, control: control)
+                }
             }
             if expanded {
                 ForEach(Array(task.steps.suffix(8).enumerated()), id: \.offset) { _, step in
@@ -107,6 +112,7 @@ struct StatusDot: View {
         switch status {
         case .running: Theme.accent
         case .waitingConfirmation: .orange
+        case .paused: Theme.dim
         case .done: .green
         case .failed: .red
         case .cancelled: Theme.dim
@@ -329,5 +335,67 @@ struct SecretAwareText: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// Pause / resume / stop for a background agent.
+struct TaskControls: View {
+    let status: TaskInfo.Status
+    let control: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if status == .paused {
+                ControlButton(icon: "play.fill", help: "Riprendi") { control("resume") }
+            } else {
+                ControlButton(icon: "pause.fill", help: "Pausa") { control("pause") }
+            }
+            ControlButton(icon: "stop.fill", help: "Ferma", tint: Color(hex: "#FF6B61")) { control("stop") }
+        }
+    }
+}
+
+struct ControlButton: View {
+    let icon: String
+    let help: String
+    var tint: Color = Theme.accent
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 9, weight: .bold)).foregroundStyle(tint)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(tint.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+/// "What Elio is doing now" + a stop button, shown while it works.
+struct BusyBar: View {
+    let loop: VoiceLoop
+
+    var body: some View {
+        if loop.state == .thinking || loop.state == .speaking || !loop.activeTools.isEmpty {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.mini)
+                Text(current).font(.system(size: 11.5)).foregroundStyle(Theme.dim).lineLimit(1)
+                Spacer()
+                Button { loop.stopEverything() } label: {
+                    Label("Ferma", systemImage: "stop.fill").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color(hex: "#FF6B61"))
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().fill(Color(hex: "#FF6B61").opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+                .help("Ferma Elio e il lavoro in corso (o di' \"basta\")")
+            }
+        }
+    }
+
+    private var current: String {
+        if let tool = loop.activeTools.first { return Capability.describe(tool: tool) + "…" }
+        return loop.state == .speaking ? "Sta parlando" : "Sta lavorando…"
     }
 }

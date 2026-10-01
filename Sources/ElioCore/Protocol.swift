@@ -14,6 +14,10 @@ public enum ClientMessage: Codable, Sendable {
     case reload
     /// The user's answer to an ask_user question.
     case answer(id: String, text: String)
+    /// Pause / resume / stop a background agent.
+    case taskControl(id: String, action: String)
+    /// Stop what Elio is doing right now in the conversation (e.g. a long browser run).
+    case cancelTurn
 
     private enum CodingKeys: String, CodingKey { case type, id, text, name, args, approved }
 
@@ -28,6 +32,8 @@ public enum ClientMessage: Codable, Sendable {
         case "listTools": self = .listTools(id: try c.decode(String.self, forKey: .id))
         case "reload": self = .reload
         case "answer": self = .answer(id: try c.decode(String.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
+        case "taskControl": self = .taskControl(id: try c.decode(String.self, forKey: .id), action: try c.decode(String.self, forKey: .text))
+        case "cancelTurn": self = .cancelTurn
         case "confirm":
             self = .confirm(id: try c.decode(String.self, forKey: .id), approved: try c.decode(Bool.self, forKey: .approved))
         case let other:
@@ -51,6 +57,10 @@ public enum ClientMessage: Codable, Sendable {
             try c.encode("reload", forKey: .type)
         case .answer(let id, let text):
             try c.encode("answer", forKey: .type); try c.encode(id, forKey: .id); try c.encode(text, forKey: .text)
+        case .taskControl(let id, let action):
+            try c.encode("taskControl", forKey: .type); try c.encode(id, forKey: .id); try c.encode(action, forKey: .text)
+        case .cancelTurn:
+            try c.encode("cancelTurn", forKey: .type)
         case .confirm(let id, let approved):
             try c.encode("confirm", forKey: .type); try c.encode(id, forKey: .id); try c.encode(approved, forKey: .approved)
         }
@@ -95,7 +105,7 @@ public struct ServerMessage: Codable, Sendable {
 // MARK: - Structured payloads
 
 public struct TaskInfo: Codable, Sendable, Identifiable {
-    public enum Status: String, Codable, Sendable { case running, waitingConfirmation, done, failed, cancelled }
+    public enum Status: String, Codable, Sendable { case running, waitingConfirmation, paused, done, failed, cancelled }
 
     public var id: String
     public var title: String

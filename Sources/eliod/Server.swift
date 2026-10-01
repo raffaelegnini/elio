@@ -109,6 +109,10 @@ final class Server: @unchecked Sendable {
             }
         case .answer(let id, let text):
             Task { await brain.gate.reply(id: id, text: text) }
+        case .taskControl(let id, let action):
+            Task { await brain.tasks.control(id, action: action) }
+        case .cancelTurn:
+            Task { await brain.cancelCurrentTurn() }
         case .reload:
             guard mode == .local else { return }
             log("reload requested: restarting")

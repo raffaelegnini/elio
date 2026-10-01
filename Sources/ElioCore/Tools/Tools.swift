@@ -33,10 +33,11 @@ public struct ToolContext: Sendable {
                 gate: ConfirmationGate, tasks: TaskRunner, scheduler: Scheduler,
                 restartSession: @escaping @Sendable () async -> Void = {},
                 sync: SyncEngine? = nil,
+                restartAfterTurn: @escaping @Sendable () async -> Void = {},
                 runRoutine: @escaping @Sendable (String) async -> Void = { _ in }, taskId: String? = nil) {
         self.config = config; self.memory = memory; self.broadcast = broadcast; self.gate = gate
         self.tasks = tasks; self.scheduler = scheduler; self.restartSession = restartSession
-        self.runRoutine = runRoutine; self.sync = sync; self.taskId = taskId
+        self.runRoutine = runRoutine; self.sync = sync; self.restartAfterTurn = restartAfterTurn; self.taskId = taskId
     }
 
     public let config: ElioConfig
@@ -48,6 +49,8 @@ public struct ToolContext: Sendable {
     /// Rebuild the conversation session (new MCP integration, new prompt) before the next message.
     public var restartSession: @Sendable () async -> Void = {}
     public var sync: SyncEngine?
+    public var restartAfterTurn: @Sendable () async -> Void = {}
+    public func requestRestartAfterTurn() async { await restartAfterTurn() }
     /// Starts a routine ("brief" / "recap") after the current turn.
     public var runRoutine: @Sendable (String) async -> Void = { _ in }
 
@@ -74,11 +77,15 @@ public enum ToolRegistry {
         RoutineControl.run,
         HistoryTools.history,
         TaskTools.list,
+        TaskTools.control,
         TaskTools.cancel,
         ScreenTools.show,
         ReminderTools.set,
         ReminderTools.list,
         ApprovalTool.approve,
+        SelfTools.get,
+        SelfTools.set,
+        SelfTools.open,
         DirectoryTools.lookup,
         DirectoryTools.refresh,
         DirectoryTools.integrationSync,

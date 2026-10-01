@@ -35,6 +35,9 @@ public struct ElioConfig: Codable, Sendable {
     public var confirmCodeExecution: Bool = false
     public var echoCancellation: Bool = true
     public var browserAutonomy: Bool = true
+    /// Only the enrolled owner's voice can command or interrupt Elio.
+    public var speakerVerification: Bool = true
+    public var speakerThreshold: Double = 0.65
     public var webPort: UInt16 = 8766
     public var remotePort: UInt16 = 8767
 
@@ -73,6 +76,8 @@ public struct ElioConfig: Codable, Sendable {
         confirmCodeExecution = try c.decodeIfPresent(Bool.self, forKey: .confirmCodeExecution) ?? d.confirmCodeExecution
         echoCancellation = try c.decodeIfPresent(Bool.self, forKey: .echoCancellation) ?? d.echoCancellation
         browserAutonomy = try c.decodeIfPresent(Bool.self, forKey: .browserAutonomy) ?? d.browserAutonomy
+        speakerVerification = try c.decodeIfPresent(Bool.self, forKey: .speakerVerification) ?? d.speakerVerification
+        speakerThreshold = try c.decodeIfPresent(Double.self, forKey: .speakerThreshold) ?? d.speakerThreshold
     }
 
     static func defaultClaudePath() -> String {

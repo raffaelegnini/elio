@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 setvbuf(stdout, nil, _IONBF, 0)
 import ElioCore
@@ -34,6 +35,32 @@ var signal = noise(2)
 for path in CommandLine.arguments.dropFirst() {
     signal += try load(path).map { $0 + Float.random(in: -0.002...0.002) }
     signal += noise(2.5)
+}
+
+// SPEAKER=1: cosine similarity matrix of the given files (speaker verification check).
+if ProcessInfo.processInfo.environment["SPEAKER"] == "1" {
+    guard let sid = SpeakerID() else { print("model missing"); exit(1) }
+    let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+    func load16k(_ path: String) throws -> [Float] {
+        let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+        let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length))!
+        try file.read(into: buf)
+        let conv = AVAudioConverter(from: file.processingFormat, to: target)!
+        let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: AVAudioFrameCount(Double(file.length) * 16000 / file.processingFormat.sampleRate) + 1024)!
+        var done = false
+        _ = conv.convert(to: out, error: nil) { _, st in if done { st.pointee = .endOfStream; return nil }; done = true; st.pointee = .haveData; return buf }
+        return Array(UnsafeBufferPointer(start: out.floatChannelData![0], count: Int(out.frameLength)))
+    }
+    let files = Array(CommandLine.arguments.dropFirst())
+    let start = Date()
+    let embs = try files.map { try sid.embedding(load16k($0))! }
+    print(String(format: "%d embeddings in %.0f ms", embs.count, Date().timeIntervalSince(start) * 1000))
+    let names = files.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent }
+    print("        " + names.map { $0.padding(toLength: 8, withPad: " ", startingAt: 0) }.joined())
+    for (i, a) in embs.enumerated() {
+        print(names[i].padding(toLength: 8, withPad: " ", startingAt: 0) + embs.map { String(format: "%6.2f  ", vDSP.dot(a, $0)) }.joined())
+    }
+    exit(0)
 }
 
 // CONTINUOUS=1: one long-lived transcriber fed with everything (the app's new mode).

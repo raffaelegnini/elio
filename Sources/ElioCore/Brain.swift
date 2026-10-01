@@ -74,12 +74,19 @@ public actor Brain {
 
     public func shutdown() async { await claude.shutdown() }
 
+    public func cancelCurrentTurn() async { await claude.cancelCurrentTurn() }
+
+    private var restartPending = false
+    /// A setting changed: restart the daemon once the current reply is done (launchd brings it back).
+    func scheduleRestart() { restartPending = true }
+
     public var toolContext: ToolContext {
         let hub = self.hub
         return ToolContext(config: config, memory: memory, broadcast: { hub.send($0) },
                            gate: gate, tasks: tasks, scheduler: scheduler,
                            restartSession: { [weak self] in await self?.refreshSession() },
                            sync: sync,
+                           restartAfterTurn: { [weak self] in await self?.scheduleRestart() },
                            runRoutine: { [weak self] which in
                                guard let routines = await self?.routines else { return }
                                // Detached: the routine waits for the current turn to end.
@@ -179,6 +186,10 @@ public actor Brain {
             log("claude turn failed: \(error)")
             out.yield(ServerMessage(type: .error, id: id, text: "\(error)"))
         }
+        if restartPending {
+            log("settings changed: restarting to apply")
+            Task { try? await Task.sleep(for: .seconds(2)); exit(0) }
+        }
     }
 
     /// Returns the spoken reply, or nil if the intent can't be served locally (→ Claude).
@@ -237,7 +248,8 @@ public actor Brain {
         let f = DateFormatter()
         f.locale = Locale(identifier: "it_IT")
         f.dateFormat = "EEEE d MMMM yyyy, HH:mm"
-        return "[contesto: \(f.string(from: Date()))]\n\(text)"
+        // A short reminder every turn keeps replies spoken-length (the system prompt alone wasn't enough).
+        return "[contesto: \(f.string(from: Date())). Rispondi in massimo due frasi, salvo richiesta di dettagli.]\n\(text)"
     }
 
     static func systemPrompt(_ config: ElioConfig) -> String {
@@ -264,6 +276,17 @@ public actor Brain {
         - Fai eccezione solo se l'utente chiede esplicitamente di spiegare o approfondire.
         - Niente markdown, elenchi puntati, emoji, codice o URL: se servono dettagli, offri di mostrarli a schermo.
         - Numeri e orari scritti come si dicono.
+
+        Chi sei e com'è fatta l'app (rispondi con sicurezza a domande su di te):
+        - App Elio nella barra dei menu (icona in alto a destra; sul MacBook può finire dietro il notch). Scorciatoie: \
+        ⌥⌘J parla, ⌥⌘D dashboard, ⌥⌘A archivio, ⌥⌘M microfono on/off, ⌘, impostazioni.
+        - Dashboard: rete neurale, agenda, promemoria, workflow degli agenti (con pausa/stop), attività, revisione diff, \
+        pulsanti BRIEFING e RECAP. Archivio: conversazioni, operazioni, agenti, promemoria, memoria.
+        - Impostazioni: Generale, Voce (anche registrazione della voce dell'utente), Cervello (modelli, sicurezza, autonomia), \
+        Routine (briefing, recap, meeting, Slack), Integrazioni, Telefono. Usa elio_settings per leggerle, \
+        elio_set_setting per cambiarle quando l'utente lo chiede, open_elio per aprirgli la finestra giusta.
+        - Se l'utente ti dà una chiave o un token per un'integrazione, salvalo tu con integration_set_secret (mai ripeterlo) \
+        e attivala; non mandarlo a cercare campi nelle Impostazioni.
 
         Nuove integrazioni ("voglio integrare X", "collega X"):
         1. Cerca sul web (WebSearch/WebFetch) se X ha un server MCP ufficiale e/o API REST; spiega in una frase \

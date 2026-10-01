@@ -7,12 +7,25 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$HOME/Applications/Elio.app"
 IDENTITY="${ELIO_SIGN_IDENTITY:-Apple Development}"
 
+"$ROOT/scripts/fetch-onnxruntime.sh"
 swift build -c release --package-path "$ROOT" --product ElioApp
 
 pkill -x ElioApp 2>/dev/null || true
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/.build/release/ElioApp" "$APP/Contents/MacOS/ElioApp"
+
+# Speaker verification: ship the official, self-contained ONNX Runtime inside the app
+# (Homebrew's build depends on other Homebrew libraries macOS refuses to load in a signed app).
+ORT="$ROOT/vendor/onnxruntime/lib/libonnxruntime.1.dylib"
+if [ -f "$ORT" ]; then
+    mkdir -p "$APP/Contents/Frameworks"
+    cp -L "$ORT" "$APP/Contents/Frameworks/libonnxruntime.1.dylib"
+    install_name_tool -id @rpath/libonnxruntime.1.dylib "$APP/Contents/Frameworks/libonnxruntime.1.dylib"
+    OLD=$(otool -L "$APP/Contents/MacOS/ElioApp" | awk '/libonnxruntime/ {print $1; exit}')
+    [ -n "$OLD" ] && install_name_tool -change "$OLD" @rpath/libonnxruntime.1.dylib "$APP/Contents/MacOS/ElioApp"
+    codesign --force --sign "$IDENTITY" "$APP/Contents/Frameworks/libonnxruntime.1.dylib"
+fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

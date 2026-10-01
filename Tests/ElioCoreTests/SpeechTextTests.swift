@@ -122,6 +122,9 @@ struct AcknowledgementTests {
         #expect(Acknowledgement.phrase(for: "Rosario mi ha scritto su Slack?", addressAs: "Signora") == "Certo, Signora, guardo Slack.")
         #expect(Acknowledgement.phrase(for: "come stai", addressAs: "Signore") == nil)
         #expect(Acknowledgement.phrase(for: "grazie", addressAs: "Signore") == nil)
+        #expect(Acknowledgement.phrase(for: "puoi preparare una bozza della proposta per il nuovo cliente", addressAs: "Signore")
+                == "Certo, Signore, un attimo.")
+        #expect(Acknowledgement.phrase(for: "controlla la mail di Rosario", addressAs: "Signore") == "Certo, Signore, controllo la posta.")
         #expect(Acknowledgement.isAcknowledgement("Certo, Signore, controllo subito le previsioni."))
         #expect(!Acknowledgement.isAcknowledgement("Domani sarà soleggiato con ventisette gradi."))
     }

@@ -79,6 +79,13 @@ public actor ClaudeBridge {
         pendingOptions = newOptions
     }
 
+    /// Stops the reply in progress (and whatever tools it is running) right away.
+    public func cancelCurrentTurn() {
+        guard current != nil else { return }
+        finishTurn(error: ClaudeResultError(message: "interrotto dall'utente"))
+        restart()  // the process is respawned (same conversation) for the next message
+    }
+
     public func shutdown() {
         shuttingDown = true
         readerTask?.cancel()

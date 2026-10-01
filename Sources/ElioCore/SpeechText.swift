@@ -222,13 +222,14 @@ public enum Echo {
 
 /// Instant, request-specific acknowledgement played while Claude works (cached audio, ~0 latency).
 public enum Acknowledgement {
+    // Word boundaries matter: "proposta" must not mean "posta", "attest" not "test".
     static let rules: [(String, String)] = [
-        (#"agenda|calendari|meeting|riunion|impegn|appuntament|call\b"#, "controllo l'agenda."),
-        (#"slack|messagg|\bdm\b|scritto|menzion|risposto"#, "guardo Slack."),
-        (#"mail|email|posta"#, "controllo la posta."),
-        (#"progett|codice|bug|branch|\bpr\b|review|test|deploy|repo|commit"#, "me ne occupo subito."),
-        (#"meteo|che tempo|cerca|notizie|quanto costa|chi è|cos'è|news"#, "cerco subito."),
-        (#"teamwork|task|attivit"#, "controllo i task."),
+        (#"agenda|calendari|meeting|riunion|impegn|appuntament|\bcall\b"#, "controllo l'agenda."),
+        (#"slack|messagg|\bdm\b|\bscritto\b|menzion|\brispost"#, "guardo Slack."),
+        (#"\b(e-?mail|mail|posta)\b"#, "controllo la posta."),
+        (#"progett|codice|\bbug|\bbranch|\bpr\b|review|\btest\b|\bdeploy|\brepo\b|repository|\bcommit"#, "me ne occupo subito."),
+        (#"meteo|che tempo|\bcerca|notizie|quanto costa|chi è|cos'è|\bnews\b"#, "cerco subito."),
+        (#"teamwork|\btask\b|attivit"#, "controllo i task."),
         (#"ricorda|promemoria|memoria|sai che"#, "un attimo."),
     ]
 
@@ -238,7 +239,10 @@ public enum Acknowledgement {
         for (pattern, tail) in rules where t.range(of: pattern, options: .regularExpression) != nil {
             return "Certo, \(addressAs), \(tail)"
         }
-        return nil
+        // A real request (not a quick remark) still gets an immediate sign of life.
+        let words = t.split(separator: " ").count
+        let chitChat = t.range(of: #"^(ciao|grazie|ok|bene|come stai|buongiorno|buonasera|perfetto|bravo)"#, options: .regularExpression) != nil
+        return words >= 6 && !chitChat ? "Certo, \(addressAs), un attimo." : nil
     }
 
     public static func all(addressAs: String) -> [String] {
