@@ -77,6 +77,7 @@ struct MenuContent: View {
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private(set) var loop: VoiceLoop?
     let hud = HUDController()
+    let island = NotchIsland()
     let dashboardState = DashboardState()
     private var dashboard: NSWindow?
     private var settingsWindow: NSWindow?
@@ -142,6 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             default: self?.showDashboard()
             }
         }
+        island.attach(loop, openDashboard: { [weak self] in self?.showDashboard(forceFront: true) },
+                      openSettings: { [weak self] in self?.showSettings() })
         hud.attach(loop, openReview: { [weak self] diff in self?.showDashboard(review: diff) })
 
         hotKey = HotKey(keyCode: 38 /* J */, modifiers: [.option, .command]) { [weak self] in
