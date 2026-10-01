@@ -76,30 +76,13 @@ enum MCPBridge {
 /// Request/response over the daemon WebSocket, matched by message id.
 final class DaemonRPC: @unchecked Sendable {
     private let client: DaemonClient
-    private let lock = NSLock()
-    private var waiting: [String: CheckedContinuation<(String, Bool), Never>] = [:]
 
     init(port: UInt16, token: String) {
         client = DaemonClient(port: port, token: token)
-        client.onMessage = { [weak self] msg in
-            guard msg.type == .toolResult, let id = msg.id, let self else { return }
-            let c = self.lock.withLock { self.waiting.removeValue(forKey: id) }
-            c?.resume(returning: (msg.payload ?? msg.text ?? "", msg.isError ?? false))
-        }
         client.start()
     }
 
     func call(_ message: ClientMessage) async -> (String, Bool) {
-        let id: String
-        switch message {
-        case .tool(let i, _, _), .listTools(let i): id = i
-        default: return ("", true)
-        }
-        // Wait for the socket to be up (daemon may be restarting).
-        for _ in 0..<50 where !client.isConnected { try? await Task.sleep(for: .milliseconds(100)) }
-        return await withCheckedContinuation { c in
-            lock.withLock { waiting[id] = c }
-            client.send(message)
-        }
+        await client.call(message)
     }
 }

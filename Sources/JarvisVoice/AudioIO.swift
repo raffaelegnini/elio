@@ -90,6 +90,17 @@ public final class AudioIO: @unchecked Sendable {
         try inputEngine.start()
     }
 
+    /// Mute: the mic is really released (no orange indicator), output keeps working.
+    public func setInputEnabled(_ on: Bool) throws {
+        if on {
+            guard !inputEngine.isRunning else { return }
+            try startInput()
+        } else {
+            inputEngine.inputNode.removeTap(onBus: 0)
+            inputEngine.stop()
+        }
+    }
+
     public func stop() {
         inputEngine.inputNode.removeTap(onBus: 0)
         inputEngine.stop()

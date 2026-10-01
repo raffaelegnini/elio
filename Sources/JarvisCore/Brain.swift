@@ -88,6 +88,9 @@ public actor Brain {
 
     private func broadcast(_ message: ServerMessage) { hub.send(message) }
 
+    /// Fan-out from outside the actor (server: tool activity).
+    public nonisolated func publish(_ message: ServerMessage) { hub.send(message) }
+
     // MARK: - Requests
 
     public func handle(id: String, text: String) -> AsyncStream<ServerMessage> {

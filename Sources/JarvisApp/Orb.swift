@@ -16,6 +16,7 @@ enum Theme {
         case .hearing: Color(red: 0.55, green: 0.95, blue: 1.0)
         case .thinking: Color(red: 0.62, green: 0.52, blue: 1.0)
         case .speaking: Color(red: 0.25, green: 0.95, blue: 0.85)
+        case .muted: Color(red: 1.0, green: 0.55, blue: 0.35)
         case .off: Color(white: 0.45)
         }
     }
@@ -42,6 +43,7 @@ struct OrbView: View {
     private var energy: Double {
         switch state {
         case .off: 0.15
+        case .muted: 0.12
         case .idle, .listening: 0.35
         case .hearing: 0.75
         case .thinking: 1.0

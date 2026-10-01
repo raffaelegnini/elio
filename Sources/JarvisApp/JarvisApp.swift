@@ -37,6 +37,7 @@ struct MenuContent: View {
             Text(loop.connected ? "Daemon connesso" : "Daemon non raggiungibile")
             Divider()
             Button("Parla con Jarvis  ⌥⌘J") { delegate.activate() }
+            Button(loop.muted ? "Riattiva microfono  ⌥⌘M" : "Silenzia microfono  ⌥⌘M") { loop.setMuted(!loop.muted) }
             Button("Mostra HUD") { delegate.hud.show(pinned: true) }
             Button("Dashboard  ⌥⌘D") { delegate.showDashboard() }
             if !loop.diffs.isEmpty {
@@ -62,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var dashboard: NSWindow?
     private var hotKey: HotKey?
     private var dashboardKey: HotKey?
+    private var muteKey: HotKey?
 
     private static var launchedAtLogin: Bool {
         let event = NSAppleEventManager.shared().currentAppleEvent
@@ -75,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         case .speaking: "waveform.circle.fill"
         case .thinking: "brain.head.profile"
         case .hearing: "ear.fill"
+        case .muted: "mic.slash.circle"
         case .off, nil: "circle.slash"
         default: "circle.hexagongrid.circle"
         }
@@ -96,6 +99,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         dashboardKey = HotKey(keyCode: 2 /* D */, modifiers: [.option, .command]) { [weak self] in
             self?.showDashboard()
         }
+        muteKey = HotKey(keyCode: 46 /* M */, modifiers: [.option, .command]) { [weak self] in
+            guard let loop = self?.loop else { return }
+            loop.setMuted(!loop.muted)
+            self?.hud.show(pinned: false)
+            self?.hud.scheduleHide(after: 2.5)
+        }
         // Opened by hand (not at login): show the dashboard right away.
         if !Self.launchedAtLogin { showDashboard() }
         Task { await loop.start() }
@@ -111,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         guard let loop else { return }
         if let review { dashboardState.reviewing = review }
         if dashboard == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1320, height: 820),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                                   backing: .buffered, defer: false)
             window.titlebarAppearsTransparent = true
@@ -142,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 } else {
                     switch loop.state {
                     case .hearing, .thinking, .speaking: self.hud.show(pinned: false)
-                    case .listening, .idle: self.hud.scheduleHide(after: 6)
+                    case .listening, .idle, .muted: self.hud.scheduleHide(after: 6)
                     case .off: break
                     }
                 }
@@ -160,6 +169,7 @@ extension VoiceLoop.State {
         case .hearing: "ti sento"
         case .thinking: "elaboro"
         case .speaking: "parlo"
+        case .muted: "microfono spento"
         case .off: "spento"
         }
     }

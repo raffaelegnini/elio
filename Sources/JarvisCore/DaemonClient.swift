@@ -24,6 +24,28 @@ public final class DaemonClient: @unchecked Sendable {
 
     public var isConnected: Bool { lock.withLock { connected } }
 
+    private var waiting: [String: CheckedContinuation<(String, Bool), Never>] = [:]
+
+    /// Calls a Jarvis tool on the daemon and waits for its result (also used to list tools).
+    public func call(_ message: ClientMessage) async -> (String, Bool) {
+        let id: String
+        switch message {
+        case .tool(let i, _, _), .listTools(let i): id = i
+        default: return ("", true)
+        }
+        // The daemon may be restarting.
+        for _ in 0..<50 where !isConnected { try? await Task.sleep(for: .milliseconds(100)) }
+        return await withCheckedContinuation { c in
+            lock.withLock { waiting[id] = c }
+            send(message)
+        }
+    }
+
+    public func callTool(_ name: String, _ args: [String: Any] = [:]) async -> (String, Bool) {
+        let json = String(decoding: (try? JSONSerialization.data(withJSONObject: args)) ?? Data("{}".utf8), as: UTF8.self)
+        return await call(.tool(id: UUID().uuidString, name: name, args: json))
+    }
+
     public func stop() {
         lock.withLock { stopped = true }
         socket?.cancel(with: .goingAway, reason: nil)
@@ -70,7 +92,12 @@ public final class DaemonClient: @unchecked Sendable {
                 @unknown default: nil
                 }
                 if let data, let msg = try? self.decoder.decode(ServerMessage.self, from: data) {
-                    self.onMessage?(msg)
+                    if msg.type == .toolResult, let id = msg.id,
+                       let waiter = self.lock.withLock({ self.waiting.removeValue(forKey: id) }) {
+                        waiter.resume(returning: (msg.payload ?? msg.text ?? "", msg.isError ?? false))
+                    } else {
+                        self.onMessage?(msg)
+                    }
                 }
                 self.receive(on: task)
             case .failure:

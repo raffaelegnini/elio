@@ -94,7 +94,13 @@ final class Server: @unchecked Sendable {
         case .tool(let id, let name, let args):
             Task {
                 let ctx = await brain.toolContext
+                let start = Date()
+                brain.publish(ServerMessage(type: .event, id: id, text: name, kind: "tool",
+                                            payload: "{\"phase\":\"start\"}"))
                 let (result, isError) = await ToolRegistry.call(name: name, argsJSON: args, ctx: ctx)
+                let ms = Int(Date().timeIntervalSince(start) * 1000)
+                brain.publish(ServerMessage(type: .event, id: id, text: name, latencyMs: ms, kind: "tool",
+                                            payload: "{\"phase\":\"end\"}", isError: isError))
                 log("tool \(name) → \(isError ? "ERROR " : "")\(result.prefix(160))")
                 self.send(ServerMessage(type: .toolResult, id: id, payload: result, isError: isError), on: conn)
             }

@@ -110,6 +110,13 @@ struct HUDView: View {
             Spacer()
             Text(loop.charactersThisSession > 0 ? "\(loop.charactersThisSession) CHR" : "")
                 .font(Theme.mono).foregroundStyle(Theme.dim)
+            Button { loop.setMuted(!loop.muted) } label: {
+                Image(systemName: loop.muted ? "mic.slash.fill" : "mic.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(loop.muted ? Theme.tint(.muted) : Theme.dim)
+            }
+            .buttonStyle(.plain)
+            .help(loop.muted ? "Riattiva microfono (⌥⌘M)" : "Silenzia microfono (⌥⌘M)")
             Button(action: close) {
                 Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.dim)
             }
@@ -171,7 +178,8 @@ struct HUDView: View {
     }
 
     private var hint: String {
-        loop.alwaysListening ? "Di' \"Jarvis…\" oppure ⌥⌘J" : "Premi ⌥⌘J per parlare"
+        if loop.muted { return "Microfono spento — ⌥⌘M per riattivarlo" }
+        return loop.alwaysListening ? "Di' \"Jarvis…\" oppure ⌥⌘J" : "Premi ⌥⌘J per parlare"
     }
 
     private var conversation: some View {

@@ -9,7 +9,16 @@ import Observation
 @MainActor
 @Observable
 public final class VoiceLoop {
-    public enum State: String { case idle, listening, hearing, thinking, speaking, off }
+    public enum State: String { case idle, listening, hearing, thinking, speaking, muted, off }
+
+    public struct ToolActivity: Identifiable {
+        public let id: String
+        public let name: String
+        public var running: Bool
+        public var ok: Bool
+        public var ms: Int?
+        public let date = Date()
+    }
 
     public struct Turn: Identifiable {
         public let id = UUID()
@@ -28,6 +37,10 @@ public final class VoiceLoop {
     public private(set) var charactersThisSession = 0
     public private(set) var lastError: String?
     public private(set) var inputDevice = ""
+    public private(set) var muted = false
+    /// Live tool calls (newest last) and the tools currently running.
+    public private(set) var activity: [ToolActivity] = []
+    public private(set) var activeTools: Set<String> = []
     public var alwaysListening = true
     /// Background agents, newest last.
     public private(set) var tasks: [TaskInfo] = []
@@ -85,9 +98,11 @@ public final class VoiceLoop {
         pipeline.onLevel = { [weak self] db in Task { @MainActor in self?.updateLevel(db) } }
         audio.onInput = { [pipeline] buffer, db in pipeline.process(buffer, levelDb: db) }
 
+        muted = UserDefaults.standard.bool(forKey: "jarvis.muted")
         do {
             try await UtteranceTranscriber.ensureModel(locale: Locale(identifier: "it_IT"))
             try audio.start()
+            if muted { try audio.setInputEnabled(false) }
             pipeline.inputFormat = audio.inputFormat
             inputDevice = audio.inputDeviceName
             VoiceLog.write("audio started: in '\(inputDevice)' out '\(audio.outputDeviceName)' bt-out \(AudioDevices.defaultOutputIsBluetooth()) builtin-mic \(AudioDevices.builtInMicrophone().map { AudioDevices.name(of: $0) } ?? "-"), format: \(String(describing: audio.inputFormat))")
@@ -100,7 +115,7 @@ public final class VoiceLoop {
                 self.pipeline.inputFormat = format
                 self.pipeline.resetVAD()
             }
-            state = .listening
+            state = muted ? .muted : .listening
             speaker.warmCache(Self.acks + Self.fillers)
         } catch {
             lastError = "Audio: \(error.localizedDescription)"
@@ -114,11 +129,40 @@ public final class VoiceLoop {
             interrupt()
             return
         }
+        // ⌥⌘J while muted: unmute (explicit user action).
+        if muted { setMuted(false) }
         // A short chime, not speech: speaking would raise the mic threshold
         // right when the user starts the command.
         armedUntil = Date().addingTimeInterval(Self.wakeWindow)
         NSSound(named: "Tink")?.play()
         if state != .thinking { state = .hearing }
+    }
+
+    /// Stops listening entirely (mic released). Typed input and spoken replies still work.
+    public func setMuted(_ on: Bool) {
+        guard on != muted else { return }
+        do {
+            try audio.setInputEnabled(!on)
+        } catch {
+            lastError = "Microfono: \(error.localizedDescription)"
+            return
+        }
+        muted = on
+        UserDefaults.standard.set(on, forKey: "jarvis.muted")
+        if on {
+            if transcriber != nil { abandonUtterance() }
+            pipeline.resetVAD()
+            partial = ""
+            state = .muted
+        } else if state == .muted || state == .off {
+            state = .listening
+        }
+        VoiceLog.write("mic \(on ? "muted" : "unmuted")")
+    }
+
+    /// Runs a tool on the daemon (dashboard data: agenda, reminders…).
+    public func callTool(_ name: String, _ args: [String: Any] = [:]) async -> (String, Bool) {
+        await client.callTool(name, args)
     }
 
     public func interrupt() {
@@ -314,6 +358,20 @@ public final class VoiceLoop {
                 if diffs.count > 10 { diffs.removeLast() }
                 diffSignal += 1
             }
+        case "tool":
+            guard let id = msg.id, let name = msg.text else { break }
+            if msg.payload?.contains("start") == true {
+                activeTools.insert(name)
+                activity.append(ToolActivity(id: id, name: name, running: true, ok: true))
+                if activity.count > 40 { activity.removeFirst(activity.count - 40) }
+            } else {
+                activeTools.remove(name)
+                if let i = activity.firstIndex(where: { $0.id == id }) {
+                    activity[i].running = false
+                    activity[i].ok = msg.isError != true
+                    activity[i].ms = msg.latencyMs
+                }
+            }
         case "card":
             if let c = CardPayload.fromJSON(msg.payload) {
                 cards.insert(c, at: 0)
@@ -387,7 +445,7 @@ public final class VoiceLoop {
             pipeline.speaking = true
         } else {
             pipeline.speaking = false
-            if state == .speaking { state = .listening }
+            if state == .speaking { state = muted ? .muted : .listening }
             // Follow-up window: answer without repeating the wake word (never shorten a longer one).
             let followUp = Date().addingTimeInterval(Self.followUpWindow)
             armedUntil = max(armedUntil ?? followUp, followUp)
