@@ -272,10 +272,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     // Never let a pending confirmation disappear from view.
                     self.hud.show(pinned: true)
                 } else {
+                    // Listening/thinking/speaking show in the notch island; the HUD stays out of the way.
                     switch loop.state {
-                    case .hearing, .thinking, .speaking: self.hud.show(pinned: false)
-                    case .listening, .idle, .muted: self.hud.scheduleHide(after: 6)
-                    case .off: break
+                    case .listening, .idle, .muted: self.hud.scheduleHide(after: 4)
+                    default: break
                     }
                 }
                 self.observeState(loop)
