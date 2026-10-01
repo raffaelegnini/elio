@@ -17,8 +17,7 @@ public enum PermissionPolicy {
             return .allow
         case "Edit", "Write", "MultiEdit", "NotebookEdit":
             let path = (input["file_path"] as? String) ?? (input["notebook_path"] as? String) ?? ""
-            if onMac, isInside(path, FileManager.default.homeDirectoryForCurrentUser.path),
-               !isInside(path, FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh").path) {
+            if onMac, isInside(path, FileManager.default.homeDirectoryForCurrentUser.path), !isSensitive(path) {
                 return .allow
             }
             return isInside(path, cwd) ? .allow : .confirm(.normal)
@@ -83,6 +82,16 @@ public enum PermissionPolicy {
             return .confirm(.dangerous)
         }
         let outward = [
+            // Inline code can delete or overwrite anything without ever spelling "rm".
+            #"\b(python[0-9.]*|node|perl|ruby|php|osascript|swift)\s+(-[a-zA-Z]*[ce]\b|-(\s|$))"#,
+            #"\b(sh|bash|zsh|fish)\s+-[a-zA-Z]*c\b|\beval\b|\bxargs\b|\bsource\b|(^|[\s;&|])\.\s"#,
+            // Overwrites: plain redirection, tee without -a, truncate, mv/cp without -n.
+            #"(^|[^0-9&>])>(?!>)\s*(?!/dev/null|&)\S"#,
+            #"\btee\s+(?!-a)"#,
+            #"\btruncate\b|\bdefaults\s+delete\b|\bsrm\b"#,
+            #"(^|[\s;&|(])(mv|cp)\s+(?!(?:[^;&|]*\s)?-[a-zA-Z]*n\b)"#,
+            // Persistence and shell startup files.
+            #"LaunchAgents|LaunchDaemons|crontab|\.zshrc|\.zprofile|\.bash_profile|\.bashrc|\.profile\b|login\s*items"#,
             #"\b(curl|wget|nc|ncat|ssh|scp|sftp|rsync|ftp|telnet)\b"#,
             #"\b(security)\s+(delete|add|import|set)"#,
             #"\.ssh/|\.aws/|\.gnupg/|Keychains/"#,
@@ -94,6 +103,17 @@ public enum PermissionPolicy {
             return .confirm(.normal)
         }
         return .allow
+    }
+
+    /// Dotfiles and folders that hold credentials or run code at login.
+    static func isSensitive(_ path: String) -> Bool {
+        let home = canonical(FileManager.default.homeDirectoryForCurrentUser.path)
+        let p = canonical(path)
+        guard p.hasPrefix(home + "/") else { return true }
+        let rel = String(p.dropFirst(home.count + 1))
+        if rel.hasPrefix(".") { return true }   // ~/.zshrc, ~/.ssh, ~/.aws, ~/.config…
+        return ["Library/LaunchAgents", "Library/Keychains", "Library/Application Support/Elio",
+                "Library/Preferences/com.apple.loginitems"].contains { rel.hasPrefix($0) }
     }
 
     /// realpath() of the deepest existing ancestor + the components that don't exist yet.
@@ -190,7 +210,6 @@ public enum PermissionPolicy {
         #"^(swift\s+(build|test)|xcodebuild)(\s+[\w./:=-]+)*$"#,
         #"^make\s+(test|lint|check|build)$"#,
         #"^(python3?\s+-m\s+(pytest|mypy|ruff)|pytest|ruff|mypy)(\s+[\w./:=-]+)*$"#,
-        #"^(python3?\s+-c|node\s+-e)\s+('[^']*'|"[^"]*")$"#,
     ]
 
     /// Read-only or local, reversible developer commands. Every pattern is anchored at both ends and
