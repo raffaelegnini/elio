@@ -2,8 +2,8 @@ import JarvisCore
 import JarvisVoice
 import SwiftUI
 
-/// Mission control: agenda and reminders on the left, the neural core in the middle,
-/// workflows, live tool activity and reviews on the right.
+/// The neural network fills the window; agenda, workflows, activity and the console
+/// float above it as frosted glass cards that sharpen on hover.
 struct DashboardView: View {
     let loop: VoiceLoop
     let state: DashboardState
@@ -11,23 +11,38 @@ struct DashboardView: View {
     @State private var agenda: [AgendaItem] = []
     @State private var agendaNote: String?
     @State private var reminders: [String] = []
-    @State private var showNetwork = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        ZStack {
+            Backdrop(tint: Theme.tint(loop.state))
+            NeuralGraphView(loop: loop, chrome: EdgeInsets(top: 92, leading: 336, bottom: 170, trailing: 376))
+
+            VStack(spacing: 0) {
+                header
+                    .background(.ultraThinMaterial.opacity(0.85))
+                    .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
+                Spacer(minLength: 0)
+            }
+
+            HStack(alignment: .top, spacing: 0) {
+                leftColumn.frame(width: 300)
+                Spacer(minLength: 0)
+                rightColumn.frame(width: 340)
+            }
+            .padding(.top, 104).padding(.horizontal, 18).padding(.bottom, 180)
+
+            VStack {
+                Spacer()
+                console
+            }
+            .padding(.bottom, 18)
+
             if let diff = state.reviewing {
                 review(diff)
-            } else {
-                HStack(alignment: .top, spacing: 16) {
-                    leftColumn.frame(width: 300)
-                    center.frame(maxWidth: .infinity)
-                    rightColumn.frame(width: 340)
-                }
-                .padding(.horizontal, 20).padding(.bottom, 20)
+                    .background(.ultraThinMaterial)
+                    .transition(.opacity)
             }
         }
-        .background(Backdrop(tint: Theme.tint(loop.state)))
         .preferredColorScheme(.dark)
         .task { await refreshLoop() }
     }
@@ -98,49 +113,37 @@ struct DashboardView: View {
                 }
             }
             .frame(maxHeight: 200)
+            Spacer(minLength: 0)
         }
     }
 
-    private var center: some View {
-        VStack(spacing: 12) {
-            ZStack(alignment: .topTrailing) {
-                if showNetwork {
-                    NeuralGraphView(loop: loop)
-                        .background(RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.18)))
-                        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
-                } else {
-                    NeuralCore(loop: loop)
-                }
-                Picker("", selection: $showNetwork) {
-                    Text("RETE").tag(true)
-                    Text("NUCLEO").tag(false)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 150)
-                .padding(10)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Text(loop.state.label.uppercased())
-                .font(.system(size: 13, weight: .semibold, design: .monospaced)).tracking(4)
-                .foregroundStyle(Theme.tint(loop.state))
-            Text(loop.partial.isEmpty ? lastReply : loop.partial)
-                .font(.system(size: 14)).foregroundStyle(loop.partial.isEmpty ? Theme.dim : Theme.text)
-                .multilineTextAlignment(.center).lineLimit(3)
-                .frame(maxWidth: 560, minHeight: 56)
+    private var console: some View {
+        VStack(spacing: 10) {
             if let req = loop.confirmations.first {
                 ConfirmCard(request: req) { loop.answer(req, approved: $0) }.frame(maxWidth: 520)
             }
-            HStack(spacing: 10) {
-                Image(systemName: "chevron.right").foregroundStyle(Theme.cyan)
-                TextField("Scrivi a Jarvis…", text: $input)
-                    .textFieldStyle(.plain).font(.system(size: 15)).foregroundStyle(Theme.text)
-                    .onSubmit { loop.submit(text: input); input = "" }
-                Text("⌥⌘J per parlare").font(Theme.mono).foregroundStyle(Theme.dim)
+            VStack(spacing: 8) {
+                Text(loop.state.label.uppercased())
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced)).tracking(4)
+                    .foregroundStyle(Theme.tint(loop.state))
+                Text(loop.partial.isEmpty ? lastReply : loop.partial)
+                    .font(.system(size: 14)).foregroundStyle(loop.partial.isEmpty ? Theme.dim : Theme.text)
+                    .multilineTextAlignment(.center).lineLimit(3)
+                    .frame(maxWidth: 560)
+                HStack(spacing: 10) {
+                    Image(systemName: "chevron.right").foregroundStyle(Theme.cyan)
+                    TextField("Scrivi a Jarvis…", text: $input)
+                        .textFieldStyle(.plain).font(.system(size: 15)).foregroundStyle(Theme.text)
+                        .onSubmit { loop.submit(text: input); input = "" }
+                    Text("⌥⌘J per parlare").font(Theme.mono).foregroundStyle(Theme.dim)
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.05)))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
             }
-            .padding(14)
-            .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.04)))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
-            .frame(maxWidth: 560)
+            .padding(16)
+            .frame(width: 600)
+            .glassCard()
         }
     }
 
@@ -308,7 +311,7 @@ private struct ActivityRow: View {
     }
 }
 
-/// Glass panel with HUD corner brackets.
+/// Frosted glass panel with HUD corner brackets.
 struct GlassPanel<Content: View>: View {
     let title: String
     let trailing: String?
@@ -326,10 +329,33 @@ struct GlassPanel<Content: View>: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.panel.opacity(0.55)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
+        .glassCard()
         .overlay(CornerBrackets().stroke(Theme.cyan.opacity(0.55), lineWidth: 1.2))
     }
+}
+
+/// See-through over the network at rest, more solid while the pointer is on it.
+private struct GlassCard: ViewModifier {
+    @State private var hover = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.ultraThinMaterial)
+                    .opacity(hover ? 0.95 : 0.6)
+            )
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bg.opacity(hover ? 0.55 : 0.25)))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(hover ? Theme.cyan.opacity(0.35) : Theme.line))
+            .opacity(hover ? 1 : 0.88)
+            .scaleEffect(hover ? 1.01 : 1)
+            .shadow(color: .black.opacity(0.35), radius: hover ? 18 : 8, y: 6)
+            .onHover { h in withAnimation(.easeOut(duration: 0.18)) { hover = h } }
+    }
+}
+
+extension View {
+    func glassCard() -> some View { modifier(GlassCard()) }
 }
 
 private struct CornerBrackets: Shape {

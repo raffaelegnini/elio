@@ -141,6 +141,8 @@ final class GraphModel {
 
 struct NeuralGraphView: View {
     let loop: VoiceLoop
+    /// Areas covered by floating UI: controls and inspector stay out of them.
+    var chrome = EdgeInsets()
     @State private var model = GraphModel()
     @State private var offset: CGSize = .zero
     @State private var dragStartOffset: CGSize = .zero
@@ -180,13 +182,14 @@ struct NeuralGraphView: View {
                     .position(center)
                     .allowsHitTesting(false)
 
-                controls.padding(10)
+                controls
+                    .padding(.top, chrome.top).padding(.leading, chrome.leading + 6)
 
                 if let id = selected, let node = model.nodes[id] {
                     Inspector(node: node, close: { selected = nil })
                         .frame(width: 280)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .padding(.top, chrome.top + 36)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             }
             .clipped()
