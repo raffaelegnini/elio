@@ -209,7 +209,7 @@ public enum PermissionPolicy {
         #"^(\./)?vendor/bin/(phpunit|pest|phpstan|pint|psalm)(\s+[\w./:=-]+)*$"#,
         #"^(swift\s+(build|test)|xcodebuild)(\s+[\w./:=-]+)*$"#,
         #"^make\s+(test|lint|check|build)$"#,
-        #"^(python3?\s+-m\s+(pytest|mypy|ruff)|pytest|ruff|mypy)(\s+[\w./:=-]+)*$"#,
+        #"^(python3?\s+-m\s+(pytest|unittest|mypy|ruff)|pytest|ruff|mypy)(\s+[\w./:=-]+)*$"#,
     ]
 
     /// Read-only or local, reversible developer commands. Every pattern is anchored at both ends and

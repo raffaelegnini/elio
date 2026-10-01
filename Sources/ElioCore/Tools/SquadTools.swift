@@ -18,7 +18,9 @@ extension TaskRunner {
         Non più di un aggiornamento ogni 15-20 secondi e mai per dettagli tecnici minori.
         - Cancellare file, usare sudo, fermare processi, inviare messaggi o dati all'esterno passa da una conferma: \
         chiedila solo se serve davvero. Preferisci spostare nel Cestino (`mv … ~/.Trash/`) piuttosto che cancellare.
-        - Per spostare usa `mv -n` (mai sovrascrivere senza chiedere).
+        - Per spostare/copiare usa `mv -n` / `cp -n` (mai sovrascrivere senza chiedere). Per creare o modificare file \
+        usa Write/Edit, non redirect della shell (> sovrascrive e chiede conferma). Niente `python -c`/`sh -c`: \
+        il codice inline chiede conferma.
         - Se un'informazione manca o c'è una scelta con impatto, chiedi con mcp__elio__ask_user (domanda breve e chiara).
         - Termina con un riassunto in italiano di massimo due frasi, adatto a essere letto a voce.
         """
@@ -45,6 +47,8 @@ extension TaskRunner {
         - A Elio riferisci solo cose utili a Raffaele: progressi importanti, decisioni da prendere, problemi.
         - Codice: lavora su un branch locale `elio/<slug-breve>` (lo stesso per tutta la squadra, se lavorate sullo stesso repo: \
         mettetevi d'accordo), committa lì. Mai push, merge, rebase né PR: Raffaele rivede il diff e crea lui la PR.
+        - Per creare o modificare file usa Edit/Write (già autorizzati nel progetto), non printf/echo/cat con > o >>: \
+        quelli chiedono una conferma a Raffaele e vi bloccano. Comandi git semplici, uno per volta.
         - Non cancellare file e non inviare messaggi fuori dalla squadra senza conferma.
         - Se ti manca un'informazione che solo Raffaele ha, chiedi con mcp__elio__ask_user.
         - Termina con un riassunto di massimo due frasi del tuo lavoro.

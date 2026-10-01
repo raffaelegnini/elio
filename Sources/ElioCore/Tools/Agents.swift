@@ -588,6 +588,8 @@ public actor TaskRunner {
         - Se devi modificare codice, crea prima un branch locale `elio/<slug-breve>` e committa lì. Mai su develop/main/master.
         - Non fare mai push, merge, rebase, né aprire PR: Raffaele rivede il diff nell'app e crea lui la PR.
         - Non cancellare file e non inviare messaggi a nessuno. Se ti serve davvero, chiedi (la richiesta passa da una conferma).
+        - Per creare o modificare file usa Edit/Write (già autorizzati nel progetto), non printf/echo/cat con > o >>: \
+        quelli chiedono una conferma all'utente e ti bloccano. Comandi git semplici, uno per volta (niente catene con | e &&).
         - Esegui test/lint pertinenti se esistono.
         - Se ti manca un'informazione o devi scegliere tra opzioni con impatto, chiedi a Raffaele con \
         mcp__elio__ask_user invece di indovinare (una domanda chiara, con le opzioni).
