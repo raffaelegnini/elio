@@ -107,6 +107,15 @@ final class Server: @unchecked Sendable {
                     self.send(reply, on: conn)
                 }
             }
+        case .answer(let id, let text):
+            Task { await brain.gate.reply(id: id, text: text) }
+        case .reload:
+            guard mode == .local else { return }
+            log("reload requested: restarting")
+            Task {
+                await brain.shutdown()
+                exit(0)  // launchd (KeepAlive) starts us again with the new settings
+            }
         case .listTools, .tool:
             guard mode == .local else {
                 send(ServerMessage(type: .error, text: "not allowed remotely"), on: conn)

@@ -16,6 +16,7 @@ public actor Brain {
     public init(config: JarvisConfig, memory: Memory, executablePath: String) async {
         self.config = config
         self.memory = memory
+        self.executablePath = executablePath
         let mcp = Self.mcpConfig(executablePath: executablePath)
         scheduler = Scheduler(memory: memory)
         tasks = TaskRunner(config: config, mcpConfig: mcp, memory: memory)
@@ -23,10 +24,11 @@ public actor Brain {
         var options = ClaudeBridge.Options(
             claudePath: config.claudePath,
             model: config.claudeModel,
-            systemPrompt: Self.systemPrompt(userName: config.userName)
+            systemPrompt: Self.systemPrompt(config)
                 + "\n\n" + MemoryTools.promptBlock(await memory.facts()),
             workingDirectory: JarvisPaths.claudeWorkspace)
-        options.mcpConfig = mcp
+        options.mcpConfig = Self.sessionMCPConfigFile(executablePath: executablePath)
+        options.systemPrompt += "\n\n" + IntegrationStore.promptBlock()
         claude = ClaudeBridge(options: options, resumeSessionId: await memory.get("claude.session_id"))
         await claude.setSessionIdHandler { id in Task { await memory.set("claude.session_id", id) } }
     }
@@ -37,6 +39,7 @@ public actor Brain {
         await gate.setBroadcast(send)
         await tasks.setBroadcast(send)
         await scheduler.attach(tasks: tasks)
+        await scheduler.setRepeatReminders(config.repeatReminders)
         await scheduler.start(broadcast: send)
         do { try await claude.warmUp() } catch { log("claude warm-up failed: \(error)") }
         await routines.start(brain: self)
@@ -69,7 +72,32 @@ public actor Brain {
     public var toolContext: ToolContext {
         let hub = self.hub
         return ToolContext(config: config, memory: memory, broadcast: { hub.send($0) },
-                           gate: gate, tasks: tasks, scheduler: scheduler)
+                           gate: gate, tasks: tasks, scheduler: scheduler,
+                           restartSession: { [weak self] in await self?.refreshSession() })
+    }
+
+    private let executablePath: String
+
+    /// Rebuilds prompt (memory, integrations) and MCP servers; takes effect on the next message.
+    public func refreshSession() async {
+        var options = ClaudeBridge.Options(
+            claudePath: config.claudePath, model: config.claudeModel,
+            systemPrompt: Self.systemPrompt(config) + "\n\n" + MemoryTools.promptBlock(await memory.facts())
+                + "\n\n" + IntegrationStore.promptBlock(),
+            workingDirectory: JarvisPaths.claudeWorkspace)
+        options.mcpConfig = Self.sessionMCPConfigFile(executablePath: executablePath)
+        await claude.reconfigure(options)
+    }
+
+    /// Jarvis's own MCP server plus enabled MCP integrations, in a 0600 file (may contain secrets).
+    static func sessionMCPConfigFile(executablePath: String) -> String {
+        var servers = IntegrationStore.mcpServers()
+        servers["jarvis"] = ["command": executablePath, "args": ["--mcp"]]
+        let url = JarvisPaths.support.appendingPathComponent("mcp-session.json")
+        if let data = try? JSONSerialization.data(withJSONObject: ["mcpServers": servers]) {
+            FileManager.default.createFile(atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600])
+        }
+        return url.path
     }
 
     /// MCP server = this same binary in `--mcp` mode, bridging tool calls back to the daemon.
@@ -157,6 +185,13 @@ public actor Brain {
         case .brief:
             Task { await routines.runBrief() }
             return m.lang == .it ? "Preparo il briefing." : "Preparing your briefing."
+        case .recap:
+            Task { await routines.runRecap() }
+            return "Ricapitolo la giornata."
+        case .done:
+            // Only a reminder fired in the last 30 minutes; otherwise it's a normal sentence for Claude.
+            guard let text = await memory.acknowledgeLastReminder(within: 1800) else { return nil }
+            return "Perfetto, \(text.prefix(1).lowercased() + text.dropFirst()) archiviato."
         }
     }
 
@@ -181,18 +216,18 @@ public actor Brain {
         return "[contesto: \(f.string(from: Date()))]\n\(text)"
     }
 
-    static func systemPrompt(userName: String) -> String {
-        """
-        Sei Jarvis, l'assistente personale di \(userName), che gira sul suo Mac. \
+    static func systemPrompt(_ config: JarvisConfig) -> String {
+        let userName = config.userName, me = config.assistantName, title = config.addressAs
+        return """
+        Sei \(me), l'assistente personale di \(userName) (DNA Factory), che gira sul suo Mac. \
         L'utente si chiama \(userName): usa sempre questo nome, anche se altri dati \
-        (come l'email dell'account) suggeriscono un nome diverso. \
-        Personalità: sei J.A.R.V.I.S. come nei film Iron Man. Un maggiordomo digitale britannico: impeccabile, \
-        calmo anche nell'emergenza, ironia asciutta e sottile (understatement, mai battute da cabaret), \
-        devoto ma mai servile; se l'idea è discutibile lo fai notare con garbo, poi esegui. \
-        Dai notizie con eleganza ("Temo che…", "Se posso permettermi…", "Fatto, Signore."). \
-        Non citare battute dei film: lo stile sì, le frasi no.
-        Ti rivolgi a lui chiamandolo "Signore" in italiano ("Buongiorno, Signore.") e "sir" in inglese, \
-        come il Jarvis dei film; usa il nome Raffaele solo di rado, per enfasi.
+        (come l'email dell'account) suggeriscono un nome diverso.
+        Personalità: lo spirito del Jarvis dei film, ma italiano. Calmo anche nell'emergenza, preciso, \
+        ironia asciutta e leggera, devoto ma mai servile: se un'idea è discutibile lo dici con franchezza \
+        e garbo, poi esegui. Parli un italiano naturale e scorrevole, come una persona colta di oggi: \
+        niente formule tradotte dall'inglese, niente tono da maggiordomo inglese, niente frasi ingessate.
+        Ti rivolgi a lui chiamandolo "\(title)" ("Buongiorno, \(title)."), con il "lei"; \
+        il nome \(userName) solo di rado.
 
         Le tue risposte vengono lette ad alta voce:
         - Rispondi nella lingua dell'utente (italiano o inglese).
@@ -202,6 +237,14 @@ public actor Brain {
         - Fai eccezione solo se l'utente chiede esplicitamente di spiegare o approfondire.
         - Niente markdown, elenchi puntati, emoji, codice o URL: se servono dettagli, offri di mostrarli a schermo.
         - Numeri e orari scritti come si dicono.
+
+        Nuove integrazioni ("voglio integrare X", "collega X"):
+        1. Cerca sul web (WebSearch/WebFetch) se X ha un server MCP ufficiale e/o API REST; spiega in una frase \
+        cosa esiste e chiedi quale preferisce (consiglia tu).
+        2. Raccogli i dati non segreti (es. dominio dell'account) e chiama integration_propose. La chiave non chiederla mai \
+        in chat: l'utente la inserisce nelle Impostazioni che si aprono da sole.
+        3. Quando è pronta, leggi la documentazione con WebFetch e salva note d'uso compatte con integration_notes \
+        (endpoint utili, filtri, paginazione). Poi usala con api_request (o con i tool MCP).
 
         Memoria:
         - Hai una memoria a lungo termine (sotto). Quando l'utente dice "ricordati che…" o emerge un'informazione \

@@ -19,6 +19,9 @@ struct IntentMatcherTests {
         ("Basta", .stop, .it),
         ("Jarvis, fammi il briefing", .brief, .it),
         ("recap della notte", .brief, .it),
+        ("Jarvis, recap della giornata", .recap, .it),
+        ("com'è andata oggi?", .recap, .it),
+        ("fatto", .done, .it),
     ])
     func matches(input: String, intent: LocalIntent, lang: Lang) {
         #expect(m.match(input) == MatchedIntent(intent: intent, lang: lang))

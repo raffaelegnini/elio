@@ -3,6 +3,11 @@ import Foundation
 /// Runtime configuration, persisted at ~/Library/Application Support/Jarvis/config.json.
 public struct JarvisConfig: Codable, Sendable {
     public var userName: String = "Raffaele"
+    /// Brand / identity (shared with colleagues: everything here is editable in Settings).
+    public var assistantName: String = "Jarvis"
+    public var addressAs: String = "Signore"          // how the assistant addresses the user
+    public var wakeAliases: [String] = []             // extra spellings the recognizer produces
+    public var accentColor: String = "#FFD360"        // DNA yellow
     public var claudePath: String = JarvisConfig.defaultClaudePath()
     public var claudeModel: String = "sonnet"
     public var port: UInt16 = 8765
@@ -21,6 +26,12 @@ public struct JarvisConfig: Codable, Sendable {
     public var slackClockInText: String = "buongiorno"
     /// Phone: ntfy topic for notifications when away (generated on first run), web/WS ports for the PWA.
     public var ntfyTopic: String = ""
+    public var spokenSentences: Int = 2
+    public var builtInMicWithBluetooth: Bool = true
+    public var briefOpening: Bool = true
+    public var recapTime: String = ""
+    public var nudgeMissedMeetings: Bool = true
+    public var repeatReminders: Bool = true
     public var webPort: UInt16 = 8766
     public var remotePort: UInt16 = 8767
 
@@ -31,6 +42,10 @@ public struct JarvisConfig: Codable, Sendable {
         let d = JarvisConfig()
         let c = try decoder.container(keyedBy: CodingKeys.self)
         userName = try c.decodeIfPresent(String.self, forKey: .userName) ?? d.userName
+        assistantName = try c.decodeIfPresent(String.self, forKey: .assistantName) ?? d.assistantName
+        addressAs = try c.decodeIfPresent(String.self, forKey: .addressAs) ?? d.addressAs
+        wakeAliases = try c.decodeIfPresent([String].self, forKey: .wakeAliases) ?? d.wakeAliases
+        accentColor = try c.decodeIfPresent(String.self, forKey: .accentColor) ?? d.accentColor
         claudePath = try c.decodeIfPresent(String.self, forKey: .claudePath) ?? d.claudePath
         claudeModel = try c.decodeIfPresent(String.self, forKey: .claudeModel) ?? d.claudeModel
         port = try c.decodeIfPresent(UInt16.self, forKey: .port) ?? d.port
@@ -46,6 +61,12 @@ public struct JarvisConfig: Codable, Sendable {
         ntfyTopic = try c.decodeIfPresent(String.self, forKey: .ntfyTopic) ?? d.ntfyTopic
         webPort = try c.decodeIfPresent(UInt16.self, forKey: .webPort) ?? d.webPort
         remotePort = try c.decodeIfPresent(UInt16.self, forKey: .remotePort) ?? d.remotePort
+        spokenSentences = try c.decodeIfPresent(Int.self, forKey: .spokenSentences) ?? d.spokenSentences
+        builtInMicWithBluetooth = try c.decodeIfPresent(Bool.self, forKey: .builtInMicWithBluetooth) ?? d.builtInMicWithBluetooth
+        briefOpening = try c.decodeIfPresent(Bool.self, forKey: .briefOpening) ?? d.briefOpening
+        recapTime = try c.decodeIfPresent(String.self, forKey: .recapTime) ?? d.recapTime
+        nudgeMissedMeetings = try c.decodeIfPresent(Bool.self, forKey: .nudgeMissedMeetings) ?? d.nudgeMissedMeetings
+        repeatReminders = try c.decodeIfPresent(Bool.self, forKey: .repeatReminders) ?? d.repeatReminders
     }
 
     static func defaultClaudePath() -> String {

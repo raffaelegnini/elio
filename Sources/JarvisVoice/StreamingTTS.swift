@@ -33,8 +33,8 @@ final class StreamingTTS: @unchecked Sendable {
         send([
             "text": " ",
             "voice_settings": ["stability": 0.45, "similarity_boost": 0.8, "speed": 1.05],
-            // Smaller first chunk = earlier first audio.
-            "generation_config": ["chunk_length_schedule": [50, 90, 140, 200]],
+            // Larger chunks keep intonation continuous (small ones made audible pauses).
+            "generation_config": ["chunk_length_schedule": [120, 160, 250, 290]],
         ])
         receive()
     }

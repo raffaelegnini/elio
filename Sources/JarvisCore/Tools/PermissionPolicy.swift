@@ -20,6 +20,16 @@ public enum PermissionPolicy {
             return decideBash((input["command"] as? String) ?? "")
         default:
             if tool.hasPrefix("mcp__jarvis__") { return .allow }
+            if tool.hasPrefix("mcp__") {
+                // Integration MCP tools: reading is free, anything else needs an OK.
+                let action = tool.split(separator: "_").last.map(String.init)?.lowercased() ?? ""
+                let name = tool.lowercased()
+                let readish = ["get", "list", "search", "read", "fetch", "find", "query", "show", "describe", "view", "count"]
+                if readish.contains(where: { name.contains("__\($0)") || action.hasPrefix($0) }) { return .allow }
+                if ["delete", "remove", "destroy", "send", "post", "publish"].contains(where: { name.contains($0) }) {
+                    return .confirm(.dangerous)
+                }
+            }
             return .confirm(.normal)
         }
     }

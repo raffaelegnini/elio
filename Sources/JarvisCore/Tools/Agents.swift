@@ -6,6 +6,25 @@ import Foundation
 /// Unanswered requests are denied after a timeout: silence never means yes.
 public actor ConfirmationGate {
     private var waiting: [String: CheckedContinuation<Bool, Never>] = [:]
+    private var questions: [String: CheckedContinuation<String?, Never>] = [:]
+
+    /// Asks the user a free-form question (spoken, HUD, phone). Nil if unanswered in time.
+    public func ask(_ q: QuestionRequest, timeout: TimeInterval) async -> String? {
+        broadcast?(ServerMessage(type: .event, id: q.id, text: "\(q.from) chiede: \(q.question)", kind: "question",
+                                 payload: q.jsonString(), speak: true))
+        let id = q.id
+        Task {
+            try? await Task.sleep(for: .seconds(timeout))
+            self.reply(id: id, text: nil)
+        }
+        return await withCheckedContinuation { questions[q.id] = $0 }
+    }
+
+    public func reply(id: String, text: String?) {
+        guard let c = questions.removeValue(forKey: id) else { return }
+        broadcast?(ServerMessage(type: .event, id: id, text: text ?? "", kind: "questionResolved"))
+        c.resume(returning: text)
+    }
     private var broadcast: (@Sendable (ServerMessage) -> Void)?
     public private(set) var pending: [String: ConfirmRequest] = [:]
 
@@ -103,6 +122,9 @@ public actor Scheduler {
 
     public func attach(tasks: TaskRunner) { self.tasks = tasks }
 
+    private var repeatReminders = true
+    public func setRepeatReminders(_ on: Bool) { repeatReminders = on }
+
     public func start(broadcast: @escaping @Sendable (ServerMessage) -> Void) {
         self.broadcast = broadcast
         loop = Task {
@@ -132,9 +154,14 @@ public actor Scheduler {
         }
         for r in await memory.reminders(dueBefore: Date()) {
             await memory.markReminderDone(r.id)
-            let text = "Promemoria: \(r.text)."
-            LocalActions().notify(title: "Jarvis", body: r.text)
-            broadcast?(ServerMessage(type: .event, text: text, lang: .it, kind: "reminder", speak: true))
+            let (attempt, root) = await memory.reminderAttempt(r.id)
+            let text = attempt == 0 ? "Promemoria: \(r.text)." : "Le ricordo di nuovo: \(r.text)."
+            LocalActions().notify(title: "Promemoria", body: r.text)
+            broadcast?(ServerMessage(type: .event, id: "\(root)", text: text, lang: .it, kind: "reminder", speak: true))
+            // Until the user says "fatto", repeat after 10 minutes (twice at most).
+            if repeatReminders, attempt < 2 {
+                await memory.addReminder(text: r.text, at: Date().addingTimeInterval(600), attempt: attempt + 1, parent: root)
+            }
         }
     }
 }
@@ -234,10 +261,32 @@ public actor TaskRunner {
         switch ev["type"] as? String {
         case "assistant":
             let content = ((ev["message"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
-            for block in content where block["type"] as? String == "tool_use" {
-                let name = block["name"] as? String ?? "tool"
-                let input = block["input"] as? [String: Any] ?? [:]
-                addStep(id, Self.step(name, input))
+            for block in content {
+                switch block["type"] as? String {
+                case "text":
+                    let text = (block["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty { logEntry(TaskLogEntry(taskId: id, kind: .say, title: String(text.prefix(1200)))) }
+                case "tool_use":
+                    let name = block["name"] as? String ?? "tool"
+                    let input = block["input"] as? [String: Any] ?? [:]
+                    addStep(id, Self.step(name, input))
+                    logEntry(Self.logEntry(taskId: id, name: name, input: input))
+                default:
+                    break
+                }
+            }
+        case "user":
+            // Tool results: show a short tail of command output.
+            let content = ((ev["message"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
+            for block in content where block["type"] as? String == "tool_result" {
+                var text = ""
+                if let s = block["content"] as? String { text = s }
+                if let parts = block["content"] as? [[String: Any]] { text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n") }
+                text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty, lastLogKind[id] == .command else { continue }
+                let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+                let tail = lines.suffix(14).joined(separator: "\n")
+                logEntry(TaskLogEntry(taskId: id, kind: .output, title: "", body: String(tail.prefix(1500))))
             }
         case "result":
             let text = ev["result"] as? String ?? ""
@@ -245,6 +294,42 @@ public actor TaskRunner {
             if ev["is_error"] as? Bool == true { tasks[id]?.info.status = .failed }
         default:
             break
+        }
+    }
+
+    private var lastLogKind: [String: TaskLogEntry.Kind] = [:]
+
+    private func logEntry(_ entry: TaskLogEntry) {
+        lastLogKind[entry.taskId] = entry.kind
+        broadcast?(ServerMessage(type: .event, id: entry.taskId, kind: "taskLog", payload: entry.jsonString()))
+    }
+
+    static func logEntry(taskId: String, name: String, input: [String: Any]) -> TaskLogEntry {
+        let file = (input["file_path"] as? String).map { $0.split(separator: "/").suffix(3).joined(separator: "/") } ?? ""
+        switch name {
+        case "Bash":
+            return TaskLogEntry(taskId: taskId, kind: .command, title: input["command"] as? String ?? "",
+                                body: input["description"] as? String ?? "")
+        case "Edit":
+            return TaskLogEntry(taskId: taskId, kind: .edit, title: file,
+                                removed: String((input["old_string"] as? String ?? "").prefix(1500)),
+                                added: String((input["new_string"] as? String ?? "").prefix(1500)))
+        case "MultiEdit":
+            let edits = input["edits"] as? [[String: Any]] ?? []
+            return TaskLogEntry(taskId: taskId, kind: .edit, title: "\(file) (\(edits.count) modifiche)",
+                                removed: edits.compactMap { $0["old_string"] as? String }.joined(separator: "\n…\n").prefix(1500).description,
+                                added: edits.compactMap { $0["new_string"] as? String }.joined(separator: "\n…\n").prefix(1500).description)
+        case "Write":
+            return TaskLogEntry(taskId: taskId, kind: .write, title: file,
+                                added: String((input["content"] as? String ?? "").prefix(1500)))
+        case "Read":
+            return TaskLogEntry(taskId: taskId, kind: .read, title: file)
+        case "Grep", "Glob":
+            return TaskLogEntry(taskId: taskId, kind: .search, title: input["pattern"] as? String ?? "")
+        case "mcp__jarvis__ask_user":
+            return TaskLogEntry(taskId: taskId, kind: .ask, title: input["question"] as? String ?? "")
+        default:
+            return TaskLogEntry(taskId: taskId, kind: .info, title: step(name, input))
         }
     }
 
@@ -324,8 +409,29 @@ public actor TaskRunner {
         - Non fare mai push, merge, rebase, né aprire PR: Raffaele rivede il diff nell'app e crea lui la PR.
         - Non cancellare file e non inviare messaggi a nessuno. Se ti serve davvero, chiedi (la richiesta passa da una conferma).
         - Esegui test/lint pertinenti se esistono.
+        - Se ti manca un'informazione o devi scegliere tra opzioni con impatto, chiedi a Raffaele con \
+        mcp__jarvis__ask_user invece di indovinare (una domanda chiara, con le opzioni).
         - Termina con un riassunto in italiano di massimo due frasi, adatto a essere letto a voce, poi una sezione dettagliata.
         """
+    }
+}
+
+public enum AskTools {
+    static let ask = JarvisTool(
+        name: "ask_user",
+        description: """
+        Fa una domanda all'utente e aspetta la risposta (a voce, nell'app o dal telefono). \
+        Usalo quando ti serve una decisione o un'informazione che non puoi ricavare: una domanda chiara, con le opzioni.
+        """,
+        properties: ["question": prop("La domanda, breve e chiara")],
+        required: ["question"]
+    ) { args, ctx in
+        let question = args["question"] as? String ?? ""
+        guard !question.isEmpty else { throw ToolError("Domanda vuota") }
+        let from = await ctx.tasks.title(for: ctx.taskId).map { "L'agente di \"\($0)\"" } ?? "L'assistente"
+        let answer = await ctx.gate.ask(QuestionRequest(id: UUID().uuidString, question: question, from: from,
+                                                        taskId: ctx.taskId), timeout: 1500)
+        return answer.map { "Risposta dell'utente: \($0)" } ?? "Nessuna risposta entro 25 minuti: procedi con l'opzione più prudente o fermati e spiega."
     }
 }
 

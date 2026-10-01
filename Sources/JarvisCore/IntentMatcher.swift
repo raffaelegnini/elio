@@ -9,6 +9,8 @@ public enum LocalIntent: Equatable, Sendable {
     case volume(VolumeChange)
     case stop
     case brief
+    case recap
+    case done
 
     public enum VolumeChange: Equatable, Sendable {
         case set(Int), up, down, mute, unmute
@@ -30,7 +32,14 @@ public struct IntentMatcher: Sendable {
         guard !text.isEmpty else { return nil }
 
         if let m = matchStop(text) { return m }
-        if text.range(of: #"^(?:fammi |dammi |fai )?(?:il )?(?:briefing|recap)(?: del mattino| di oggi| della notte)?$"#,
+        if text.range(of: #"^(?:fammi |dammi |fai )?(?:il )?(?:recap|riepilogo|resoconto) (?:della giornata|di oggi|di fine giornata)$|^(?:com'è andata oggi|fine giornata|chiudiamo la giornata)$"#,
+                      options: .regularExpression) != nil {
+            return MatchedIntent(intent: .recap, lang: .it)
+        }
+        if text.range(of: #"^(?:ok |sì |si )?(?:fatto|l'ho fatto|fatta|ok fatto)$|^done$"#, options: .regularExpression) != nil {
+            return MatchedIntent(intent: .done, lang: text == "done" ? .en : .it)
+        }
+        if text.range(of: #"^(?:fammi |dammi |fai )?(?:il )?(?:briefing|recap)(?: del mattino| della notte)?$"#,
                       options: .regularExpression) != nil {
             return MatchedIntent(intent: .brief, lang: .it)
         }

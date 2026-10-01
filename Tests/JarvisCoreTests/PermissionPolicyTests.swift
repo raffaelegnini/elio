@@ -31,6 +31,13 @@ struct PermissionPolicyTests {
         #expect(PermissionPolicy.decideBash(cmd) == .confirm(.normal))
     }
 
+    @Test func integrationMCPToolsReadFreeWriteConfirmed() {
+        #expect(PermissionPolicy.decide(tool: "mcp__teamwork__list_tasks", input: [:], cwd: "") == .allow)
+        #expect(PermissionPolicy.decide(tool: "mcp__teamwork__get_project", input: [:], cwd: "") == .allow)
+        #expect(PermissionPolicy.decide(tool: "mcp__teamwork__update_task", input: [:], cwd: "") == .confirm(.normal))
+        #expect(PermissionPolicy.decide(tool: "mcp__gmail__send_email", input: [:], cwd: "") == .confirm(.dangerous))
+    }
+
     @Test func editsInsideProjectAreAllowed() {
         #expect(PermissionPolicy.decide(tool: "Edit", input: ["file_path": "/p/app/src/a.ts"], cwd: "/p/app") == .allow)
         #expect(PermissionPolicy.decide(tool: "Write", input: ["file_path": "/p/app/../other/a.ts"], cwd: "/p/app") == .confirm(.normal))

@@ -29,7 +29,8 @@ public actor ClaudeBridge {
         }
     }
 
-    private let options: Options
+    private var options: Options
+    private var pendingOptions: Options?
     private var process: Process?
     private var stdin: FileHandle?
     private var readerTask: Task<Void, Never>?
@@ -67,6 +68,12 @@ public actor ClaudeBridge {
         }
     }
 
+    /// New prompt / MCP servers: applied by restarting the process right before the next turn
+    /// (never mid-turn), resuming the same conversation.
+    public func reconfigure(_ newOptions: Options) {
+        pendingOptions = newOptions
+    }
+
     public func shutdown() {
         shuttingDown = true
         readerTask?.cancel()
@@ -81,6 +88,16 @@ public actor ClaudeBridge {
         await acquireTurn()
         defer { releaseTurn() }
         do {
+            if let next = pendingOptions {
+                pendingOptions = nil
+                options = next
+                if process?.isRunning == true {
+                    readerTask?.cancel()
+                    generation += 1          // ignore the old process's exit
+                    process?.terminate()
+                    process = nil
+                }
+            }
             if process?.isRunning != true { try spawn() }
             current = continuation
             currentText = ""
@@ -139,13 +156,15 @@ public actor ClaudeBridge {
             // Only the Jarvis workspace settings: keeps the user's hooks/plugins out of this session.
             "--setting-sources", "project",
             "--strict-mcp-config",
-            // No built-in tools (no shell, no file edits) in the conversational session:
-            // only Jarvis tools. Code work goes to background agents behind the confirmation gate.
-            "--tools", "",
+            // No shell or file edits in the conversational session: web research plus Jarvis
+            // tools. Code work goes to background agents behind the confirmation gate.
+            "--tools", "WebSearch", "WebFetch",
             "--system-prompt", options.systemPrompt,
         ]
         if let mcp = options.mcpConfig {
-            args += ["--mcp-config", mcp, "--allowedTools", "mcp__jarvis", "--disallowedTools", "mcp__jarvis__approve"]
+            // Integration MCP tools are not pre-approved: they go through PermissionPolicy via `approve`.
+            args += ["--mcp-config", mcp, "--allowedTools", "mcp__jarvis", "WebSearch", "WebFetch",
+                     "--permission-prompt-tool", "mcp__jarvis__approve"]
         }
         if let sessionId { args += ["--resume", sessionId] }
         p.arguments = args

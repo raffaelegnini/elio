@@ -32,7 +32,7 @@ final class GraphModel {
     private(set) var edges: Set<Edge> = []
 
     init() {
-        nodes["core"] = Node(id: "core", label: "JARVIS", detail: "Nucleo: conversazione con Claude", kind: .core,
+        nodes["core"] = Node(id: "core", label: "CORE", detail: "Nucleo: conversazione con Claude", kind: .core,
                              capability: nil, pos: .zero, pinned: true)
         for (i, cap) in Capability.allCases.enumerated() {
             let a = Double(i) / Double(Capability.allCases.count) * 2 * .pi
@@ -153,6 +153,16 @@ struct NeuralGraphView: View {
 
     private var active: Set<Capability> { Set(loop.activeTools.map(Capability.of)) }
 
+    /// During a brief/recap: capability → when it lit up. Unlit capabilities are drawn dark.
+    private var litAt: [Capability: Date] {
+        var out: [Capability: Date] = [:]
+        for (tool, date) in loop.litTools {
+            let cap = Capability.of(tool: tool)
+            out[cap] = min(out[cap] ?? date, date)
+        }
+        return out
+    }
+
     var body: some View {
         GeometryReader { geo in
             let center = CGPoint(x: geo.size.width / 2 + offset.width, y: geo.size.height / 2 + offset.height)
@@ -202,6 +212,19 @@ struct NeuralGraphView: View {
 
     private func draw(_ ctx: inout GraphicsContext, center: CGPoint, t: Double) {
         let tint = Theme.tint(loop.state)
+        let dark = loop.routineMode
+        let lit = litAt
+        let offColor = Color(hex: "#3A3935")
+        func isOff(_ n: GraphModel.Node) -> Bool {
+            guard dark, let cap = n.capability else { return false }
+            return lit[cap] == nil
+        }
+        /// 0…1 flash right after a capability lights up.
+        func flash(_ n: GraphModel.Node) -> Double {
+            guard dark, let cap = n.capability, let at = lit[cap] else { return 0 }
+            let dt = Date().timeIntervalSince(at)
+            return dt < 1.6 ? 1 - dt / 1.6 : 0
+        }
         func screen(_ p: CGPoint) -> CGPoint { CGPoint(x: center.x + p.x * scale, y: center.y + p.y * scale) }
 
         for e in model.edges {
@@ -212,7 +235,12 @@ struct NeuralGraphView: View {
             path.move(to: pa)
             path.addLine(to: pb)
             let base = b.kind == .leaf ? 0.10 : 0.22
-            ctx.stroke(path, with: .color(tint.opacity(on ? 0.75 : base)), lineWidth: on ? 1.6 : (b.kind == .leaf ? 0.6 : 1))
+            if isOff(b) {
+                ctx.stroke(path, with: .color(offColor.opacity(0.35)), lineWidth: 0.6)
+                continue
+            }
+            let f = flash(b)
+            ctx.stroke(path, with: .color(tint.opacity(on ? 0.75 : base + f * 0.6)), lineWidth: on ? 1.6 : (b.kind == .leaf ? 0.6 : 1) + f * 1.5)
             if on {
                 // Signal travelling along the synapse.
                 let k = (t * 1.4 + Double(abs(e.b.hashValue % 100)) / 100).truncatingRemainder(dividingBy: 1)
@@ -223,6 +251,25 @@ struct NeuralGraphView: View {
 
         for node in model.nodes.values where node.kind != .core {
             let p = screen(node.pos)
+            if isOff(node) {
+                // Dormant neuron: dark, no glow, no label for leaves.
+                let r = node.radius * max(scale, 0.6)
+                let rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
+                ctx.fill(Path(ellipseIn: rect), with: .color(node.kind == .leaf ? offColor : Theme.bg))
+                if node.kind == .capability {
+                    ctx.stroke(Path(ellipseIn: rect), with: .color(offColor), lineWidth: 1)
+                    let text = Text(node.label).font(.system(size: 9.5, weight: .semibold, design: .monospaced)).foregroundStyle(offColor)
+                    ctx.draw(text, at: CGPoint(x: p.x, y: p.y + r + 9))
+                }
+                continue
+            }
+            let f = flash(node)
+            if f > 0 {
+                // Ignition: an expanding ring as the neuron comes alive.
+                let ring = node.radius * max(scale, 0.6) * (1 + (1 - f) * 3)
+                ctx.stroke(Path(ellipseIn: CGRect(x: p.x - ring, y: p.y - ring, width: ring * 2, height: ring * 2)),
+                           with: .color(tint.opacity(f)), lineWidth: 2)
+            }
             let on = node.capability.map(active.contains) ?? false
             let fresh = Date().timeIntervalSince(node.born) < 3
             let isSelected = node.id == selected
@@ -293,19 +340,19 @@ struct NeuralGraphView: View {
     private var controls: some View {
         HStack(spacing: 6) {
             Text("RETE NEURALE").font(Theme.mono).tracking(2).foregroundStyle(Theme.dim)
-            Text("\(model.nodes.count) nodi").font(Theme.mono).foregroundStyle(Theme.cyan)
+            Text("\(model.nodes.count) nodi").font(Theme.mono).foregroundStyle(Theme.accent)
             Spacer().frame(width: 8)
             ForEach([("minus", -0.2), ("plus", 0.2)], id: \.0) { icon, delta in
                 Button { withAnimation(.easeOut(duration: 0.2)) { scale = min(3, max(0.35, scale + delta)); scaleStart = scale } } label: {
                     Image(systemName: icon).frame(width: 22, height: 22)
                 }
-                .buttonStyle(.plain).foregroundStyle(Theme.cyan)
+                .buttonStyle(.plain).foregroundStyle(Theme.accent)
                 .background(Circle().strokeBorder(Theme.line))
             }
             Button { withAnimation(.easeOut(duration: 0.3)) { offset = .zero; scale = 1; scaleStart = 1 } } label: {
                 Image(systemName: "scope").frame(width: 22, height: 22)
             }
-            .buttonStyle(.plain).foregroundStyle(Theme.cyan)
+            .buttonStyle(.plain).foregroundStyle(Theme.accent)
             .background(Circle().strokeBorder(Theme.line))
             .help("Centra")
         }
@@ -384,7 +431,7 @@ private struct Inspector: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 if let cap = node.capability {
-                    Image(systemName: cap.icon).foregroundStyle(Theme.cyan)
+                    Image(systemName: cap.icon).foregroundStyle(Theme.accent)
                     Text(cap.label).font(Theme.mono).tracking(2).foregroundStyle(Theme.dim)
                 }
                 Spacer()
@@ -397,6 +444,6 @@ private struct Inspector: View {
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 12).fill(Theme.panel))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.cyan.opacity(0.4)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.accent.opacity(0.4)))
     }
 }

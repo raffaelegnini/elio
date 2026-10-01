@@ -3,7 +3,21 @@ import Foundation
 /// Wake word detection on transcribed text. On-device STT sometimes mangles "Jarvis"
 /// in Italian ("Giarvis", "Giaviscose"), so the first words are matched fuzzily.
 public enum WakeWord {
-    private static let variants = ["jarvis", "giarvis", "jarvi", "giarvi", "giavis", "jervis", "gervis", "jarvys", "giarviss"]
+    nonisolated(unsafe) private static var variants = ["jarvis", "giarvis", "jarvi", "giarvi", "giavis", "jervis", "gervis", "jarvys", "giarviss"]
+    nonisolated(unsafe) private static var prefixes = ["jarvis", "giarvis", "giavis"]
+
+    /// Uses the assistant's configured name (and the recognizer's usual misspellings) as wake word.
+    public static func configure(name: String, aliases: [String]) {
+        let n = name.lowercased().trimmingCharacters(in: CharacterSet.letters.inverted)
+        guard !n.isEmpty else { return }
+        if n == "jarvis" {
+            variants = ["jarvis", "giarvis", "jarvi", "giarvi", "giavis", "jervis", "gervis", "jarvys", "giarviss"]
+        } else {
+            variants = [n]
+        }
+        variants += aliases.map { $0.lowercased() }
+        prefixes = Array(variants.prefix(3)).filter { $0.count >= 4 }
+    }
 
     /// Returns the command after the wake word ("" if only the wake word was said),
     /// or nil if the utterance doesn't start with the wake word.
@@ -25,10 +39,10 @@ public enum WakeWord {
     static func matches(_ token: String) -> Bool {
         if variants.contains(token) { return true }
         // Glued words ("giaviscose" = "giarvis cosa"): accept a close prefix.
-        for v in ["jarvis", "giarvis", "giavis"] where token.count > v.count {
+        for v in prefixes where token.count > v.count {
             if distance(String(token.prefix(v.count)), v) <= 1 { return true }
         }
-        return token.count >= 5 && variants.contains { distance(token, $0) <= 1 }
+        return token.count >= 4 && variants.contains { $0.count >= 4 && distance(token, $0) <= ($0.count >= 6 ? 1 : 0) }
     }
 
     private static func clean(_ s: String) -> String {
@@ -179,7 +193,7 @@ public struct VoiceActivityDetector {
 /// Spotting the user talking over Jarvis through the speakers: the mic also hears Jarvis,
 /// so only interrupt words that Jarvis itself isn't saying count.
 public enum BargeIn {
-    static let words = ["jarvis", "giarvis", "stop", "basta", "aspetta", "fermati", "fermo", "zitto", "silenzio", "wait"]
+    nonisolated(unsafe) public static var words = ["jarvis", "giarvis", "stop", "basta", "aspetta", "fermati", "fermo", "zitto", "silenzio", "wait"]
 
     public static func detect(_ heard: String, whileSaying spoken: String) -> Bool {
         let h = heard.lowercased(), s = spoken.lowercased()

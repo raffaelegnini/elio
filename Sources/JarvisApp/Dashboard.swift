@@ -33,9 +33,35 @@ struct DashboardView: View {
 
             VStack {
                 Spacer()
+                if let running = runningTask, state.theater == nil {
+                    AgentTheater(loop: loop, taskId: running.id, compact: true)
+                        .frame(width: 640, height: 230)
+                        .glassCard()
+                        .overlay(alignment: .topTrailing) {
+                            Text("APRI ↗").font(Theme.mono).foregroundStyle(Theme.accent).padding(12)
+                        }
+                        .onTapGesture { state.theater = running.id }
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 console
             }
             .padding(.bottom, 18)
+            .animation(.easeInOut(duration: 0.3), value: runningTask?.id)
+
+            if let id = state.theater {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("AGENTE · LIVE").font(Theme.mono).tracking(3).foregroundStyle(Theme.accent)
+                        Spacer()
+                        Button("Chiudi") { state.theater = nil }.buttonStyle(HUDButton(color: Theme.dim))
+                    }
+                    .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 8)
+                    AgentTheater(loop: loop, taskId: id)
+                }
+                .glassCard()
+                .padding(.horizontal, 80).padding(.top, 100).padding(.bottom, 40)
+                .transition(.scale(scale: 0.96).combined(with: .opacity))
+            }
 
             if let diff = state.reviewing {
                 review(diff)
@@ -52,9 +78,9 @@ struct DashboardView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 18) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("J.A.R.V.I.S.").font(.system(size: 15, weight: .bold, design: .monospaced)).tracking(5)
+                Text(Brand.shared.dotted).font(.system(size: 15, weight: .bold, design: .monospaced)).tracking(5)
                     .foregroundStyle(Theme.text)
-                Text("assistente personale · Raffaele").font(Theme.mono).foregroundStyle(Theme.dim)
+                Text("DNA Factory · assistente personale").font(Theme.mono).foregroundStyle(Theme.dim)
             }
             Spacer()
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
@@ -75,7 +101,7 @@ struct DashboardView: View {
                 Button { loop.setMuted(!loop.muted) } label: {
                     Image(systemName: loop.muted ? "mic.slash.fill" : "mic.fill")
                         .frame(width: 30, height: 30)
-                        .foregroundStyle(loop.muted ? Theme.tint(.muted) : Theme.cyan)
+                        .foregroundStyle(loop.muted ? Theme.tint(.muted) : Theme.accent)
                         .background(Circle().strokeBorder(Theme.line))
                 }
                 .buttonStyle(.plain)
@@ -107,7 +133,7 @@ struct DashboardView: View {
                 }
                 ForEach(reminders, id: \.self) { r in
                     HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "bell").font(.system(size: 10)).foregroundStyle(Theme.cyan).padding(.top, 2)
+                        Image(systemName: "bell").font(.system(size: 10)).foregroundStyle(Theme.accent).padding(.top, 2)
                         Text(r).font(.system(size: 12)).foregroundStyle(Theme.text)
                     }
                 }
@@ -119,6 +145,9 @@ struct DashboardView: View {
 
     private var console: some View {
         VStack(spacing: 10) {
+            if let q = loop.questions.first {
+                QuestionCard(question: q) { loop.answer(q, text: $0) }.frame(maxWidth: 560)
+            }
             if let req = loop.confirmations.first {
                 ConfirmCard(request: req) { loop.answer(req, approved: $0) }.frame(maxWidth: 520)
             }
@@ -131,8 +160,8 @@ struct DashboardView: View {
                     .multilineTextAlignment(.center).lineLimit(3)
                     .frame(maxWidth: 560)
                 HStack(spacing: 10) {
-                    Image(systemName: "chevron.right").foregroundStyle(Theme.cyan)
-                    TextField("Scrivi a Jarvis…", text: $input)
+                    Image(systemName: "chevron.right").foregroundStyle(Theme.accent)
+                    TextField("Scrivi a \(Brand.shared.name)…", text: $input)
                         .textFieldStyle(.plain).font(.system(size: 15)).foregroundStyle(Theme.text)
                         .onSubmit { loop.submit(text: input); input = "" }
                     Text("⌥⌘J per parlare").font(Theme.mono).foregroundStyle(Theme.dim)
@@ -153,7 +182,11 @@ struct DashboardView: View {
                 if loop.tasks.isEmpty {
                     Text("Nessun agente al lavoro").font(.system(size: 12)).foregroundStyle(Theme.dim)
                 }
-                ForEach(loop.tasks.reversed().prefix(4)) { WorkflowRow(task: $0, expanded: true) }
+                ForEach(loop.tasks.reversed().prefix(4)) { t in
+                    WorkflowRow(task: t, expanded: true)
+                        .contentShape(Rectangle())
+                        .onTapGesture { state.theater = t.id }
+                }
             }
             .frame(maxHeight: 260)
             GlassPanel(title: "ATTIVITÀ NEURALE", trailing: nil) {
@@ -172,7 +205,7 @@ struct DashboardView: View {
                     ForEach(Array(loop.diffs.prefix(3).enumerated()), id: \.offset) { _, d in
                         Button { state.reviewing = d } label: {
                             HStack {
-                                Image(systemName: "arrow.triangle.branch").foregroundStyle(Theme.cyan)
+                                Image(systemName: "arrow.triangle.branch").foregroundStyle(Theme.accent)
                                 Text(d.title).lineLimit(1)
                                 Spacer()
                                 Text((d.repo as NSString).lastPathComponent).foregroundStyle(Theme.dim)
@@ -189,7 +222,7 @@ struct DashboardView: View {
     private func review(_ diff: DiffPayload) -> some View {
         VStack(spacing: 0) {
             HStack {
-                Text("REVISIONE").font(Theme.mono).tracking(3).foregroundStyle(Theme.cyan)
+                Text("REVISIONE").font(Theme.mono).tracking(3).foregroundStyle(Theme.accent)
                 Spacer()
                 Button("Chiudi") { state.reviewing = nil }.buttonStyle(HUDButton(color: Theme.dim))
             }
@@ -201,12 +234,16 @@ struct DashboardView: View {
         }
     }
 
+    private var runningTask: TaskInfo? {
+        loop.tasks.last { $0.status == .running || $0.status == .waitingConfirmation }
+    }
+
     private var runningCount: Int {
         loop.tasks.filter { $0.status == .running || $0.status == .waitingConfirmation }.count
     }
 
     private var lastReply: String {
-        loop.turns.last(where: { $0.role == "jarvis" || $0.role == "event" })?.text ?? "Di' \"Jarvis…\" oppure scrivi qui sotto."
+        loop.turns.last(where: { $0.role == "jarvis" || $0.role == "event" })?.text ?? "Di' \"\(Brand.shared.name)…\" oppure scrivi qui sotto."
     }
 
     // MARK: - Data
@@ -272,7 +309,7 @@ private struct AgendaRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Text(item.time).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.cyan)
+            Text(item.time).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.accent)
                 .frame(width: 82, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.text).lineLimit(2)
@@ -280,7 +317,7 @@ private struct AgendaRow: View {
                     Text(item.calendar).font(.system(size: 10)).foregroundStyle(Theme.dim)
                     if item.meet {
                         Label("Meet", systemImage: "video.fill").font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(Theme.cyan)
+                            .foregroundStyle(Theme.accent)
                     }
                 }
             }
@@ -295,7 +332,7 @@ private struct ActivityRow: View {
         HStack(spacing: 8) {
             Image(systemName: Capability.of(tool: item.name).icon)
                 .font(.system(size: 10)).frame(width: 14)
-                .foregroundStyle(item.running ? Theme.cyan : (item.ok ? Theme.dim : .orange))
+                .foregroundStyle(item.running ? Theme.accent : (item.ok ? Theme.dim : .orange))
             Text(Capability.describe(tool: item.name)).font(.system(size: 12)).foregroundStyle(Theme.text).lineLimit(1)
             Spacer()
             if item.running {
@@ -320,17 +357,17 @@ struct GlassPanel<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Rectangle().fill(Theme.cyan).frame(width: 3, height: 10)
+                Rectangle().fill(Theme.accent).frame(width: 3, height: 10)
                 Text(title).font(Theme.mono).tracking(2.5).foregroundStyle(Theme.dim)
                 Spacer()
-                if let trailing { Text(trailing).font(Theme.mono).foregroundStyle(Theme.cyan) }
+                if let trailing { Text(trailing).font(Theme.mono).foregroundStyle(Theme.accent) }
             }
             content
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .glassCard()
-        .overlay(CornerBrackets().stroke(Theme.cyan.opacity(0.55), lineWidth: 1.2))
+        .overlay(CornerBrackets().stroke(Theme.accent.opacity(0.55), lineWidth: 1.2))
     }
 }
 
@@ -346,7 +383,7 @@ private struct GlassCard: ViewModifier {
                     .opacity(hover ? 0.95 : 0.6)
             )
             .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bg.opacity(hover ? 0.55 : 0.25)))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(hover ? Theme.cyan.opacity(0.35) : Theme.line))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(hover ? Theme.accent.opacity(0.35) : Theme.line))
             .opacity(hover ? 1 : 0.88)
             .scaleEffect(hover ? 1.01 : 1)
             .shadow(color: .black.opacity(0.35), radius: hover ? 18 : 8, y: 6)
@@ -409,7 +446,7 @@ private struct Backdrop: View {
                 stride(from: 0, through: size.height, by: step).forEach { y in
                     grid.move(to: CGPoint(x: 0, y: y)); grid.addLine(to: CGPoint(x: size.width, y: y))
                 }
-                ctx.stroke(grid, with: .color(Theme.cyan.opacity(0.035)), lineWidth: 0.5)
+                ctx.stroke(grid, with: .color(Theme.accent.opacity(0.035)), lineWidth: 0.5)
             }
             RadialGradient(colors: [tint.opacity(0.16), .clear], center: .center, startRadius: 0, endRadius: 560)
         }

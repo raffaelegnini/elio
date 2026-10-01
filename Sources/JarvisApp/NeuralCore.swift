@@ -124,7 +124,9 @@ struct NeuralCore: View {
                     .onTapGesture { loop.activate() }
 
                 ForEach(Array(Capability.allCases.enumerated()), id: \.element) { i, cap in
-                    CapabilityNode(cap: cap, on: active.contains(cap), tint: tint)
+                    let dormant = loop.routineMode && !loop.litTools.keys.contains { Capability.of(tool: $0) == cap }
+                    CapabilityNode(cap: cap, on: active.contains(cap), tint: dormant ? Color(hex: "#3A3935") : tint)
+                        .opacity(dormant ? 0.6 : 1)
                         .position(point(i, center: center, radius: ringRadius))
                 }
             }

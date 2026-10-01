@@ -25,7 +25,9 @@ public actor Routines {
         loop = Task {
             while !Task.isCancelled {
                 await self.maybeBrief(trigger: .clock)
+                await self.maybeRecap()
                 await self.watchMeetings()
+                await self.watchMissedMeetings()
                 try? await Task.sleep(for: .seconds(60))
             }
         }
@@ -66,6 +68,59 @@ public actor Routines {
         chi lo cerca su Slack. Massimo cinque frasi.
         Infine chiama slack_clock_in: chiede lei la conferma all'utente (se Slack non è collegato, ricordagli di farlo a mano).
         """)
+    }
+
+    // MARK: - Day recap
+
+    func maybeRecap() async {
+        guard !config.recapTime.isEmpty, let at = Self.time(config.recapTime, on: Date()) else { return }
+        let now = Date()
+        guard (2...6).contains(Calendar.current.component(.weekday, from: now)),
+              now >= at, now < at.addingTimeInterval(3600),
+              await memory.get("routine.recap.last") != Self.dayKey(now) else { return }
+        await runRecap()
+    }
+
+    public func runRecap() async {
+        await memory.set("routine.recap.last", Self.dayKey(Date()))
+        await brain?.publish(ServerMessage(type: .event, kind: "recapStart"))
+        await brain?.runRoutine(kind: "recap", prompt: """
+        [routine: recap della giornata] Raffaele chiude la giornata. Raccogli: day_summary (lavori degli agenti, \
+        promemoria, conversazioni di oggi), calendar_events di oggi e di domani, slack_mentions e slack_dms di oggi \
+        (se Slack non è collegato, salta), list_tasks.
+        Mostra il dettaglio con show_on_screen (titolo "Recap di oggi": fatto, in sospeso, domani).
+        A voce, massimo quattro frasi: cosa è stato fatto, cosa resta aperto, il primo impegno di domani.
+        """)
+    }
+
+    // MARK: - Missed meetings
+
+    private var nudged: Set<String> = []
+
+    /// A Meet started 3 minutes ago and Raffaele seems not to be in it (away from the Mac,
+    /// or no Meet tab open in Chrome): nudge him, on the phone too when away.
+    func watchMissedMeetings() async {
+        guard config.nudgeMissedMeetings, CalendarTools.isAuthorized else { return }
+        let now = Date()
+        guard let events = try? await CalendarTools.events(from: now.addingTimeInterval(-600), to: now) else { return }
+        for e in events where !e.allDay && e.meetURL != nil {
+            let late = now.timeIntervalSince(e.start)
+            let key = "\(e.title)|\(e.start.timeIntervalSince1970)"
+            guard late >= 180, late < 600, e.end > now, !nudged.contains(key) else { continue }
+            let away = PhoneNotifier.idleSeconds > 120
+            let code = e.meetURL?.lastPathComponent ?? ""
+            let tabOpen = Self.chromeHasTab(containing: code)
+            guard away || !tabOpen else { continue }
+            nudged.insert(key)
+            await brain?.announce(kind: "nudge", text: "\(config.addressAs), il meeting \(e.title) è iniziato da \(Int(late / 60)) minuti.")
+        }
+    }
+
+    static func chromeHasTab(containing code: String) -> Bool {
+        guard !code.isEmpty, NSRunningApplicationIsChromeRunning() else { return false }
+        let script = "tell application \"Google Chrome\" to get URL of tabs of windows"
+        let out = (try? shell("/usr/bin/osascript", ["-e", script])) ?? ""
+        return out.contains(code)
     }
 
     // MARK: - Meetings
@@ -121,6 +176,30 @@ public enum RoutineTools {
             lines.append("Programmati:")
             for p in pending { lines.append("- \(p.title) alle \(p.at)") }
         }
+        return lines.joined(separator: "\n")
+    }
+}
+
+func NSRunningApplicationIsChromeRunning() -> Bool {
+    let out = (try? shell("/usr/bin/pgrep", ["-x", "Google Chrome"])) ?? ""
+    return !out.isEmpty
+}
+
+public enum DayTools {
+    static let summary = JarvisTool(
+        name: "day_summary",
+        description: "Cosa è successo oggi: lavori degli agenti conclusi, promemoria scattati, numero di richieste fatte all'assistente."
+    ) { _, ctx in
+        let start = Calendar.current.startOfDay(for: Date())
+        let tasks = await ctx.memory.tasksEnded(since: start)
+        let reminders = await ctx.memory.remindersFired(since: start)
+        let messages = await ctx.memory.recentMessages(limit: 400).filter { $0.ts >= start && $0.role == "user" }
+        var lines = ["Richieste di oggi: \(messages.count)."]
+        lines.append(tasks.isEmpty ? "Nessun lavoro degli agenti concluso oggi." : "Lavori conclusi:")
+        for t in tasks { lines.append("- [\(t.status.rawValue)] \(t.title) (\(t.project ?? "")): \(t.summary.map { String($0.prefix(300)) } ?? "")") }
+        if !reminders.isEmpty { lines.append("Promemoria di oggi: " + reminders.joined(separator: "; ")) }
+        let topics = messages.suffix(30).map { "- " + String($0.text.prefix(100)) }
+        if !topics.isEmpty { lines.append("Ultime richieste:\n" + topics.joined(separator: "\n")) }
         return lines.joined(separator: "\n")
     }
 }

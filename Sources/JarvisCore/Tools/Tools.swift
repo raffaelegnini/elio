@@ -29,14 +29,25 @@ public struct ToolError: Error, CustomStringConvertible {
 
 /// Everything a tool may touch.
 public struct ToolContext: Sendable {
+    public init(config: JarvisConfig, memory: Memory, broadcast: @escaping @Sendable (ServerMessage) -> Void,
+                gate: ConfirmationGate, tasks: TaskRunner, scheduler: Scheduler,
+                restartSession: @escaping @Sendable () async -> Void = {}, taskId: String? = nil) {
+        self.config = config; self.memory = memory; self.broadcast = broadcast; self.gate = gate
+        self.tasks = tasks; self.scheduler = scheduler; self.restartSession = restartSession; self.taskId = taskId
+    }
+
     public let config: JarvisConfig
     public let memory: Memory
     public let broadcast: @Sendable (ServerMessage) -> Void
     public let gate: ConfirmationGate
     public let tasks: TaskRunner
     public let scheduler: Scheduler
+    /// Rebuild the conversation session (new MCP integration, new prompt) before the next message.
+    public var restartSession: @Sendable () async -> Void = {}
     /// Set when the call comes from a background agent (for approvals).
     public var taskId: String?
+
+    public func requestSessionRestart() async { await restartSession() }
 }
 
 public enum ToolRegistry {
@@ -47,15 +58,21 @@ public enum ToolRegistry {
         MeetingTools.joinNext,
         ProjectTools.list,
         ProjectTools.showDiff,
+        AskTools.ask,
         TaskTools.start,
         TaskTools.schedule,
         RoutineTools.brief,
+        DayTools.summary,
         TaskTools.list,
         TaskTools.cancel,
         ScreenTools.show,
         ReminderTools.set,
         ReminderTools.list,
         ApprovalTool.approve,
+        IntegrationTools.propose,
+        IntegrationTools.notes,
+        IntegrationTools.list,
+        IntegrationTools.request,
         MemoryTools.remember,
         MemoryTools.recall,
         MemoryTools.forget,
@@ -80,6 +97,7 @@ public enum ToolRegistry {
         // conversation stalls (e.g. a macOS permission prompt nobody has clicked yet).
         let timeout: TimeInterval = switch name {
         case "approve": 600
+        case "ask_user": 1560
         case "slack_clock_in", "slack_send": 150   // waits for the user's confirmation
         case "slack_mentions", "slack_dms": 45
         case "start_task": 60

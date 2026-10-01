@@ -21,6 +21,10 @@ public actor Memory {
             throw JarvisError.database("open failed at \(path.path)")
         }
         db = handle
+        // Columns added after the first release: ignore "duplicate column" on existing DBs.
+        sqlite3_exec(handle, "ALTER TABLE reminders ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0", nil, nil, nil)
+        sqlite3_exec(handle, "ALTER TABLE reminders ADD COLUMN parent INTEGER", nil, nil, nil)
+        sqlite3_exec(handle, "ALTER TABLE reminders ADD COLUMN fired REAL", nil, nil, nil)
         try Self.exec(handle, """
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS messages (
@@ -98,8 +102,37 @@ public actor Memory {
 
     public struct Reminder: Sendable { public let id: Int; public let text: String; public let at: Date }
 
-    public func addReminder(text: String, at: Date) {
-        run("INSERT INTO reminders (at, text) VALUES (?, ?)", [at.timeIntervalSince1970, text])
+    public func addReminder(text: String, at: Date, attempt: Int = 0, parent: Int? = nil) {
+        run("INSERT INTO reminders (at, text, attempt, parent) VALUES (?, ?, ?, ?)",
+            [at.timeIntervalSince1970, text, attempt, parent])
+    }
+
+    public func reminderAttempt(_ id: Int) -> (attempt: Int, root: Int) {
+        var result = (0, id)
+        query("SELECT attempt, COALESCE(parent, id) FROM reminders WHERE id = ?", [id]) { stmt in
+            result = (Int(sqlite3_column_int64(stmt, 0)), Int(sqlite3_column_int64(stmt, 1)))
+        }
+        return result
+    }
+
+    /// "Fatto": closes the most recently fired reminder and cancels its pending follow-ups.
+    public func acknowledgeLastReminder(within seconds: TimeInterval) -> String? {
+        var hit: (root: Int, text: String)?
+        query("SELECT COALESCE(parent, id), text FROM reminders WHERE fired >= ? ORDER BY fired DESC LIMIT 1",
+              [Date().addingTimeInterval(-seconds).timeIntervalSince1970]) { stmt in
+            hit = (Int(sqlite3_column_int64(stmt, 0)), String(cString: sqlite3_column_text(stmt, 1)))
+        }
+        guard let hit else { return nil }
+        run("UPDATE reminders SET done = 1, fired = NULL WHERE id = ? OR parent = ?", [hit.root, hit.root])
+        return hit.text
+    }
+
+    public func remindersFired(since: Date) -> [String] {
+        var rows: [String] = []
+        query("SELECT text FROM reminders WHERE fired >= ? AND attempt = 0 ORDER BY fired", [since.timeIntervalSince1970]) { stmt in
+            rows.append(String(cString: sqlite3_column_text(stmt, 0)))
+        }
+        return rows
     }
 
     /// Pending reminders; with `dueBefore` only those already due.
@@ -117,7 +150,7 @@ public actor Memory {
     }
 
     public func markReminderDone(_ id: Int) {
-        run("UPDATE reminders SET done = 1 WHERE id = ?", [id])
+        run("UPDATE reminders SET done = 1, fired = ? WHERE id = ?", [Date().timeIntervalSince1970, id])
     }
 
     // MARK: - Long-term facts

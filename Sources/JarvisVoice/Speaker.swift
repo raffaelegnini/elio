@@ -93,8 +93,8 @@ public final class Speaker {
         guard let stream, !text.isEmpty else { return }
         setSpeaking(true)
         streamText += text + " "
-        // Flush the first sentence so speech starts right away; later ones flow with the schedule.
-        stream.push(text, flush: !streamGotAudio)
+        // No per-sentence flush: forcing generation mid-reply produced pauses between sentences.
+        stream.push(text, flush: false)
     }
 
     public func endStream() {
@@ -122,7 +122,7 @@ public final class Speaker {
         if holding {
             held.append(buffer)
             heldSeconds += Double(buffer.frameLength) / buffer.format.sampleRate
-            if heldSeconds >= 0.25 { releaseHeld(gen) }
+            if heldSeconds >= 0.4 { releaseHeld(gen) }
         } else {
             schedule(buffer, generation: gen)
         }

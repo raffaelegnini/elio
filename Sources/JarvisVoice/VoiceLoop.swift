@@ -41,6 +41,11 @@ public final class VoiceLoop {
     /// Live tool calls (newest last) and the tools currently running.
     public private(set) var activity: [ToolActivity] = []
     public private(set) var activeTools: Set<String> = []
+    /// Brief / recap in progress: the network starts dark and lights up tool by tool.
+    public private(set) var routineMode = false
+    /// When each tool first fired during the current routine.
+    public private(set) var litTools: [String: Date] = [:]
+    private var routineSpeaking = false
     public var alwaysListening = true
     /// Background agents, newest last.
     public private(set) var tasks: [TaskInfo] = []
@@ -48,6 +53,10 @@ public final class VoiceLoop {
     public private(set) var confirmations: [ConfirmRequest] = []
     public private(set) var diffs: [DiffPayload] = []
     public private(set) var cards: [CardPayload] = []
+    /// Live activity of each agent (newest last).
+    public private(set) var taskLogs: [String: [TaskLogEntry]] = [:]
+    /// Questions waiting for the user's answer.
+    public private(set) var questions: [QuestionRequest] = []
     /// Bumped when a new diff arrives, so the UI can open the review panel.
     public private(set) var diffSignal = 0
 
@@ -74,7 +83,16 @@ public final class VoiceLoop {
     private func speakReply(_ sentence: String) {
         guard sentenceBudget > 0 else { return }
         sentenceBudget -= 1
-        if replyStreaming { speaker.streamSentence(sentence) } else { speaker.enqueue(sentence) }
+        if replyStreaming {
+            speaker.streamSentence(sentence)
+            // All that will be spoken is in: close now so it's generated in one fluid take.
+            if sentenceBudget == 0 {
+                speaker.endStream()
+                replyStreaming = false
+            }
+        } else {
+            speaker.enqueue(sentence)
+        }
     }
     private var wakeSeen = false
     private var abandoned = false
@@ -117,6 +135,7 @@ public final class VoiceLoop {
 
         muted = UserDefaults.standard.bool(forKey: "jarvis.muted")
         voiceId = config.elevenLabsVoiceId
+        applySettings(config)
         do {
             try await UtteranceTranscriber.ensureModel(locale: Locale(identifier: "it_IT"))
             try audio.start()
@@ -177,6 +196,27 @@ public final class VoiceLoop {
         }
         VoiceLog.write("mic \(on ? "muted" : "unmuted")")
     }
+
+    /// Called when the assistant prepared an integration that needs a secret in Settings.
+    public var onIntegrationSetup: ((String) -> Void)?
+    /// Brief/recap started: the app shows the network lighting up.
+    public var onRoutineStart: (() -> Void)?
+    private var spokenSentences = 2
+    private var briefOpeningEnabled = true
+
+    /// Settings saved: apply what the app owns right away (the daemon restarts on its own).
+    public func applySettings(_ config: JarvisConfig) {
+        spokenSentences = config.spokenSentences
+        briefOpeningEnabled = config.briefOpening
+        audio.preferBuiltInMicWithBluetooth = config.builtInMicWithBluetooth
+        if config.elevenLabsVoiceId != voiceId {
+            voiceId = config.elevenLabsVoiceId
+        applySettings(config)
+            speaker.setVoice(voiceId)
+        }
+    }
+
+    public func requestDaemonReload() { client.send(.reload) }
 
     public static let voices: [(name: String, id: String)] = [
         ("George", "JBFqnCBsd6RMkjVDRZzb"), ("Daniel", "onwK4e9ZLuTAKqWW03F9"),
@@ -332,6 +372,13 @@ public final class VoiceLoop {
             return
         }
         if answerByVoice(command) { return }
+        if let q = questions.first {
+            // A pending question takes the next thing the user says as its answer.
+            answer(q, text: command)
+            speaker.enqueue("Ricevuto.")
+            speaker.endUtterance()
+            return
+        }
         send(command)
     }
 
@@ -345,7 +392,7 @@ public final class VoiceLoop {
         turns.append(Turn(role: "user", text: text))
         turns.append(Turn(role: "jarvis", text: ""))
         spokenText = ""
-        sentenceBudget = Self.wantsDetail(text) ? 50 : 2
+        sentenceBudget = Self.wantsDetail(text) ? 50 : spokenSentences
         currentRequestId = client.say(text)
         VoiceLog.write("→ daemon: '\(text)'")
         firstDeltaLogged = false
@@ -401,8 +448,30 @@ public final class VoiceLoop {
 
     private func handleEvent(_ msg: ServerMessage) {
         switch msg.kind {
-        case "briefStart":
-            playOpening()
+        case "briefStart", "recapStart":
+            if briefOpeningEnabled, msg.kind == "briefStart" { playOpening() }
+            routineMode = true
+            litTools = [:]
+            onRoutineStart?()
+            routineSpeaking = false
+        case "brief", "recap":
+            routineSpeaking = true
+        case "taskLog":
+            if let entry = TaskLogEntry.fromJSON(msg.payload) {
+                var log = taskLogs[entry.taskId] ?? []
+                log.append(entry)
+                if log.count > 300 { log.removeFirst(log.count - 300) }
+                taskLogs[entry.taskId] = log
+            }
+        case "question":
+            if let q = QuestionRequest.fromJSON(msg.payload), !questions.contains(where: { $0.id == q.id }) {
+                questions.append(q)
+                armedUntil = Date().addingTimeInterval(20)
+            }
+        case "questionResolved":
+            questions.removeAll { $0.id == msg.id }
+        case "integrationSetup":
+            if let id = msg.id { onIntegrationSetup?(id) }
         case "task", "taskDone":
             if let info = TaskInfo.fromJSON(msg.payload) {
                 if let i = tasks.firstIndex(where: { $0.id == info.id }) { tasks[i] = info } else { tasks.append(info) }
@@ -424,6 +493,7 @@ public final class VoiceLoop {
             guard let id = msg.id, let name = msg.text else { break }
             if msg.payload?.contains("start") == true {
                 activeTools.insert(name)
+                if routineMode, litTools[name] == nil { litTools[name] = Date() }
                 activity.append(ToolActivity(id: id, name: name, running: true, ok: true))
                 if activity.count > 40 { activity.removeFirst(activity.count - 40) }
             } else {
@@ -452,6 +522,15 @@ public final class VoiceLoop {
         if let rest = splitter.flush() { speaker.enqueue(rest, lang: msg.lang) }
         speaker.endUtterance()
         trimTurns()
+    }
+
+    /// Answers an agent's or the assistant's question (typed in the HUD or spoken).
+    public func answer(_ q: QuestionRequest, text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        questions.removeAll { $0.id == q.id }
+        client.send(.answer(id: q.id, text: t))
+        turns.append(Turn(role: "user", text: "↳ \(t)"))
     }
 
     /// Answers a confirmation from the HUD buttons.
@@ -535,6 +614,14 @@ public final class VoiceLoop {
             pipeline.speaking = true
         } else {
             pipeline.speaking = false
+            if routineSpeaking {
+                // Keep the lit network on screen a moment after the recap, then back to normal.
+                routineSpeaking = false
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(6))
+                    self.routineMode = false
+                }
+            }
             if state == .speaking { state = muted ? .muted : .listening }
             // Follow-up window: answer without repeating the wake word (never shorten a longer one).
             let followUp = Date().addingTimeInterval(Self.followUpWindow)

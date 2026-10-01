@@ -194,6 +194,32 @@ function handleEvent(m) {
       if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       break;
     }
+    case "question": {
+      const q = JSON.parse(m.payload || "{}");
+      if (!q.id || confirms.has(q.id)) break;
+      const el = document.createElement("div");
+      el.className = "card confirm";
+      el.innerHTML = `<div class="label" style="color:#ff9f43">DOMANDA · <span class="from"></span></div><div class="t" style="margin:6px 0 8px"></div>
+        <div class="row"><input class="ans" placeholder="La tua risposta…" style="flex:1;min-width:0;padding:10px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--text);font-size:16px">
+        <button class="act go" style="flex:none;padding:10px 14px">Invia</button></div>`;
+      el.querySelector(".from").textContent = q.from || "";
+      el.querySelector(".t").textContent = q.question;
+      const submit = () => {
+        const v = el.querySelector(".ans").value.trim();
+        if (!v) return;
+        send({ type: "answer", id: q.id, text: v });
+        el.remove(); confirms.delete(q.id);
+        addMsg("user", "↳ " + v);
+      };
+      el.querySelector(".go").onclick = submit;
+      el.querySelector(".ans").onkeydown = e => { if (e.key === "Enter") submit(); };
+      confirms.set(q.id, el);
+      feed.appendChild(el);
+      feed.scrollTop = feed.scrollHeight;
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      break;
+    }
+    case "questionResolved":
     case "confirmResolved": {
       const el = confirms.get(m.id);
       if (el) { el.remove(); confirms.delete(m.id); }

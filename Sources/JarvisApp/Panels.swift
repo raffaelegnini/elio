@@ -9,7 +9,7 @@ struct ConfirmCard: View {
     let answer: (Bool) -> Void
 
     private var danger: Bool { request.risk == .dangerous }
-    private var accent: Color { danger ? Color(red: 1, green: 0.42, blue: 0.38) : Theme.cyan }
+    private var accent: Color { danger ? Color(red: 1, green: 0.42, blue: 0.38) : Theme.accent }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -104,7 +104,7 @@ struct StatusDot: View {
 
     private var color: Color {
         switch status {
-        case .running: Theme.cyan
+        case .running: Theme.accent
         case .waitingConfirmation: .orange
         case .done: .green
         case .failed: .red
@@ -203,7 +203,7 @@ struct DiffView: View {
                                 .foregroundStyle(Theme.text)
                                 .padding(.horizontal, 8).padding(.vertical, 5)
                                 .background(RoundedRectangle(cornerRadius: 6)
-                                    .fill((selected ?? files.first?.id) == f.id ? Theme.cyan.opacity(0.12) : .clear))
+                                    .fill((selected ?? files.first?.id) == f.id ? Theme.accent.opacity(0.12) : .clear))
                             }
                             .buttonStyle(.plain)
                             .help(f.path)
@@ -259,7 +259,7 @@ struct DiffLineView: View {
 
     private var fg: Color {
         switch line.kind {
-        case .hunk: Theme.cyan.opacity(0.8)
+        case .hunk: Theme.accent.opacity(0.8)
         case .context: Theme.text.opacity(0.75)
         default: Theme.text
         }
@@ -269,7 +269,7 @@ struct DiffLineView: View {
         switch line.kind {
         case .add: Color.green.opacity(0.14)
         case .del: Color.red.opacity(0.14)
-        case .hunk: Theme.cyan.opacity(0.06)
+        case .hunk: Theme.accent.opacity(0.06)
         case .context: .clear
         }
     }

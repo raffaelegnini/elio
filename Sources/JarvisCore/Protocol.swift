@@ -10,6 +10,10 @@ public enum ClientMessage: Codable, Sendable {
     case listTools(id: String)
     /// From the app: the user's answer to a confirmation request.
     case confirm(id: String, approved: Bool)
+    /// Settings changed: the daemon restarts to reload config, integrations and secrets.
+    case reload
+    /// The user's answer to an ask_user question.
+    case answer(id: String, text: String)
 
     private enum CodingKeys: String, CodingKey { case type, id, text, name, args, approved }
 
@@ -22,6 +26,8 @@ public enum ClientMessage: Codable, Sendable {
             self = .tool(id: try c.decode(String.self, forKey: .id), name: try c.decode(String.self, forKey: .name),
                          args: try c.decodeIfPresent(String.self, forKey: .args) ?? "{}")
         case "listTools": self = .listTools(id: try c.decode(String.self, forKey: .id))
+        case "reload": self = .reload
+        case "answer": self = .answer(id: try c.decode(String.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
         case "confirm":
             self = .confirm(id: try c.decode(String.self, forKey: .id), approved: try c.decode(Bool.self, forKey: .approved))
         case let other:
@@ -41,6 +47,10 @@ public enum ClientMessage: Codable, Sendable {
             try c.encode(name, forKey: .name); try c.encode(args, forKey: .args)
         case .listTools(let id):
             try c.encode("listTools", forKey: .type); try c.encode(id, forKey: .id)
+        case .reload:
+            try c.encode("reload", forKey: .type)
+        case .answer(let id, let text):
+            try c.encode("answer", forKey: .type); try c.encode(id, forKey: .id); try c.encode(text, forKey: .text)
         case .confirm(let id, let approved):
             try c.encode("confirm", forKey: .type); try c.encode(id, forKey: .id); try c.encode(approved, forKey: .approved)
         }
@@ -101,6 +111,33 @@ public struct TaskInfo: Codable, Sendable, Identifiable {
         self.id = id; self.title = title; self.project = project; self.status = status
         self.steps = steps; self.summary = summary; self.startedAt = startedAt; self.endedAt = endedAt
     }
+}
+
+/// One line of an agent's live activity (thinking, command, output, file edit…).
+public struct TaskLogEntry: Codable, Sendable, Identifiable {
+    public enum Kind: String, Codable, Sendable { case say, command, output, edit, write, read, search, ask, info }
+    public var id: String
+    public var taskId: String
+    public var kind: Kind
+    public var title: String
+    public var body: String
+    /// For edits: removed / added text.
+    public var removed: String?
+    public var added: String?
+    public var date: Date
+
+    public init(taskId: String, kind: Kind, title: String, body: String = "", removed: String? = nil, added: String? = nil) {
+        id = UUID().uuidString; self.taskId = taskId; self.kind = kind; self.title = title; self.body = body
+        self.removed = removed; self.added = added; date = Date()
+    }
+}
+
+/// A question from the assistant or an agent that needs the user's answer.
+public struct QuestionRequest: Codable, Sendable, Identifiable {
+    public var id: String
+    public var question: String
+    public var from: String
+    public var taskId: String?
 }
 
 public struct ConfirmRequest: Codable, Sendable, Identifiable {

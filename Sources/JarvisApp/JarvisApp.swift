@@ -40,6 +40,7 @@ struct MenuContent: View {
             Button(loop.muted ? "Riattiva microfono  ⌥⌘M" : "Silenzia microfono  ⌥⌘M") { loop.setMuted(!loop.muted) }
             Button("Mostra HUD") { delegate.hud.show(pinned: true) }
             Button("Dashboard  ⌥⌘D") { delegate.showDashboard() }
+            Button("Impostazioni…") { delegate.showSettings() }.keyboardShortcut(",")
             if !loop.diffs.isEmpty {
                 Button("Revisione ultimo diff") { delegate.showDashboard(review: loop.diffs.first) }
             }
@@ -58,7 +59,7 @@ struct MenuContent: View {
                 .disabled(PhoneSetup.tailscaleCLI == nil)
             }
             Divider()
-            Toggle("Ascolto sempre attivo (\"Jarvis…\")", isOn: Binding(
+            Toggle("Ascolto sempre attivo (\"\(Brand.shared.name)…\")", isOn: Binding(
                 get: { loop.alwaysListening }, set: { loop.alwaysListening = $0 }))
             Toggle("Avvia al login", isOn: Binding(
                 get: { SMAppService.mainApp.status == .enabled },
@@ -75,6 +76,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let hud = HUDController()
     let dashboardState = DashboardState()
     private var dashboard: NSWindow?
+    private var settingsWindow: NSWindow?
+    let settings = SettingsModel()
     private var hotKey: HotKey?
     private var dashboardKey: HotKey?
     private var muteKey: HotKey?
@@ -100,10 +103,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         let config = JarvisConfig.load()
+        Brand.shared.apply(config)
+        WakeWord.configure(name: config.assistantName, aliases: config.wakeAliases)
+        BargeIn.words.insert(config.assistantName.lowercased(), at: 0)
         guard let token = try? AuthToken.loadOrCreate() else { return }
         let loop = VoiceLoop(config: config, token: token)
         self.loop = loop
         objectWillChange.send()
+        loop.onIntegrationSetup = { [weak self] id in self?.showSettings(tab: .integrations, integration: id) }
+        loop.onRoutineStart = { [weak self] in self?.showDashboard() }
         hud.attach(loop, openReview: { [weak self] diff in self?.showDashboard(review: diff) })
 
         hotKey = HotKey(keyCode: 38 /* J */, modifiers: [.option, .command]) { [weak self] in
@@ -128,6 +136,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func activate() {
         hud.show(pinned: false)
         loop?.activate()
+    }
+
+    func showSettings(tab: SettingsTab? = nil, integration: String? = nil) {
+        settings.reload()
+        if let tab { settings.tab = tab }
+        if let integration { settings.selectedIntegration = integration }
+        if settingsWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 640),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                                  backing: .buffered, defer: false)
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.isReleasedWhenClosed = false
+            window.backgroundColor = NSColor(Theme.bg)
+            window.contentView = NSHostingView(rootView: SettingsView(model: settings, loop: loop))
+            window.center()
+            settingsWindow = window
+        }
+        settingsWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     func showDashboard(review: DiffPayload? = nil) {
@@ -155,11 +183,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         withObservationTracking {
             _ = loop.state
             _ = loop.confirmations.count
+            _ = loop.questions.count
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
                 self.objectWillChange.send()
-                if !loop.confirmations.isEmpty {
+                if !loop.confirmations.isEmpty || !loop.questions.isEmpty {
                     // Never let a pending confirmation disappear from view.
                     self.hud.show(pinned: true)
                 } else {
@@ -193,4 +222,6 @@ extension VoiceLoop.State {
 @Observable
 final class DashboardState {
     var reviewing: DiffPayload?
+    /// Agent whose live activity is open full-size.
+    var theater: String?
 }

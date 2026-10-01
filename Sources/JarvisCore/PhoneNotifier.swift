@@ -8,7 +8,7 @@ public final class PhoneNotifier: @unchecked Sendable {
     private let lock = NSLock()
     private var screenLocked = false
     private var observers: [NSObjectProtocol] = []
-    static let kinds: Set<String> = ["reminder", "taskDone", "confirm", "meeting", "brief", "timer"]
+    static let kinds: Set<String> = ["reminder", "taskDone", "confirm", "question", "meeting", "brief", "timer", "nudge"]
 
     public init(topic: String) {
         self.topic = topic
@@ -21,16 +21,20 @@ public final class PhoneNotifier: @unchecked Sendable {
         })
     }
 
+    public static var idleSeconds: TimeInterval {
+        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+    }
+
     public var isAway: Bool {
-        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
-        return lock.withLock { screenLocked } || idle > 300
+        lock.withLock { screenLocked } || Self.idleSeconds > 300
     }
 
     public func handle(_ message: ServerMessage) {
         guard message.type == .event, message.speak == true, let kind = message.kind,
               Self.kinds.contains(kind), let text = message.text, isAway else { return }
         let title: String = switch kind {
-        case "confirm": "Jarvis chiede conferma"
+        case "confirm": "Serve una conferma"
+        case "question": "Una domanda per te"
         case "taskDone": "Task completato"
         case "reminder": "Promemoria"
         case "meeting": "Meeting"

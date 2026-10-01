@@ -103,9 +103,9 @@ struct HUDView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Circle().fill(loop.connected ? Theme.cyan : .red).frame(width: 6, height: 6)
-                .shadow(color: loop.connected ? Theme.cyan : .red, radius: 4)
-            Text("J.A.R.V.I.S.").font(.system(size: 11, weight: .semibold, design: .monospaced)).tracking(3)
+            Circle().fill(loop.connected ? Theme.accent : .red).frame(width: 6, height: 6)
+                .shadow(color: loop.connected ? Theme.accent : .red, radius: 4)
+            Text(Brand.shared.dotted).font(.system(size: 11, weight: .semibold, design: .monospaced)).tracking(3)
                 .foregroundStyle(Theme.text)
             Spacer()
             Text(loop.charactersThisSession > 0 ? "\(loop.charactersThisSession) CHR" : "")
@@ -145,6 +145,9 @@ struct HUDView: View {
     @ViewBuilder
     private var activity: some View {
         VStack(spacing: 8) {
+            if let q = loop.questions.first {
+                QuestionCard(question: q) { loop.answer(q, text: $0) }
+            }
             if let req = loop.confirmations.first {
                 ConfirmCard(request: req) { loop.answer(req, approved: $0) }
             }
@@ -166,9 +169,9 @@ struct HUDView: View {
                         Spacer()
                         Text("Apri revisione").fontWeight(.semibold)
                     }
-                    .font(.system(size: 11.5)).foregroundStyle(Theme.cyan)
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.accent)
                     .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.cyan.opacity(0.35)))
+                    .background(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.accent.opacity(0.35)))
                 }
                 .buttonStyle(.plain)
             }
@@ -179,7 +182,7 @@ struct HUDView: View {
 
     private var hint: String {
         if loop.muted { return "Microfono spento — ⌥⌘M per riattivarlo" }
-        return loop.alwaysListening ? "Di' \"Jarvis…\" oppure ⌥⌘J" : "Premi ⌥⌘J per parlare"
+        return loop.alwaysListening ? "Di' \"\(Brand.shared.name)…\" oppure ⌥⌘J" : "Premi ⌥⌘J per parlare"
     }
 
     private var conversation: some View {
@@ -203,8 +206,8 @@ struct HUDView: View {
 
     private var inputBar: some View {
         HStack(spacing: 8) {
-            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.cyan)
-            TextField("Scrivi a Jarvis…", text: $input)
+            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.accent)
+            TextField("Scrivi a \(Brand.shared.name)…", text: $input)
                 .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.text)
                 .onSubmit {
                     loop.submit(text: input)
@@ -247,7 +250,7 @@ struct TurnRow: View {
         case "user": "TU"
         case "event": "AVVISO"
         case "card": "SCHEDA"
-        default: "JARVIS"
+        default: Brand.shared.name.uppercased()
         }
     }
 
@@ -255,7 +258,7 @@ struct TurnRow: View {
         switch turn.role {
         case "user": Theme.dim
         case "event": .orange
-        default: Theme.cyan
+        default: Theme.accent
         }
     }
 }

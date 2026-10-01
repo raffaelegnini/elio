@@ -1,24 +1,53 @@
+import JarvisCore
 import JarvisVoice
 import SwiftUI
 
+/// DNA Factory palette (dna-management-apps): ink blacks, warm greys, cream text, yellow accent.
+/// The accent comes from Settings so each colleague can tune it.
+@MainActor
 enum Theme {
-    static let bg = Color(red: 0.02, green: 0.04, blue: 0.07)
-    static let panel = Color(red: 0.05, green: 0.09, blue: 0.13).opacity(0.82)
-    static let line = Color(red: 0.35, green: 0.85, blue: 1.0).opacity(0.16)
-    static let text = Color(red: 0.86, green: 0.95, blue: 1.0)
-    static let dim = Color(red: 0.52, green: 0.66, blue: 0.75)
-    static let cyan = Color(red: 0.31, green: 0.86, blue: 1.0)
+    static let bg = Color(hex: "#0E0E10")
+    static let panel = Color(hex: "#1A1A1D").opacity(0.82)
+    static var line: Color { accent.opacity(0.18) }
+    static let text = Color(hex: "#FBF8F1")
+    static let dim = Color(hex: "#9E9A8E")
+    static var accent: Color { Brand.shared.accent }
     static let mono = Font.system(size: 10.5, weight: .medium, design: .monospaced)
 
     static func tint(_ state: VoiceLoop.State) -> Color {
         switch state {
-        case .listening, .idle: Color(red: 0.31, green: 0.78, blue: 1.0)
-        case .hearing: Color(red: 0.55, green: 0.95, blue: 1.0)
-        case .thinking: Color(red: 0.62, green: 0.52, blue: 1.0)
-        case .speaking: Color(red: 0.25, green: 0.95, blue: 0.85)
-        case .muted: Color(red: 1.0, green: 0.55, blue: 0.35)
-        case .off: Color(white: 0.45)
+        case .listening, .idle: accent
+        case .hearing: Color(hex: "#FFE38A")
+        case .thinking: Color(hex: "#FF9F43")
+        case .speaking: Color(hex: "#F5C13F")
+        case .muted: Color(hex: "#6E6B62")
+        case .off: Color(hex: "#4A4843")
         }
+    }
+}
+
+/// Name and accent of the assistant, editable at runtime from Settings.
+@MainActor
+@Observable
+final class Brand {
+    static let shared = Brand()
+    var name = "Jarvis"
+    var accent = Color(hex: "#FFD360")
+
+    /// "JARVIS" → "J.A.R.V.I.S."
+    var dotted: String { name.uppercased().map(String.init).joined(separator: ".") + "." }
+
+    func apply(_ config: JarvisConfig) {
+        name = config.assistantName
+        accent = Color(hex: config.accentColor)
+    }
+}
+
+extension Color {
+    init(hex: String) {
+        let s = hex.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
+        let v = UInt64(s, radix: 16) ?? 0xFFD360
+        self.init(red: Double((v >> 16) & 0xFF) / 255, green: Double((v >> 8) & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
     }
 }
 
