@@ -40,6 +40,8 @@ public struct ElioConfig: Codable, Sendable {
     public var speakerThreshold: Double = 0.65
     public var webPort: UInt16 = 8766
     public var remotePort: UInt16 = 8767
+    /// Simple device commands (music, apps, links, volume) handled by Apple's on-device model.
+    public var appleFastPath: Bool = true
 
     public init() {}
 
@@ -78,6 +80,7 @@ public struct ElioConfig: Codable, Sendable {
         browserAutonomy = try c.decodeIfPresent(Bool.self, forKey: .browserAutonomy) ?? d.browserAutonomy
         speakerVerification = try c.decodeIfPresent(Bool.self, forKey: .speakerVerification) ?? d.speakerVerification
         speakerThreshold = try c.decodeIfPresent(Double.self, forKey: .speakerThreshold) ?? d.speakerThreshold
+        appleFastPath = try c.decodeIfPresent(Bool.self, forKey: .appleFastPath) ?? d.appleFastPath
     }
 
     static func defaultClaudePath() -> String {

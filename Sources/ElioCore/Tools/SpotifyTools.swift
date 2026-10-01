@@ -12,9 +12,31 @@ public enum Spotify {
 
     // MARK: Desktop control
 
+    /// osascript with a hard 6 s limit: while macOS's "allow Elio to control Spotify" prompt is
+    /// waiting, the Apple event blocks forever.
     @discardableResult
     static func script(_ body: String) throws -> String {
-        try shell("/usr/bin/osascript", ["-e", "tell application \"Spotify\"\n\(body)\nend tell"])
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        p.arguments = ["-e", "tell application \"Spotify\"\n\(body)\nend tell"]
+        let out = Pipe(), err = Pipe()
+        p.standardOutput = out
+        p.standardError = err
+        try p.run()
+        let deadline = Date().addingTimeInterval(6)
+        while p.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        if p.isRunning {
+            p.terminate()
+            throw ToolError("macOS sta chiedendo il permesso di controllare Spotify: approvi la finestra (o Impostazioni di Sistema → Privacy e sicurezza → Automazione → eliod → Spotify).")
+        }
+        let errText = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        if p.terminationStatus != 0 {
+            if errText.contains("-1743") || errText.contains("Not authorized") {
+                throw ToolError("Elio non ha il permesso di controllare Spotify: Impostazioni di Sistema → Privacy e sicurezza → Automazione → eliod → attivi Spotify.")
+            }
+            throw ToolError("Spotify: \(errText.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
