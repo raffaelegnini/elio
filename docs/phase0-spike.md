@@ -16,11 +16,11 @@
   Apple FM only as fuzzy fallback for local intent/slot extraction, never for user-facing facts.
 - Agent escalation decided by Claude itself (tool `start_background_task`), not by local router.
 - Acks = pre-generated cached audio clips chosen by route, not generated text.
-- `--setting-sources project` keeps user hooks/plugins out of Jarvis's Claude session.
+- `--setting-sources project` keeps user hooks/plugins out of Elio's Claude session.
 
 ## Estimated voice round-trip
 end of speech → STT final ~0.3s → Claude TTFT ~0.85s → first sentence buffered → TTS TTFB ~0.4s ≈ **1.6–2s** to first audio.
 Keep one HTTP/WebSocket connection to ElevenLabs warm to avoid ~0.7s cold penalty.
 
 ## Secrets
-ElevenLabs key in macOS Keychain: service `jarvis-elevenlabs`, account `jarvis`.
+ElevenLabs key in macOS Keychain: service `elio-elevenlabs`, account `elio`.

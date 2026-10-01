@@ -1,5 +1,5 @@
 // App shell cache: the PWA opens instantly; live data always comes from the socket.
-const CACHE = "jarvis-v1";
+const CACHE = "elio-v1";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())));

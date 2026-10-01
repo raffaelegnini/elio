@@ -12,7 +12,7 @@ agent = lavoro lungo su codice, terminale, test, PR, review.
 """
 
 let tests = [
-    "Apri Slack", "Ciao Jarvis, buongiorno!", "Metti un timer di 10 minuti",
+    "Apri Slack", "Ciao Elio, buongiorno!", "Metti un timer di 10 minuti",
     "Cosa ho in calendario oggi?", "Spiegami la differenza tra Redis e Memcached",
     "Fammi la review della branch feature/checkout e preparami il diff",
     "Open Spotify please", "What's the weather like in Naples today?",

@@ -1,7 +1,7 @@
 import AVFoundation
 setvbuf(stdout, nil, _IONBF, 0)
-import JarvisCore
-import JarvisVoice
+import ElioCore
+import ElioVoice
 
 // voicesim: runs WAV files through the app's real input pipeline (VAD → STT → wake word)
 // with simulated room noise, without a microphone.

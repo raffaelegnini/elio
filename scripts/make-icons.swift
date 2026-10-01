@@ -1,4 +1,4 @@
-// Renders the Jarvis app icon (orb on dark) as PNGs for the PWA.
+// Renders the Elio app icon (orb on dark) as PNGs for the PWA.
 import AppKit
 
 func render(_ size: CGFloat, to path: String) {

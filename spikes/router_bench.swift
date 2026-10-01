@@ -1,4 +1,4 @@
-// Spike: Apple Foundation Models as Jarvis fast router (Italian/English).
+// Spike: Apple Foundation Models as Elio fast router (Italian/English).
 import Foundation
 import FoundationModels
 
@@ -18,7 +18,7 @@ struct Decision {
 }
 
 let instructions = """
-Sei il router vocale di Jarvis. Classifica la richiesta:
+Sei il router vocale di Elio. Classifica la richiesta:
 - local: comandi semplici (apri app, timer, ora, volume) o saluti/chiacchiere.
 - claude: domande che richiedono conoscenza, ragionamento o dati (calendario, mail, consigli).
 - agent: lavori lunghi (codice, terminale, PR, review, ricerche in più passi).
@@ -30,7 +30,7 @@ print("availability:", model.availability)
 guard case .available = model.availability else { exit(1) }
 
 let tests = [
-    "Apri Slack", "Ciao Jarvis, buongiorno!", "Metti un timer di 10 minuti",
+    "Apri Slack", "Ciao Elio, buongiorno!", "Metti un timer di 10 minuti",
     "Cosa ho in calendario oggi?", "Spiegami la differenza tra Redis e Memcached",
     "Fammi la review della branch feature/checkout e preparami il diff",
     "Open Spotify please", "What's the weather like in Naples today?",

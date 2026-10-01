@@ -1,6 +1,6 @@
 """Spike: ElevenLabs streaming TTS time-to-first-byte.
 
-Key is read from macOS Keychain (service 'jarvis-elevenlabs') or $ELEVENLABS_API_KEY.
+Key is read from macOS Keychain (service 'elio-elevenlabs') or $ELEVENLABS_API_KEY.
 """
 import json, os, subprocess, sys, time, urllib.request
 
@@ -8,7 +8,7 @@ def api_key():
     if os.environ.get("ELEVENLABS_API_KEY"):
         return os.environ["ELEVENLABS_API_KEY"]
     return subprocess.check_output(
-        ["security", "find-generic-password", "-s", "jarvis-elevenlabs", "-w"], text=True).strip()
+        ["security", "find-generic-password", "-s", "elio-elevenlabs", "-w"], text=True).strip()
 
 KEY = api_key()
 H = {"xi-api-key": KEY, "Content-Type": "application/json"}

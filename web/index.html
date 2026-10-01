@@ -6,10 +6,10 @@
 <meta name="theme-color" content="#05090f">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Jarvis">
+<meta name="apple-mobile-web-app-title" content="Elio">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>Jarvis</title>
+<title>Elio</title>
 <style>
   :root {
     --bg: #05090f; --panel: rgba(13, 23, 33, .72); --line: rgba(89, 217, 255, .16);
@@ -39,7 +39,7 @@
   #feed { flex: 1; overflow-y: auto; padding: 8px 2px 12px; display: flex; flex-direction: column; gap: 12px;
     mask-image: linear-gradient(transparent, #000 24px); -webkit-mask-image: linear-gradient(transparent, #000 24px); }
   .msg .who { font: 600 10px var(--mono); letter-spacing: .18em; color: var(--dim); margin-bottom: 2px; }
-  .msg.jarvis .who { color: var(--cyan); }
+  .msg.elio .who { color: var(--cyan); }
   .msg.event .who { color: var(--warn); }
   .msg .text { white-space: pre-wrap; }
   .msg.user .text { color: var(--dim); }
@@ -80,7 +80,7 @@
 <div id="app">
   <header>
     <span id="conn" class="dot"></span>
-    <span class="brand">J.A.R.V.I.S.</span>
+    <span class="brand">E.L.I.O.</span>
     <span class="spacer"></span>
     <button id="voiceToggle" class="icon-btn" title="Voce">🔊</button>
   </header>
@@ -88,13 +88,13 @@
   <div id="partial"></div>
   <div id="feed"><div id="tasks"></div></div>
   <form id="form" autocomplete="off">
-    <input id="input" placeholder="Scrivi a Jarvis…" enterkeyhint="send">
+    <input id="input" placeholder="Scrivi a Elio…" enterkeyhint="send">
     <button id="mic" type="button" aria-label="Tieni premuto per parlare">🎙</button>
   </form>
 </div>
 <div id="pair"><div>
-  <h1>J.A.R.V.I.S.</h1>
-  <p>Questo dispositivo non è ancora associato.<br>Sul Mac apri il menu di Jarvis → <b>Telefono</b> e apri il link di accoppiamento su questo telefono.</p>
+  <h1>E.L.I.O.</h1>
+  <p>Questo dispositivo non è ancora associato.<br>Sul Mac apri il menu di Elio → <b>Telefono</b> e apri il link di accoppiamento su questo telefono.</p>
 </div></div>
 
 <script>
@@ -102,11 +102,11 @@
 // ---------- Pairing ----------
 const params = new URLSearchParams(location.hash.slice(1));
 if (params.get("pair")) {
-  try { localStorage.setItem("jarvis.token", params.get("pair")); } catch {}
+  try { localStorage.setItem("elio.token", params.get("pair")); } catch {}
   history.replaceState(null, "", location.pathname);
 }
 let token = null;
-try { token = localStorage.getItem("jarvis.token"); } catch {}
+try { token = localStorage.getItem("elio.token"); } catch {}
 if (!token) document.getElementById("pair").classList.add("show");
 
 // ---------- State ----------
@@ -114,7 +114,7 @@ const $ = id => document.getElementById(id);
 const feed = $("feed"), tasksEl = $("tasks");
 let ws = null, state = "connessione…", level = 0, current = null;
 let voiceOn = true;
-try { voiceOn = localStorage.getItem("jarvis.voice") !== "off"; } catch {}
+try { voiceOn = localStorage.getItem("elio.voice") !== "off"; } catch {}
 $("voiceToggle").textContent = voiceOn ? "🔊" : "🔇";
 const tints = { listening: "#4fc7ff", thinking: "#9e85ff", speaking: "#40f2d9", hearing: "#8cf2ff", offline: "#6b7280" };
 function setState(s, label) {
@@ -131,7 +131,7 @@ function wsURL() {
 }
 function connect() {
   if (!token) return;
-  ws = new WebSocket(wsURL(), ["jarvis", "t-" + token]);
+  ws = new WebSocket(wsURL(), ["elio", "t-" + token]);
   ws.onopen = () => { $("conn").classList.add("on"); setState("listening", "pronto"); };
   ws.onclose = () => { $("conn").classList.remove("on"); setState("offline", "offline"); setTimeout(connect, 2500); };
   ws.onmessage = e => { try { handle(JSON.parse(e.data)); } catch (err) { console.error(err); } };
@@ -142,7 +142,7 @@ function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj))
 function addMsg(role, text, meta) {
   const el = document.createElement("div");
   el.className = "msg " + role;
-  const who = { user: "TU", jarvis: "JARVIS", event: "AVVISO" }[role] || role.toUpperCase();
+  const who = { user: "TU", elio: "ELIO", event: "AVVISO" }[role] || role.toUpperCase();
   el.innerHTML = `<div class="who">${who}<span class="meta"></span></div><div class="text"></div>`;
   el.querySelector(".text").textContent = text;
   if (meta) el.querySelector(".meta").textContent = meta;
@@ -265,7 +265,7 @@ function say(text) {
   unlockAudio();
   const id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
   addMsg("user", text);
-  current = { id, text: "", el: addMsg("jarvis", "…") };
+  current = { id, text: "", el: addMsg("elio", "…") };
   setState("thinking", "elaboro");
   send({ type: "say", id, text });
 }
@@ -294,7 +294,7 @@ function speak(text) {
   if (!voiceOn || !text) { setState("listening", "pronto"); return; }
   speakQueue = speakQueue.then(async () => {
     try {
-      const r = await fetch("tts", { method: "POST", headers: { "Content-Type": "application/json", "X-Jarvis-Token": token },
+      const r = await fetch("tts", { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token },
                                       body: JSON.stringify({ text }) });
       if (!r.ok) throw new Error(r.status);
       const url = URL.createObjectURL(await r.blob());
@@ -309,7 +309,7 @@ function speak(text) {
 }
 $("voiceToggle").onclick = () => {
   voiceOn = !voiceOn;
-  try { localStorage.setItem("jarvis.voice", voiceOn ? "on" : "off"); } catch {}
+  try { localStorage.setItem("elio.voice", voiceOn ? "on" : "off"); } catch {}
   $("voiceToggle").textContent = voiceOn ? "🔊" : "🔇";
   if (!voiceOn) audio.pause();
 };

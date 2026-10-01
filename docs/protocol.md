@@ -1,6 +1,6 @@
 # Client protocol (for the native mobile app — Flutter or Swift)
 
-The daemon (`jarvisd`) is the brain. Every client — the Mac app, the phone PWA, a future native app —
+The daemon (`eliod`) is the brain. Every client — the Mac app, the phone PWA, a future native app —
 talks to it over a WebSocket with one JSON object per text frame. A native app reuses exactly what the
 PWA does today.
 
@@ -8,9 +8,9 @@ PWA does today.
 
 | Client | Endpoint | Auth |
 |---|---|---|
-| Mac app / CLI / MCP bridge | `ws://127.0.0.1:8765` | header `X-Jarvis-Token: <~/Library/Application Support/Jarvis/token>`; requests with `Origin` are rejected |
-| Phone | `wss://<mac>.<tailnet>.ts.net/ws` (Tailscale serve → `127.0.0.1:8767`) | WebSocket subprotocols `["jarvis", "t-<remote-token>"]`; server answers `jarvis` |
-| Phone TTS | `POST https://<mac>.<tailnet>.ts.net/tts` `{"text": "…"}` | header `X-Jarvis-Token: <remote-token>` → `audio/mpeg` |
+| Mac app / CLI / MCP bridge | `ws://127.0.0.1:8765` | header `X-Elio-Token: <~/Library/Application Support/Elio/token>`; requests with `Origin` are rejected |
+| Phone | `wss://<mac>.<tailnet>.ts.net/ws` (Tailscale serve → `127.0.0.1:8767`) | WebSocket subprotocols `["elio", "t-<remote-token>"]`; server answers `elio` |
+| Phone TTS | `POST https://<mac>.<tailnet>.ts.net/tts` `{"text": "…"}` | header `X-Elio-Token: <remote-token>` → `audio/mpeg` |
 
 Pairing: the Mac shows `https://<mac>.ts.net/#pair=<remote-token>`; the app stores the token (Keychain on iOS).
 Revoking = deleting `remote-token` on the Mac (Settings → Telefono).
@@ -54,4 +54,4 @@ Unsolicited events: `{"type": "event", "kind": "<kind>", "id": "…", "text": "�
 | `memory` | `{"category": …}`, `text` = fact | new memory node |
 | `integrationSetup` | `Integration` | open integration settings (Mac only) |
 
-Dates are ISO-8601. Payload types are defined in `Sources/JarvisCore/Protocol.swift`.
+Dates are ISO-8601. Payload types are defined in `Sources/ElioCore/Protocol.swift`.
