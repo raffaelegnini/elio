@@ -79,7 +79,8 @@ final class WebServer: @unchecked Sendable {
 
     private func tts(_ text: String) async throws -> Data {
         guard let key = KeychainItem.read(service: "jarvis-elevenlabs") else { throw ToolError("ElevenLabs key missing") }
-        var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(config.elevenLabsVoiceId)?output_format=mp3_44100_64")!)
+        let voice = JarvisConfig.load().elevenLabsVoiceId  // follows the voice picked in the app
+        var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voice)?output_format=mp3_44100_64")!)
         req.httpMethod = "POST"
         req.setValue(key, forHTTPHeaderField: "xi-api-key")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

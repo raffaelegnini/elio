@@ -176,6 +176,20 @@ public struct VoiceActivityDetector {
     }
 }
 
+/// Spotting the user talking over Jarvis through the speakers: the mic also hears Jarvis,
+/// so only interrupt words that Jarvis itself isn't saying count.
+public enum BargeIn {
+    static let words = ["jarvis", "giarvis", "stop", "basta", "aspetta", "fermati", "fermo", "zitto", "silenzio", "wait"]
+
+    public static func detect(_ heard: String, whileSaying spoken: String) -> Bool {
+        let h = heard.lowercased(), s = spoken.lowercased()
+        return words.contains { w in
+            h.range(of: "\\b\(w)\\b", options: .regularExpression) != nil
+                && s.range(of: "\\b\(w)\\b", options: .regularExpression) == nil
+        }
+    }
+}
+
 /// Interprets a spoken reply to a confirmation request.
 public enum ConfirmationAnswer: Equatable {
     case approve, deny, needsExplicit, unrelated

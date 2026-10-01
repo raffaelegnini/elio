@@ -43,6 +43,9 @@ struct MenuContent: View {
             if !loop.diffs.isEmpty {
                 Button("Revisione ultimo diff") { delegate.showDashboard(review: loop.diffs.first) }
             }
+            Picker("Voce", selection: Binding(get: { loop.voiceId }, set: { loop.setVoice($0) })) {
+                ForEach(VoiceLoop.voices, id: \.id) { Text($0.name).tag($0.id) }
+            }
             Menu("Telefono") {
                 Text(PhoneSetup.status(config: JarvisConfig.load()))
                 Button("Pubblica su Tailscale e copia link di accoppiamento") {

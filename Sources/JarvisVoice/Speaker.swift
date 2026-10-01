@@ -14,7 +14,7 @@ public final class Speaker {
     public private(set) var isSpeaking = false
 
     private let audio: AudioIO
-    private let voiceId: String
+    private var voiceId: String
     private let model: String
     private let apiKey: String?
     private let cacheDir: URL
@@ -44,6 +44,8 @@ public final class Speaker {
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         startConsumer()
     }
+
+    public func setVoice(_ id: String) { voiceId = id }
 
     /// Queue a sentence of the current reply.
     public func enqueue(_ sentence: String, lang: Lang? = nil) {
@@ -256,7 +258,8 @@ public final class Speaker {
         _ out: AsyncThrowingStream<AVAudioPCMBuffer, Error>.Continuation
     ) async throws {
         guard let key = await apiKey else { throw VoiceError.tts("missing API key") }
-        var comps = URLComponents(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voiceId)/stream")!
+        let voice = await voiceId
+        var comps = URLComponents(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voice)/stream")!
         comps.queryItems = [URLQueryItem(name: "output_format", value: "pcm_22050")]
         var req = URLRequest(url: comps.url!)
         req.httpMethod = "POST"

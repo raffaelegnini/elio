@@ -59,6 +59,23 @@ public final class VoiceLoop {
     private var transcriber: UtteranceTranscriber?
     private var beginTask: Task<Void, Never>?
     private var utteranceArmed = false
+    /// Utterance captured while Jarvis was speaking through the speakers.
+    private var bargeCandidate = false
+    /// What Jarvis is saying right now (to tell its own echo from the user's stop words).
+    private var spokenText = ""
+    /// Spoken sentences left for the current reply; the rest is only shown on screen.
+    private var sentenceBudget = 2
+
+    static func wantsDetail(_ text: String) -> Bool {
+        text.lowercased().range(of: #"spiega|approfondisc|nel dettaglio|dimmi tutto|leggi|elenca|explain|in detail|read"#,
+                                options: .regularExpression) != nil
+    }
+
+    private func speakReply(_ sentence: String) {
+        guard sentenceBudget > 0 else { return }
+        sentenceBudget -= 1
+        if replyStreaming { speaker.streamSentence(sentence) } else { speaker.enqueue(sentence) }
+    }
     private var wakeSeen = false
     private var abandoned = false
     private var armedUntil: Date?
@@ -99,6 +116,7 @@ public final class VoiceLoop {
         audio.onInput = { [pipeline] buffer, db in pipeline.process(buffer, levelDb: db) }
 
         muted = UserDefaults.standard.bool(forKey: "jarvis.muted")
+        voiceId = config.elevenLabsVoiceId
         do {
             try await UtteranceTranscriber.ensureModel(locale: Locale(identifier: "it_IT"))
             try audio.start()
@@ -160,6 +178,21 @@ public final class VoiceLoop {
         VoiceLog.write("mic \(on ? "muted" : "unmuted")")
     }
 
+    public static let voices: [(name: String, id: String)] = [
+        ("George", "JBFqnCBsd6RMkjVDRZzb"), ("Daniel", "onwK4e9ZLuTAKqWW03F9"),
+    ]
+    public private(set) var voiceId: String = ""
+
+    public func setVoice(_ id: String) {
+        var cfg = JarvisConfig.load()
+        cfg.elevenLabsVoiceId = id
+        cfg.save()
+        voiceId = id
+        speaker.setVoice(id)
+        speaker.enqueue("Così suono adesso, Signore.")
+        speaker.endUtterance()
+    }
+
     /// Runs a tool on the daemon (dashboard data: agenda, reminders…).
     public func callTool(_ name: String, _ args: [String: Any] = [:]) async -> (String, Bool) {
         await client.callTool(name, args)
@@ -186,9 +219,17 @@ public final class VoiceLoop {
         switch event {
         case .speechStart:
             if speaker.isSpeaking {
-                // Barge-in: the user talks over Jarvis.
-                interrupt()
+                if AudioDevices.defaultOutputIsHeadphones() {
+                    // No echo in headphones: any speech is the user talking over Jarvis.
+                    interrupt()
+                } else {
+                    // Speakers: listen while talking, interrupt only on a stop word (see partialChanged).
+                    bargeCandidate = true
+                    beginUtterance()
+                    return
+                }
             }
+            bargeCandidate = false
             guard alwaysListening || isArmed else { return }
             beginUtterance()
         case .speechEnd:
@@ -225,6 +266,18 @@ public final class VoiceLoop {
     /// drop it as soon as it's clearly someone talking about something else.
     private func partialChanged(_ text: String, from t: UtteranceTranscriber) {
         guard transcriber === t, !abandoned else { return }
+        if bargeCandidate {
+            guard speaker.isSpeaking else { bargeCandidate = false; return }
+            if BargeIn.detect(text, whileSaying: spokenText) {
+                VoiceLog.write("barge-in on '\(text)'")
+                bargeCandidate = false
+                interrupt()
+                utteranceArmed = true   // what follows "Jarvis, aspetta…" is a command
+                state = .hearing
+                partial = text
+            }
+            return
+        }
         if utteranceArmed || wakeSeen {
             partial = text
             return
@@ -253,6 +306,13 @@ public final class VoiceLoop {
         await beginTask?.value  // short utterances can end before the analyzer is ready
         beginTask = nil
         pipeline.detach()
+        if bargeCandidate {
+            // Speech while Jarvis talked, no stop word: it was the echo. Drop it.
+            bargeCandidate = false
+            pipeline.detach()
+            await t.cancel()
+            return
+        }
         let text = await t.finish()
         VoiceLog.write("stt final: '\(text)' (fed \(t.fedBuffers) buffers)")
         partial = ""
@@ -284,6 +344,8 @@ public final class VoiceLoop {
         requestStart = Date()
         turns.append(Turn(role: "user", text: text))
         turns.append(Turn(role: "jarvis", text: ""))
+        spokenText = ""
+        sentenceBudget = Self.wantsDetail(text) ? 50 : 2
         currentRequestId = client.say(text)
         VoiceLog.write("→ daemon: '\(text)'")
         firstDeltaLogged = false
@@ -307,9 +369,7 @@ public final class VoiceLoop {
                 firstDeltaLogged = true
                 VoiceLog.write(String(format: "timing: first claude text %.2fs", Date().timeIntervalSince(requestStart)))
             }
-            for sentence in splitter.push(msg.text ?? "") {
-                if replyStreaming { speaker.streamSentence(sentence) } else { speaker.enqueue(sentence) }
-            }
+            for sentence in splitter.push(msg.text ?? "") { speakReply(sentence) }
         case .done:
             if msg.route == .local {
                 appendToReply(msg.text ?? "")
@@ -317,7 +377,7 @@ public final class VoiceLoop {
                 if replyStreaming { speaker.cancelStream(); replyStreaming = false }
                 speaker.enqueue(msg.text ?? "", lang: msg.lang)
             } else if let rest = splitter.flush() {
-                if replyStreaming { speaker.streamSentence(rest) } else { speaker.enqueue(rest) }
+                speakReply(rest)
             }
             if replyStreaming { speaker.endStream() }
             if let i = turns.lastIndex(where: { $0.role == "jarvis" }) {
@@ -385,6 +445,7 @@ public final class VoiceLoop {
         }
         guard msg.speak == true, let text = msg.text else { return }
         turns.append(Turn(role: "event", text: text, route: msg.route))
+        spokenText = text
         // Split long proactive messages (briefing) so the voice starts on the first sentence.
         var splitter = SentenceSplitter()
         for sentence in splitter.push(text + " ") { speaker.enqueue(sentence, lang: msg.lang) }
@@ -434,6 +495,7 @@ public final class VoiceLoop {
     }
 
     private func appendToReply(_ text: String) {
+        spokenText += text
         if let i = turns.lastIndex(where: { $0.role == "jarvis" }) { turns[i].text += text }
     }
 
@@ -495,7 +557,7 @@ public final class InputPipeline: @unchecked Sendable {
     var inputFormat: AVAudioFormat?
     var speaking: Bool {
         get { lock.withLock { vad.extraMarginDb > 0 } }
-        set { lock.withLock { vad.extraMarginDb = newValue ? 20 : 0 } }
+        set { lock.withLock { vad.extraMarginDb = newValue ? 6 : 0 } }
     }
 
     private let lock = NSLock()

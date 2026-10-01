@@ -93,6 +93,19 @@ struct SpeakableTests {
     }
 }
 
+struct BargeInTests {
+    @Test func interruptsOnStopWordsJarvisIsNotSaying() {
+        let saying = "Ha tre riunioni oggi, la prima alle dieci con il team di prodotto."
+        #expect(BargeIn.detect("Jarvis aspetta", whileSaying: saying))
+        #expect(BargeIn.detect("basta così", whileSaying: saying))
+        #expect(!BargeIn.detect("tre riunioni oggi la prima", whileSaying: saying))
+    }
+
+    @Test func ignoresEchoOfItsOwnWords() {
+        #expect(!BargeIn.detect("aspetta un attimo", whileSaying: "Aspetta un attimo che controllo."))
+    }
+}
+
 struct ConfirmationAnswerTests {
     @Test func dangerousNeedsTheExplicitWord() {
         #expect(ConfirmationAnswer.parse("sì vai", risk: .dangerous) == .needsExplicit)

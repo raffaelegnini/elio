@@ -169,7 +169,7 @@ final class BufferConverter {
     }
 }
 
-enum AudioDevices {
+public enum AudioDevices {
     private static func property<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
                                     scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal, _ value: inout T) -> Bool {
         var address = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
@@ -199,10 +199,19 @@ enum AudioDevices {
         return property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, &id) ? id : nil
     }
 
-    static func defaultOutputIsBluetooth() -> Bool {
+    public static func defaultOutputIsBluetooth() -> Bool {
         guard let id = defaultOutput() else { return false }
         let t = transport(of: id)
         return t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE
+    }
+
+    /// Headphones of any kind: no speaker echo reaches the mic, so plain speech can interrupt Jarvis.
+    public static func defaultOutputIsHeadphones() -> Bool {
+        if defaultOutputIsBluetooth() { return true }
+        guard let id = defaultOutput() else { return false }
+        var source: UInt32 = 0
+        guard property(id, kAudioDevicePropertyDataSource, scope: kAudioDevicePropertyScopeOutput, &source) else { return false }
+        return source == 0x6864_706E  // 'hdpn'
     }
 
     static func builtInMicrophone() -> AudioDeviceID? {
