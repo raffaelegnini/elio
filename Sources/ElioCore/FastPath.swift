@@ -10,6 +10,7 @@ import FoundationModels
 public enum FastPath {
     public enum Action: String, Sendable, CaseIterable {
         case none, openApp, openURL, webSearch, play, pause, next, previous, nowPlaying, volumeUp, volumeDown, volumeSet
+        case lockScreen, darkMode, lightMode
     }
 
     public struct Command: Sendable, Equatable {
@@ -26,7 +27,8 @@ public enum FastPath {
         let cues = [" apri ", " aprimi ", " lancia ", " avvia ", " metti ", " mettimi ", " suona ", " riproduci ", " fai partire ",
                     " pausa ", " salta ", " skippa ", " prossima ", " successiva ", " precedente ", " canzone ", " brano ",
                     " musica ", " spotify ", " volume ", " sito ", " link ", " vai su ", " cerca su google ", " googla ",
-                    " che canzone ", " cosa sta suonando ", " riprendi la musica ", " play ", " next ", " open "]
+                    " che canzone ", " cosa sta suonando ", " riprendi la musica ", " play ", " next ", " open ",
+                    " blocca lo schermo ", " blocca il mac ", " modalita scura ", " modalita chiara ", " tema scuro ", " tema chiaro ", " dark mode "]
         return cues.contains { t.contains($0) }
     }
 
@@ -47,6 +49,7 @@ public enum FastPath {
     album, playlist, oppure liked per "i brani che mi piacciono"; se è solo "riprendi"/"play", target vuoto.
     - pause, next (salta/prossima/skippa), previous (precedente/indietro), nowPlaying (che canzone è).
     - volumeUp, volumeDown, volumeSet (value 0-100).
+    - lockScreen (blocca lo schermo / il Mac), darkMode (modalità o tema scuro), lightMode (modalità chiara).
     - none: qualunque altra cosa (domande, lavoro, email, calendario, messaggi, file, codice, richieste ambigue o \
     composte). Nel dubbio: none.
     """
@@ -110,6 +113,14 @@ public enum FastPath {
         case .volumeUp: return (try? actions.setVolume(.up)).map { "Volume a \($0)." }
         case .volumeDown: return (try? actions.setVolume(.down)).map { "Volume a \($0)." }
         case .volumeSet: return (try? actions.setVolume(.set(max(0, min(100, c.value))))).map { "Volume a \($0)." }
+        case .lockScreen:
+            _ = try? shell("/usr/bin/pmset", ["displaysleepnow"])
+            return "Schermo bloccato."
+        case .darkMode, .lightMode:
+            let dark = c.action == .darkMode
+            guard (try? shell("/usr/bin/osascript", ["-e",
+                "tell application \"System Events\" to tell appearance preferences to set dark mode to \(dark)"])) != nil else { return nil }
+            return dark ? "Modalità scura attiva." : "Modalità chiara attiva."
         }
     }
 }
@@ -121,7 +132,7 @@ private func music(_ f: () throws -> String) -> String {
 #if canImport(FoundationModels)
 @Generable
 struct Parsed {
-    @Guide(description: "Una tra: none, openApp, openURL, webSearch, play, pause, next, previous, nowPlaying, volumeUp, volumeDown, volumeSet")
+    @Guide(description: "Una tra: none, openApp, openURL, webSearch, play, pause, next, previous, nowPlaying, volumeUp, volumeDown, volumeSet, lockScreen, darkMode, lightMode")
     var action: String
     @Guide(description: "App, sito, ricerca o musica richiesta; vuoto se non serve")
     var target: String

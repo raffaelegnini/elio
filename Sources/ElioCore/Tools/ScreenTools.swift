@@ -222,6 +222,39 @@ public enum DesktopTools {
         return lines.isEmpty ? "Nessun risultato." : lines.joined(separator: "\n")
     }
 
+    static let note = ElioTool(
+        name: "quick_note",
+        description: "Annota al volo un'idea, un appunto o una cosa da ricordare in Apple Note (cartella \"Elio\"). Per promemoria con orario usa set_reminder.",
+        properties: ["text": prop("Testo della nota"), "title": prop("Titolo breve (opzionale)")],
+        required: ["text"]
+    ) { args, _ in
+        let text = args["text"] as? String ?? ""
+        guard !text.isEmpty else { throw ToolError("Nota vuota") }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "it_IT")
+        f.dateFormat = "d MMM HH:mm"
+        let title = (args["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Nota del \(f.string(from: Date()))"
+        let esc = { (s: String) in s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") }
+        let html = "<h3>\(esc(title))</h3><p>\(esc(text).replacingOccurrences(of: "\n", with: "<br>"))</p>"
+        let script = """
+        tell application "Notes"
+            if not (exists folder "Elio") then make new folder with properties {name:"Elio"}
+            make new note at folder "Elio" with properties {body:"\(html)"}
+        end tell
+        """
+        do {
+            _ = try shell("/usr/bin/osascript", ["-e", script])
+            return "Annotato in Note, cartella Elio."
+        } catch {
+            // Fallback: a Markdown file in the work folder.
+            let file = ElioPaths.outputDir.appendingPathComponent("Note.md")
+            let line = "\n## \(title)\n\(text)\n"
+            if let h = try? FileHandle(forWritingTo: file) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+            else { try? line.write(to: file, atomically: true, encoding: .utf8) }
+            return "Annotato in \(file.path) (Note non è disponibile: \(error))."
+        }
+    }
+
     static let clipboard = ElioTool(
         name: "clipboard",
         description: "Legge (action get) o scrive (action set, con text) gli appunti.",
