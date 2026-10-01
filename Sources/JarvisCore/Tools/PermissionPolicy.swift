@@ -20,18 +20,25 @@ public enum PermissionPolicy {
             return decideBash((input["command"] as? String) ?? "")
         default:
             if tool.hasPrefix("mcp__jarvis__") { return .allow }
-            if tool.hasPrefix("mcp__") {
-                // Integration MCP tools: reading is free, anything else needs an OK.
-                let action = tool.split(separator: "_").last.map(String.init)?.lowercased() ?? ""
-                let name = tool.lowercased()
-                let readish = ["get", "list", "search", "read", "fetch", "find", "query", "show", "describe", "view", "count"]
-                if readish.contains(where: { name.contains("__\($0)") || action.hasPrefix($0) }) { return .allow }
-                if ["delete", "remove", "destroy", "send", "post", "publish"].contains(where: { name.contains($0) }) {
-                    return .confirm(.dangerous)
-                }
-            }
+            if tool.hasPrefix("mcp__") { return decideIntegrationTool(tool) }
             return .confirm(.normal)
         }
+    }
+
+    /// Integration MCP tools (`mcp__<server>__<action>`). Write verbs anywhere in the action win;
+    /// only an action that *starts* with a read verb and contains no write verb runs freely.
+    static func decideIntegrationTool(_ tool: String) -> Decision {
+        let action = (tool.components(separatedBy: "__").last ?? "").lowercased()
+        let words = action.split(whereSeparator: { $0 == "_" || $0 == "-" }).map(String.init)
+        let destructive = ["delete", "remove", "destroy", "drop", "purge", "send", "post", "publish", "reply",
+                           "forward", "share", "invite", "transfer", "pay", "execute", "run", "exec"]
+        let writes = ["create", "update", "edit", "set", "add", "write", "put", "patch", "move", "archive", "complete",
+                      "close", "assign", "modify", "upload", "start", "stop", "trigger", "mark", "log", "change", "rename"]
+        if words.contains(where: { destructive.contains($0) }) { return .confirm(.dangerous) }
+        if words.contains(where: { writes.contains($0) }) { return .confirm(.normal) }
+        let reads = ["get", "list", "search", "read", "fetch", "find", "query", "show", "describe", "view", "count"]
+        if let first = words.first, reads.contains(first) { return .allow }
+        return .confirm(.normal)
     }
 
     public static func decideBash(_ command: String) -> Decision {

@@ -373,7 +373,12 @@ private struct IntegrationRow: View {
                 if item.authType == .basic { Field(label: "Utente (vuoto = la chiave)", text: $item.basicUser) }
                 if item.authType != .none { SecretField(label: "Chiave / token", service: item.secretService) }
                 Field(label: "Documentazione", text: $item.docsURL)
-                Toggle("Attiva", isOn: $item.enabled).font(.system(size: 12.5))
+                if item.kind == .mcp && !item.mcpCommand.isEmpty {
+                    Text("⚠︎ Attivandola, il Mac eseguirà: \(([item.mcpCommand] + item.mcpArgs).joined(separator: " "))")
+                        .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                }
+                Toggle("Attiva (ho controllato la configurazione)", isOn: $item.enabled).font(.system(size: 12.5))
                 if !item.notes.isEmpty {
                     Text("Note d'uso imparate").font(Theme.mono).foregroundStyle(Theme.dim)
                     Text(item.notes).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text.opacity(0.85))

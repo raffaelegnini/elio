@@ -32,7 +32,7 @@ cat > "$DAEMON_APP/Contents/Info.plist" <<INFO
 <dict>
     <key>CFBundleIdentifier</key><string>it.dnafactory.jarvis.daemon</string>
     <key>CFBundleName</key><string>Jarvis Daemon</string>
-    <key>CFBundleDisplayName</key><string>Jarvis</string>
+    <key>CFBundleDisplayName</key><string>Elio</string>
     <key>CFBundleExecutable</key><string>jarvisd</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.3.0</string>

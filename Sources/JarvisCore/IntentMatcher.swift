@@ -32,14 +32,15 @@ public struct IntentMatcher: Sendable {
         guard !text.isEmpty else { return nil }
 
         if let m = matchStop(text) { return m }
-        if text.range(of: #"^(?:fammi |dammi |fai )?(?:il )?(?:recap|riepilogo|resoconto) (?:della giornata|di oggi|di fine giornata)$|^(?:com'è andata oggi|fine giornata|chiudiamo la giornata)$"#,
+        let lead = #"(?:(?:fammi|dammi|fai|mi fai|voglio|vorrei|fammi sentire|partiamo con|inizia|avvia|fa)\s+)?(?:il |un |lo )?"#
+        if text.range(of: "^" + lead + #"(?:recap|riepilogo|resoconto)(?: della giornata| di oggi| di fine giornata| giornaliero)?(?: per favore)?$|^(?:com'è andata oggi|fine giornata|chiudiamo la giornata)$"#,
                       options: .regularExpression) != nil {
             return MatchedIntent(intent: .recap, lang: .it)
         }
         if text.range(of: #"^(?:ok |sì |si )?(?:fatto|l'ho fatto|fatta|ok fatto)$|^done$"#, options: .regularExpression) != nil {
             return MatchedIntent(intent: .done, lang: text == "done" ? .en : .it)
         }
-        if text.range(of: #"^(?:fammi |dammi |fai )?(?:il )?(?:briefing|recap)(?: del mattino| della notte)?$"#,
+        if text.range(of: "^" + lead + #"(?:(?:briefing|brifing|breefing|brief)(?: del mattino| mattutino| di oggi)?|recap (?:del mattino|della notte))(?: per favore)?$"#,
                       options: .regularExpression) != nil {
             return MatchedIntent(intent: .brief, lang: .it)
         }
@@ -133,8 +134,8 @@ public struct IntentMatcher: Sendable {
     func normalize(_ s: String) -> String {
         var t = s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         t = t.replacingOccurrences(of: "’", with: "'")
-        // Drop wake word and courtesy prefixes: "jarvis, apri slack" → "apri slack".
-        t = t.replacingOccurrences(of: #"^(?:ehi |hey |ok )?jarvis[,!.]?\s*"#, with: "", options: .regularExpression)
+        // Drop wake word (whatever the assistant is called) and courtesy prefixes: "elio, apri slack" → "apri slack".
+        if let rest = WakeWord.strip(t) { t = rest }
         t = t.replacingOccurrences(of: #"^(?:per favore|please)[,]?\s*"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"[.!?]+$"#, with: "", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespaces)

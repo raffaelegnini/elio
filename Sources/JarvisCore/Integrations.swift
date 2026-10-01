@@ -133,8 +133,9 @@ public enum IntegrationTools {
     ) { args, ctx in
         let name = args["name"] as? String ?? "Integrazione"
         let id = Integration.slug(name)
-        var item = IntegrationStore.get(id) ?? Integration(id: id, name: name,
-                                                          kind: Integration.Kind(rawValue: args["kind"] as? String ?? "api") ?? .api)
+        let existing = IntegrationStore.get(id)
+        var item = existing ?? Integration(id: id, name: name,
+                                           kind: Integration.Kind(rawValue: args["kind"] as? String ?? "api") ?? .api)
         item.kind = Integration.Kind(rawValue: args["kind"] as? String ?? item.kind.rawValue) ?? item.kind
         if let v = args["base_url"] as? String { item.baseURL = v }
         if let v = args["auth_type"] as? String, let t = Integration.AuthType(rawValue: v) { item.authType = t }
@@ -143,15 +144,21 @@ public enum IntegrationTools {
         if let v = args["mcp_command"] as? String { item.mcpCommand = v }
         if let v = args["mcp_args"] as? [String] { item.mcpArgs = v }
         if let v = args["docs_url"] as? String { item.docsURL = v }
+        // Security: these fields decide what runs on the Mac (MCP command) and where the secret is
+        // sent (URL, auth). Claude may have read hostile content (web, Slack, mail), so any new or
+        // changed value stays disabled until the user reviews it and turns it on in Settings.
+        let sensitive: (Integration) -> [String] = { [$0.kind.rawValue, $0.baseURL, $0.authType.rawValue, $0.authParam,
+                                                      $0.basicUser, $0.mcpCommand] + $0.mcpArgs }
+        let changed = existing.map { sensitive($0) != sensitive(item) } ?? true
+        if changed { item.enabled = false }
         IntegrationStore.upsert(item)
         ctx.broadcast(ServerMessage(type: .event, id: id, text: name, kind: "integrationSetup", payload: item.jsonString()))
-        if item.needsSecret {
-            return "Configurazione salvata. L'app ha aperto le Impostazioni: l'utente deve inserire la chiave di \(name). Diglielo in una frase e aspetta."
+        if !item.enabled {
+            return "Configurazione proposta. L'app ha aperto le Impostazioni: l'utente deve controllarla, " +
+                (item.authType != .none ? "inserire la chiave " : "") + "e attivarla. Diglielo in una frase e aspetta."
         }
         if item.kind == .mcp { await ctx.requestSessionRestart() }
-        return item.kind == .mcp
-            ? "Integrazione MCP pronta: i suoi tool saranno disponibili dal prossimo messaggio."
-            : "Integrazione pronta. Leggi la documentazione e salva le note con integration_notes."
+        return "Integrazione invariata e attiva."
     }
 
     static let notes = JarvisTool(
@@ -191,6 +198,7 @@ public enum IntegrationTools {
         guard let item = IntegrationStore.get(args["integration"] as? String ?? ""), item.kind == .api else {
             throw ToolError("Integrazione API non trovata")
         }
+        guard item.enabled else { throw ToolError("\(item.name) non è ancora attiva: l'utente deve attivarla nelle Impostazioni") }
         guard !item.needsSecret else { throw ToolError("Manca la chiave di \(item.name): va inserita nelle Impostazioni") }
         let method = (args["method"] as? String ?? "GET").uppercased()
         let path = args["path"] as? String ?? "/"

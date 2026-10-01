@@ -12,6 +12,7 @@ if CommandLine.arguments.contains("--mcp") {
 }
 
 let config = JarvisConfig.load()
+WakeWord.configure(name: config.assistantName, aliases: config.wakeAliases)
 let token: String
 let memory: Memory
 do {

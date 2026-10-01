@@ -20,8 +20,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key><string>it.dnafactory.jarvis.app</string>
-    <key>CFBundleName</key><string>Jarvis</string>
-    <key>CFBundleDisplayName</key><string>Jarvis</string>
+    <key>CFBundleName</key><string>Elio</string>
+    <key>CFBundleDisplayName</key><string>Elio</string>
     <key>CFBundleExecutable</key><string>JarvisApp</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.2.0</string>

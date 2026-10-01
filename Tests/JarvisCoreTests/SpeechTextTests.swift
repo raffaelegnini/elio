@@ -1,7 +1,18 @@
 import Testing
 @testable import JarvisCore
 
+@Suite(.serialized)
 struct WakeWordTests {
+    @Test func elio() {
+        WakeWord.configure(name: "Elio", aliases: ["helio"])
+        defer { WakeWord.configure(name: "Jarvis", aliases: []) }
+        #expect(WakeWord.strip("Elio, che ore sono") == "che ore sono")
+        #expect(WakeWord.strip("Ehi Elio cosa ho oggi") == "cosa ho oggi")
+        #expect(WakeWord.strip("Elio") == "")
+        #expect(WakeWord.strip("Ho parlato con Elio ieri sera") == nil)
+        #expect(WakeWord.strip("Elia vieni qui") == nil)
+    }
+
     @Test(arguments: [
         ("Jarvis, apri Slack", "apri Slack"),
         ("Jarvis che ore sono", "che ore sono"),

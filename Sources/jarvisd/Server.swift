@@ -132,16 +132,23 @@ final class Server: @unchecked Sendable {
         case .listTools(let id):
             send(ServerMessage(type: .toolResult, id: id, payload: ToolRegistry.listingJSON()), on: conn)
         case .tool(let id, let name, let args):
+            // The app's own background reads (dashboard, archive) are not "activity".
+            let quiet = args.contains("\"_quiet\":true")
             Task {
                 let ctx = await brain.toolContext
                 let start = Date()
-                brain.publish(ServerMessage(type: .event, id: id, text: name, kind: "tool",
-                                            payload: "{\"phase\":\"start\"}"))
+                if !quiet {
+                    brain.publish(ServerMessage(type: .event, id: id, text: name, kind: "tool",
+                                                payload: "{\"phase\":\"start\"}"))
+                }
                 let (result, isError) = await ToolRegistry.call(name: name, argsJSON: args, ctx: ctx)
                 let ms = Int(Date().timeIntervalSince(start) * 1000)
-                brain.publish(ServerMessage(type: .event, id: id, text: name, latencyMs: ms, kind: "tool",
-                                            payload: "{\"phase\":\"end\"}", isError: isError))
-                log("tool \(name) → \(isError ? "ERROR " : "")\(result.prefix(160))")
+                if !quiet {
+                    brain.publish(ServerMessage(type: .event, id: id, text: name, latencyMs: ms, kind: "tool",
+                                                payload: "{\"phase\":\"end\"}", isError: isError))
+                    log("tool \(name) → \(isError ? "ERROR " : "")\(result.prefix(160))")
+                    await brain.recordToolCall(name: name, ok: !isError, ms: ms)
+                }
                 self.send(ServerMessage(type: .toolResult, id: id, payload: result, isError: isError), on: conn)
             }
         default:

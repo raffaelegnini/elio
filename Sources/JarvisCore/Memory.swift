@@ -51,6 +51,20 @@ public actor Memory {
                 summary TEXT,
                 ended REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS task_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL,
+                json TEXT NOT NULL,
+                ts REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS task_logs_task ON task_logs(task_id);
+            CREATE TABLE IF NOT EXISTS tool_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                ok INTEGER NOT NULL,
+                ms INTEGER NOT NULL,
+                ts REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS facts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 text TEXT NOT NULL,
@@ -152,6 +166,85 @@ public actor Memory {
     public func markReminderDone(_ id: Int) {
         run("UPDATE reminders SET done = 1, fired = ? WHERE id = ?", [Date().timeIntervalSince1970, id])
     }
+
+    // MARK: - Archive
+
+    public func addTaskLog(_ entry: TaskLogEntry) {
+        run("INSERT INTO task_logs (task_id, json, ts) VALUES (?, ?, ?)",
+            [entry.taskId, entry.jsonString(), entry.date.timeIntervalSince1970])
+    }
+
+    public func taskLog(_ taskId: String) -> [String] {
+        var rows: [String] = []
+        query("SELECT json FROM task_logs WHERE task_id = ? ORDER BY id", [taskId]) { rows.append(String(cString: sqlite3_column_text($0, 0))) }
+        return rows
+    }
+
+    public func recordToolCall(name: String, ok: Bool, ms: Int) {
+        run("INSERT INTO tool_calls (name, ok, ms, ts) VALUES (?, ?, ?, ?)", [name, ok ? 1 : 0, ms, Date().timeIntervalSince1970])
+    }
+
+    public struct DayCount: Codable, Sendable { public let day: String; public let messages: Int; public let tools: Int; public let tasks: Int }
+
+    public func archiveDays(limit: Int = 60) -> [DayCount] {
+        var days: [String: (Int, Int, Int)] = [:]
+        let sql = { (table: String, col: String) in
+            "SELECT strftime('%Y-%m-%d', \(col), 'unixepoch', 'localtime') d, COUNT(*) FROM \(table) GROUP BY d" }
+        query(sql("messages", "ts"), []) { s in
+            let d = String(cString: sqlite3_column_text(s, 0)); days[d, default: (0, 0, 0)].0 = Int(sqlite3_column_int64(s, 1)) }
+        query(sql("tool_calls", "ts"), []) { s in
+            let d = String(cString: sqlite3_column_text(s, 0)); days[d, default: (0, 0, 0)].1 = Int(sqlite3_column_int64(s, 1)) }
+        query(sql("task_history", "ended"), []) { s in
+            let d = String(cString: sqlite3_column_text(s, 0)); days[d, default: (0, 0, 0)].2 = Int(sqlite3_column_int64(s, 1)) }
+        return days.sorted { $0.key > $1.key }.prefix(limit)
+            .map { DayCount(day: $0.key, messages: $0.value.0, tools: $0.value.1, tasks: $0.value.2) }
+    }
+
+    public struct ArchivedMessage: Codable, Sendable { public let ts: Date; public let role: String; public let text: String; public let route: String? }
+
+    public func messages(onDay day: String?, search: String?) -> [ArchivedMessage] {
+        var rows: [ArchivedMessage] = []
+        var sql = "SELECT ts, role, text, route FROM messages WHERE 1=1"
+        var params: [Any?] = []
+        if let day { sql += " AND strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') = ?"; params.append(day) }
+        if let search, !search.isEmpty { sql += " AND lower(text) LIKE ?"; params.append("%\(search.lowercased())%") }
+        sql += " ORDER BY id LIMIT 1000"
+        query(sql, params) { s in
+            rows.append(ArchivedMessage(ts: Date(timeIntervalSince1970: sqlite3_column_double(s, 0)),
+                                        role: String(cString: sqlite3_column_text(s, 1)),
+                                        text: String(cString: sqlite3_column_text(s, 2)),
+                                        route: sqlite3_column_text(s, 3).map { String(cString: $0) }))
+        }
+        return rows
+    }
+
+    public struct ArchivedToolCall: Codable, Sendable { public let ts: Date; public let name: String; public let ok: Bool; public let ms: Int }
+
+    public func toolCalls(onDay day: String) -> [ArchivedToolCall] {
+        var rows: [ArchivedToolCall] = []
+        query("SELECT ts, name, ok, ms FROM tool_calls WHERE strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') = ? ORDER BY id",
+              [day]) { s in
+            rows.append(ArchivedToolCall(ts: Date(timeIntervalSince1970: sqlite3_column_double(s, 0)),
+                                         name: String(cString: sqlite3_column_text(s, 1)),
+                                         ok: sqlite3_column_int64(s, 2) == 1, ms: Int(sqlite3_column_int64(s, 3))))
+        }
+        return rows
+    }
+
+    public func allTasks(limit: Int = 200) -> [TaskInfo] {
+        tasksEnded(since: .distantPast).suffix(limit).reversed()
+    }
+
+    public func allReminders() -> [ArchivedReminder] {
+        var rows: [ArchivedReminder] = []
+        query("SELECT id, at, text, done, attempt FROM reminders WHERE attempt = 0 ORDER BY at DESC LIMIT 300", []) { s in
+            rows.append(ArchivedReminder(id: Int(sqlite3_column_int64(s, 0)), at: Date(timeIntervalSince1970: sqlite3_column_double(s, 1)),
+                                         text: String(cString: sqlite3_column_text(s, 2)), done: sqlite3_column_int64(s, 3) == 1))
+        }
+        return rows
+    }
+
+    public struct ArchivedReminder: Codable, Sendable { public let id: Int; public let at: Date; public let text: String; public let done: Bool }
 
     // MARK: - Long-term facts
 

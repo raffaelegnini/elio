@@ -54,7 +54,7 @@ struct AgentTheater: View {
     }
 }
 
-private struct LogLine: View {
+struct LogLine: View {
     let entry: TaskLogEntry
 
     var body: some View {

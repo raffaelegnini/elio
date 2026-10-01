@@ -16,7 +16,7 @@ public enum WakeWord {
             variants = [n]
         }
         variants += aliases.map { $0.lowercased() }
-        prefixes = Array(variants.prefix(3)).filter { $0.count >= 4 }
+        prefixes = n == "jarvis" ? ["jarvis", "giarvis", "giavis"] : [n]
     }
 
     /// Returns the command after the wake word ("" if only the wake word was said),
@@ -98,7 +98,8 @@ public struct SentenceSplitter {
             let ch = buffer[idx]
             let next = buffer.index(after: idx)
             let length = buffer.distance(from: buffer.startIndex, to: next)
-            if ".!?…;:\n".contains(ch), next < buffer.endIndex, buffer[next].isWhitespace, length >= minLength {
+            if ch == "\n", length >= 2 { return next }
+            if ".!?…;:".contains(ch), next < buffer.endIndex, buffer[next].isWhitespace, length >= minLength {
                 // Don't split decimals or abbreviations like "3.5" or "ecc."-followed-by-lowercase.
                 if ch == ".", let after = buffer[next...].first(where: { !$0.isWhitespace }), after.isLowercase {
                     idx = next

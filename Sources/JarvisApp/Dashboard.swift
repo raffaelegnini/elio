@@ -98,6 +98,14 @@ struct DashboardView: View {
                      warn: loop.muted, help: loop.inputDevice)
                 Chip(label: "CLAUDE", on: loop.connected)
                 Chip(label: "VOCE \(loop.charactersThisSession)", on: true, help: "Caratteri ElevenLabs in questa sessione")
+                RoutineButton(title: "BRIEFING", icon: "sunrise.fill") { loop.submit(text: "briefing") }
+                RoutineButton(title: "RECAP", icon: "moon.stars.fill") { loop.submit(text: "recap della giornata") }
+                HeaderButton(icon: "clock.arrow.circlepath", help: "Archivio (⌥⌘A)") {
+                    NotificationCenter.default.post(name: .openArchive, object: nil)
+                }
+                HeaderButton(icon: "gearshape", help: "Impostazioni (⌘,)") {
+                    NotificationCenter.default.post(name: .openSettings, object: nil)
+                }
                 Button { loop.setMuted(!loop.muted) } label: {
                     Image(systemName: loop.muted ? "mic.slash.fill" : "mic.fill")
                         .frame(width: 30, height: 30)
@@ -452,5 +460,43 @@ private struct Backdrop: View {
         }
         .ignoresSafeArea()
         .animation(.easeInOut(duration: 0.6), value: tint)
+    }
+}
+
+private struct HeaderButton: View {
+    let icon: String
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon).frame(width: 30, height: 30).foregroundStyle(Theme.accent)
+                .background(Circle().strokeBorder(Theme.line))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+private struct RoutineButton: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                Text(title).tracking(1.5)
+            }
+            .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .foregroundStyle(hover ? Color.black : Theme.accent)
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Capsule().fill(hover ? Theme.accent : Theme.accent.opacity(0.12)))
+            .overlay(Capsule().strokeBorder(Theme.accent.opacity(0.6)))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
     }
 }

@@ -73,7 +73,12 @@ public actor Brain {
         let hub = self.hub
         return ToolContext(config: config, memory: memory, broadcast: { hub.send($0) },
                            gate: gate, tasks: tasks, scheduler: scheduler,
-                           restartSession: { [weak self] in await self?.refreshSession() })
+                           restartSession: { [weak self] in await self?.refreshSession() },
+                           runRoutine: { [weak self] which in
+                               guard let routines = await self?.routines else { return }
+                               // Detached: the routine waits for the current turn to end.
+                               Task.detached { which == "recap" ? await routines.runRecap() : await routines.runBrief() }
+                           })
     }
 
     private let executablePath: String
@@ -116,6 +121,11 @@ public actor Brain {
     public nonisolated func unsubscribe(_ id: UUID) { hub.remove(id) }
 
     private func broadcast(_ message: ServerMessage) { hub.send(message) }
+
+    public func recordToolCall(name: String, ok: Bool, ms: Int) async {
+        guard name != "history" else { return }  // the archive reading itself isn't an operation
+        await memory.recordToolCall(name: name, ok: ok, ms: ms)
+    }
 
     /// Fan-out from outside the actor (server: tool activity).
     public nonisolated func publish(_ message: ServerMessage) { hub.send(message) }
@@ -184,10 +194,10 @@ public actor Brain {
             return Replies.stopped(m.lang)
         case .brief:
             Task { await routines.runBrief() }
-            return m.lang == .it ? "Preparo il briefing." : "Preparing your briefing."
+            return m.lang == .it ? "Certo, \(config.addressAs), le preparo subito il briefing." : "Of course. Preparing your briefing."
         case .recap:
             Task { await routines.runRecap() }
-            return "Ricapitolo la giornata."
+            return "Certo, \(config.addressAs), le faccio subito il recap della giornata."
         case .done:
             // Only a reminder fired in the last 30 minutes; otherwise it's a normal sentence for Claude.
             guard let text = await memory.acknowledgeLastReminder(within: 1800) else { return nil }
@@ -231,6 +241,9 @@ public actor Brain {
 
         Le tue risposte vengono lette ad alta voce:
         - Rispondi nella lingua dell'utente (italiano o inglese).
+        - Se per rispondere devi usare strumenti o cercare, inizia SEMPRE con una frase di riscontro cortese e \
+        specifica, prima di usarli (es. "Certo, \(title), le faccio subito il recap.", "Subito, \(title), controllo l'agenda."). \
+        Mai "Allora", "Dunque", "Vediamo", "Ok": sempre gentile, sempre con "\(title)".
         - BREVITÀ ASSOLUTA: una frase, massimo due (circa 25 parole). Prima la risposta, niente premesse, \
         niente riepiloghi di cosa hai fatto, niente domande di cortesia alla fine. \
         Elenchi, dettagli e numeri lunghi vanno a schermo con show_on_screen; a voce solo il succo.

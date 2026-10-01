@@ -21,6 +21,9 @@ struct IntentMatcherTests {
         ("recap della notte", .brief, .it),
         ("Jarvis, recap della giornata", .recap, .it),
         ("com'è andata oggi?", .recap, .it),
+        ("fammi il recap", .recap, .it),
+        ("voglio il briefing mattutino", .brief, .it),
+        ("brifing", .brief, .it),
         ("fatto", .done, .it),
     ])
     func matches(input: String, intent: LocalIntent, lang: Lang) {

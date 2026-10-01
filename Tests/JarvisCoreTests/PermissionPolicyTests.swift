@@ -36,6 +36,11 @@ struct PermissionPolicyTests {
         #expect(PermissionPolicy.decide(tool: "mcp__teamwork__get_project", input: [:], cwd: "") == .allow)
         #expect(PermissionPolicy.decide(tool: "mcp__teamwork__update_task", input: [:], cwd: "") == .confirm(.normal))
         #expect(PermissionPolicy.decide(tool: "mcp__gmail__send_email", input: [:], cwd: "") == .confirm(.dangerous))
+        // Read verb can't smuggle a write.
+        #expect(PermissionPolicy.decide(tool: "mcp__x__get_and_delete_all", input: [:], cwd: "") == .confirm(.dangerous))
+        #expect(PermissionPolicy.decide(tool: "mcp__x__list_then_update", input: [:], cwd: "") == .confirm(.normal))
+        #expect(PermissionPolicy.decide(tool: "mcp__x__listen", input: [:], cwd: "") == .confirm(.normal))
+        #expect(PermissionPolicy.decide(tool: "mcp__getaway__purge", input: [:], cwd: "") == .confirm(.dangerous))
     }
 
     @Test func editsInsideProjectAreAllowed() {

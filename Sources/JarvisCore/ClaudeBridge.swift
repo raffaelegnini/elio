@@ -239,6 +239,13 @@ public actor ClaudeBridge {
                 onSessionId?(id)
             }
         case "stream_event":
+            // A new text block after a tool call ("Certo, controllo…" → tool → answer): keep them apart.
+            if let inner = event["event"] as? [String: Any], inner["type"] as? String == "content_block_start",
+               (inner["content_block"] as? [String: Any])?["type"] as? String == "text", !currentText.isEmpty,
+               currentText.last?.isWhitespace == false {
+                currentText += "\n"
+                current?.yield(.delta("\n"))
+            }
             guard let inner = event["event"] as? [String: Any],
                   let delta = inner["delta"] as? [String: Any],
                   delta["type"] as? String == "text_delta",

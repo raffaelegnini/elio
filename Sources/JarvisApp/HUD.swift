@@ -110,6 +110,11 @@ struct HUDView: View {
             Spacer()
             Text(loop.charactersThisSession > 0 ? "\(loop.charactersThisSession) CHR" : "")
                 .font(Theme.mono).foregroundStyle(Theme.dim)
+            Button { NotificationCenter.default.post(name: .openSettings, object: nil) } label: {
+                Image(systemName: "gearshape").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.dim)
+            }
+            .buttonStyle(.plain)
+            .help("Impostazioni")
             Button { loop.setMuted(!loop.muted) } label: {
                 Image(systemName: loop.muted ? "mic.slash.fill" : "mic.fill")
                     .font(.system(size: 11, weight: .semibold))

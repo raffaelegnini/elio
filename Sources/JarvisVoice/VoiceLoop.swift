@@ -76,8 +76,13 @@ public final class VoiceLoop {
     private var sentenceBudget = 2
 
     static func wantsDetail(_ text: String) -> Bool {
-        text.lowercased().range(of: #"spiega|approfondisc|nel dettaglio|dimmi tutto|leggi|elenca|explain|in detail|read"#,
+        text.lowercased().range(of: #"spiega|approfondisc|nel dettaglio|dimmi tutto|leggi|elenca|recap|riepilog|resoconto|briefing|explain|in detail|read"#,
                                 options: .regularExpression) != nil
+    }
+
+    /// Speaks the half-sentence still in the splitter (an acknowledgement without final punctuation).
+    private func splitterFlushForAck() {
+        if let rest = splitter.flush() { speaker.enqueue(rest); speaker.endUtterance() }
     }
 
     private func speakReply(_ sentence: String) {
@@ -103,7 +108,8 @@ public final class VoiceLoop {
     private var replyStreaming = false
     private var firstDeltaLogged = false
     private var firstAudioLogged = false
-    static let fillers = ["Vediamo.", "Un attimo.", "Allora…"]
+    private var addressAs = "Signore"
+    private var fillers: [String] { ["Un momento, \(addressAs).", "Subito, \(addressAs)."] }
 
     static let followUpWindow: TimeInterval = 8
     static let wakeWindow: TimeInterval = 10
@@ -153,7 +159,7 @@ public final class VoiceLoop {
                 self.pipeline.resetVAD()
             }
             state = muted ? .muted : .listening
-            speaker.warmCache(Self.acks + Self.fillers)
+            speaker.warmCache(Self.acks + fillers)
         } catch {
             lastError = "Audio: \(error.localizedDescription)"
             state = .off
@@ -201,12 +207,13 @@ public final class VoiceLoop {
     public var onIntegrationSetup: ((String) -> Void)?
     /// Brief/recap started: the app shows the network lighting up.
     public var onRoutineStart: (() -> Void)?
-    private var spokenSentences = 2
+    private var spokenSentences = 3
     private var briefOpeningEnabled = true
 
     /// Settings saved: apply what the app owns right away (the daemon restarts on its own).
     public func applySettings(_ config: JarvisConfig) {
         spokenSentences = config.spokenSentences
+        addressAs = config.addressAs
         briefOpeningEnabled = config.briefOpening
         audio.preferBuiltInMicWithBluetooth = config.builtInMicWithBluetooth
         if config.elevenLabsVoiceId != voiceId {
@@ -219,7 +226,9 @@ public final class VoiceLoop {
     public func requestDaemonReload() { client.send(.reload) }
 
     public static let voices: [(name: String, id: String)] = [
-        ("George", "JBFqnCBsd6RMkjVDRZzb"), ("Daniel", "onwK4e9ZLuTAKqWW03F9"),
+        ("MarcoTrox (italiano)", "W71zT1VwIFFx3mMGH2uZ"), ("Fabi (italiano)", "Ha21jUwaMwdgQvqNslSM"),
+        ("Marco (italiano)", "GcAgjAjkhWsmUd4GlPiv"), ("Andy (italiano)", "DLMxnwJE0a28JQLTMJPJ"),
+        ("George (inglese)", "JBFqnCBsd6RMkjVDRZzb"), ("Daniel (inglese)", "onwK4e9ZLuTAKqWW03F9"),
     ]
     public private(set) var voiceId: String = ""
 
@@ -235,7 +244,9 @@ public final class VoiceLoop {
 
     /// Runs a tool on the daemon (dashboard data: agenda, reminders…).
     public func callTool(_ name: String, _ args: [String: Any] = [:]) async -> (String, Bool) {
-        await client.callTool(name, args)
+        var quiet = args
+        quiet["_quiet"] = true
+        return await client.callTool(name, quiet)
     }
 
     public func interrupt() {
@@ -493,6 +504,13 @@ public final class VoiceLoop {
             guard let id = msg.id, let name = msg.text else { break }
             if msg.payload?.contains("start") == true {
                 activeTools.insert(name)
+                if currentRequestId != nil, firstDeltaLogged {
+                    // Text so far was the acknowledgement ("Certo, Signore, controllo…"): say it now,
+                    // and give the real answer its own sentence budget.
+                    if replyStreaming { speaker.endStream(); replyStreaming = false }
+                    sentenceBudget = max(sentenceBudget, spokenSentences)
+                    splitterFlushForAck()
+                }
                 if routineMode, litTools[name] == nil { litTools[name] = Date() }
                 activity.append(ToolActivity(id: id, name: name, running: true, ok: true))
                 if activity.count > 40 { activity.removeFirst(activity.count - 40) }
@@ -566,9 +584,9 @@ public final class VoiceLoop {
     private func scheduleFiller(for id: String?) {
         guard let id else { return }
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(1200))
+            try? await Task.sleep(for: .milliseconds(2500))
             guard self.currentRequestId == id, !self.firstDeltaLogged, !self.speaker.isSpeaking else { return }
-            self.speaker.enqueue(Self.fillers.randomElement()!)
+            self.speaker.enqueue(self.fillers.randomElement()!)
             self.speaker.endUtterance()
         }
     }

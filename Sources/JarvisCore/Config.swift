@@ -4,14 +4,14 @@ import Foundation
 public struct JarvisConfig: Codable, Sendable {
     public var userName: String = "Raffaele"
     /// Brand / identity (shared with colleagues: everything here is editable in Settings).
-    public var assistantName: String = "Jarvis"
+    public var assistantName: String = "Elio"
     public var addressAs: String = "Signore"          // how the assistant addresses the user
     public var wakeAliases: [String] = []             // extra spellings the recognizer produces
     public var accentColor: String = "#FFD360"        // DNA yellow
     public var claudePath: String = JarvisConfig.defaultClaudePath()
     public var claudeModel: String = "sonnet"
     public var port: UInt16 = 8765
-    public var elevenLabsVoiceId: String = "JBFqnCBsd6RMkjVDRZzb" // George
+    public var elevenLabsVoiceId: String = "W71zT1VwIFFx3mMGH2uZ" // MarcoTrox (Italian)
     public var elevenLabsModel: String = "eleven_flash_v2_5"
     /// Model for background agents (code, reviews).
     public var agentModel: String = "opus"
@@ -26,7 +26,7 @@ public struct JarvisConfig: Codable, Sendable {
     public var slackClockInText: String = "buongiorno"
     /// Phone: ntfy topic for notifications when away (generated on first run), web/WS ports for the PWA.
     public var ntfyTopic: String = ""
-    public var spokenSentences: Int = 2
+    public var spokenSentences: Int = 3
     public var builtInMicWithBluetooth: Bool = true
     public var briefOpening: Bool = true
     public var recapTime: String = ""

@@ -31,9 +31,11 @@ public struct ToolError: Error, CustomStringConvertible {
 public struct ToolContext: Sendable {
     public init(config: JarvisConfig, memory: Memory, broadcast: @escaping @Sendable (ServerMessage) -> Void,
                 gate: ConfirmationGate, tasks: TaskRunner, scheduler: Scheduler,
-                restartSession: @escaping @Sendable () async -> Void = {}, taskId: String? = nil) {
+                restartSession: @escaping @Sendable () async -> Void = {},
+                runRoutine: @escaping @Sendable (String) async -> Void = { _ in }, taskId: String? = nil) {
         self.config = config; self.memory = memory; self.broadcast = broadcast; self.gate = gate
-        self.tasks = tasks; self.scheduler = scheduler; self.restartSession = restartSession; self.taskId = taskId
+        self.tasks = tasks; self.scheduler = scheduler; self.restartSession = restartSession
+        self.runRoutine = runRoutine; self.taskId = taskId
     }
 
     public let config: JarvisConfig
@@ -44,6 +46,10 @@ public struct ToolContext: Sendable {
     public let scheduler: Scheduler
     /// Rebuild the conversation session (new MCP integration, new prompt) before the next message.
     public var restartSession: @Sendable () async -> Void = {}
+    /// Starts a routine ("brief" / "recap") after the current turn.
+    public var runRoutine: @Sendable (String) async -> Void = { _ in }
+
+    public func startRoutine(_ which: String) async { await runRoutine(which) }
     /// Set when the call comes from a background agent (for approvals).
     public var taskId: String?
 
@@ -63,6 +69,8 @@ public enum ToolRegistry {
         TaskTools.schedule,
         RoutineTools.brief,
         DayTools.summary,
+        RoutineControl.run,
+        HistoryTools.history,
         TaskTools.list,
         TaskTools.cancel,
         ScreenTools.show,
@@ -92,6 +100,7 @@ public enum ToolRegistry {
         var args = (try? JSONSerialization.jsonObject(with: Data(argsJSON.utf8))) as? [String: Any] ?? [:]
         var taskCtx = ctx
         if let task = args.removeValue(forKey: "_task") as? String, !task.isEmpty { taskCtx.taskId = task }
+        args.removeValue(forKey: "_quiet")
         let ctx = taskCtx
         // Approvals wait for the user; everything else must answer quickly, or the
         // conversation stalls (e.g. a macOS permission prompt nobody has clicked yet).

@@ -144,7 +144,7 @@ public actor Routines {
 
     // MARK: - Helpers
 
-    static func dayKey(_ d: Date) -> String {
+    public static func dayKey(_ d: Date) -> String {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: d)
@@ -183,6 +183,20 @@ public enum RoutineTools {
 func NSRunningApplicationIsChromeRunning() -> Bool {
     let out = (try? shell("/usr/bin/pgrep", ["-x", "Google Chrome"])) ?? ""
     return !out.isEmpty
+}
+
+public enum RoutineControl {
+    static let run = JarvisTool(
+        name: "run_routine",
+        description: "Avvia il briefing del mattino (brief) o il recap della giornata (recap) con la sua presentazione. Rispondi solo con una frase di riscontro: il contenuto lo dice la routine.",
+        properties: ["which": prop("brief oppure recap")],
+        required: ["which"]
+    ) { args, ctx in
+        let which = args["which"] as? String ?? "brief"
+        ctx.broadcast(ServerMessage(type: .event, kind: "runRoutine", payload: "{\"which\":\"\(which)\"}"))
+        await ctx.startRoutine(which)
+        return "Avviato: parte appena finisci questa risposta."
+    }
 }
 
 public enum DayTools {

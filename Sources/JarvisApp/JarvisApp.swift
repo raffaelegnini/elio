@@ -36,10 +36,13 @@ struct MenuContent: View {
             Text("Stato: \(loop.state.label)")
             Text(loop.connected ? "Daemon connesso" : "Daemon non raggiungibile")
             Divider()
-            Button("Parla con Jarvis  ⌥⌘J") { delegate.activate() }
+            Button("Parla con \(Brand.shared.name)  ⌥⌘J") { delegate.activate() }
+            Button("Briefing del mattino") { loop.submit(text: "briefing") }
+            Button("Recap della giornata") { loop.submit(text: "recap della giornata") }
             Button(loop.muted ? "Riattiva microfono  ⌥⌘M" : "Silenzia microfono  ⌥⌘M") { loop.setMuted(!loop.muted) }
             Button("Mostra HUD") { delegate.hud.show(pinned: true) }
             Button("Dashboard  ⌥⌘D") { delegate.showDashboard() }
+            Button("Archivio  ⌥⌘A") { delegate.showArchive() }
             Button("Impostazioni…") { delegate.showSettings() }.keyboardShortcut(",")
             if !loop.diffs.isEmpty {
                 Button("Revisione ultimo diff") { delegate.showDashboard(review: loop.diffs.first) }
@@ -77,6 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let dashboardState = DashboardState()
     private var dashboard: NSWindow?
     private var settingsWindow: NSWindow?
+    private var archiveWindow: NSWindow?
+    private var archiveKey: HotKey?
     let settings = SettingsModel()
     private var hotKey: HotKey?
     private var dashboardKey: HotKey?
@@ -121,6 +126,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         dashboardKey = HotKey(keyCode: 2 /* D */, modifiers: [.option, .command]) { [weak self] in
             self?.showDashboard()
         }
+        archiveKey = HotKey(keyCode: 0 /* A */, modifiers: [.option, .command]) { [weak self] in self?.showArchive() }
+        NotificationCenter.default.addObserver(forName: .openSettings, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showSettings() }
+        }
+        NotificationCenter.default.addObserver(forName: .openArchive, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showArchive() }
+        }
         muteKey = HotKey(keyCode: 46 /* M */, modifiers: [.option, .command]) { [weak self] in
             guard let loop = self?.loop else { return }
             loop.setMuted(!loop.muted)
@@ -136,6 +148,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func activate() {
         hud.show(pinned: false)
         loop?.activate()
+    }
+
+    func showArchive() {
+        guard let loop else { return }
+        // Fresh view each time: the archive reloads from disk when opened.
+        let window = archiveWindow ?? {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 720),
+                             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                             backing: .buffered, defer: false)
+            w.titlebarAppearsTransparent = true
+            w.titleVisibility = .hidden
+            w.isReleasedWhenClosed = false
+            w.backgroundColor = NSColor(Theme.bg)
+            w.center()
+            return w
+        }()
+        window.contentView = NSHostingView(rootView: ArchiveView(loop: loop))
+        archiveWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     func showSettings(tab: SettingsTab? = nil, integration: String? = nil) {
@@ -188,7 +220,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.objectWillChange.send()
-                if !loop.confirmations.isEmpty || !loop.questions.isEmpty {
+                if self.dashboard?.isKeyWindow == true {
+                    // Talking from the dashboard: it already shows everything.
+                    self.hud.hide()
+                } else if !loop.confirmations.isEmpty || !loop.questions.isEmpty {
                     // Never let a pending confirmation disappear from view.
                     self.hud.show(pinned: true)
                 } else {
@@ -224,4 +259,9 @@ final class DashboardState {
     var reviewing: DiffPayload?
     /// Agent whose live activity is open full-size.
     var theater: String?
+}
+
+extension Notification.Name {
+    static let openSettings = Notification.Name("jarvis.openSettings")
+    static let openArchive = Notification.Name("jarvis.openArchive")
 }
