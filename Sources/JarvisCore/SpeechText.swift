@@ -175,3 +175,19 @@ public struct VoiceActivityDetector {
         silence = 0
     }
 }
+
+/// Interprets a spoken reply to a confirmation request.
+public enum ConfirmationAnswer: Equatable {
+    case approve, deny, needsExplicit, unrelated
+
+    public static func parse(_ text: String, risk: ConfirmRequest.Risk) -> ConfirmationAnswer {
+        let t = " " + text.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .,!?")) + " "
+        let has = { (words: [String]) in words.contains { t.contains(" \($0) ") } }
+        if has(["no", "annulla", "annullato", "stop", "aspetta", "fermo", "non farlo", "cancel", "don't"]) { return .deny }
+        if has(["confermo", "conferma", "confermato", "i confirm", "confirm"]) { return .approve }
+        if has(["sì", "si", "ok", "okay", "vai", "procedi", "certo", "va bene", "yes", "go ahead", "fallo"]) {
+            return risk == .dangerous ? .needsExplicit : .approve
+        }
+        return .unrelated
+    }
+}

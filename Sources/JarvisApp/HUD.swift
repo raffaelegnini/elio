@@ -1,4 +1,5 @@
 import AppKit
+import JarvisCore
 import JarvisVoice
 import SwiftUI
 
@@ -9,9 +10,9 @@ final class HUDController {
     private var hideTask: Task<Void, Never>?
     private var pinned = false
 
-    func attach(_ loop: VoiceLoop) {
-        let panel = HUDPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 520))
-        let host = NSHostingView(rootView: HUDView(loop: loop, close: { [weak self] in self?.hide() }))
+    func attach(_ loop: VoiceLoop, openReview: @escaping (DiffPayload) -> Void) {
+        let panel = HUDPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 560))
+        let host = NSHostingView(rootView: HUDView(loop: loop, close: { [weak self] in self?.hide() }, openReview: openReview))
         host.wantsLayer = true
         host.layer?.cornerRadius = 22
         host.layer?.masksToBounds = true
@@ -74,6 +75,7 @@ final class HUDPanel: NSPanel {
 struct HUDView: View {
     let loop: VoiceLoop
     let close: () -> Void
+    let openReview: (DiffPayload) -> Void
     @State private var input = ""
 
     var body: some View {
@@ -84,6 +86,7 @@ struct HUDView: View {
                 .contentShape(Circle())
                 .onTapGesture { loop.activate() }
             status
+            activity
             conversation
             inputBar
         }
@@ -129,6 +132,42 @@ struct HUDView: View {
             }
         }
         .padding(.horizontal, 20)
+    }
+
+    /// Pending confirmations, running workflows and a fresh diff, above the conversation.
+    @ViewBuilder
+    private var activity: some View {
+        VStack(spacing: 8) {
+            if let req = loop.confirmations.first {
+                ConfirmCard(request: req) { loop.answer(req, approved: $0) }
+            }
+            let running = loop.tasks.filter { $0.status == .running || $0.status == .waitingConfirmation }
+            if !running.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("WORKFLOW ATTIVI").font(Theme.mono).tracking(2).foregroundStyle(Theme.dim)
+                    ForEach(running) { WorkflowRow(task: $0) }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.03)))
+            }
+            if let diff = loop.diffs.first {
+                Button { openReview(diff) } label: {
+                    HStack {
+                        Image(systemName: "arrow.triangle.branch")
+                        Text("Diff pronto: \(diff.title)").lineLimit(1)
+                        Spacer()
+                        Text("Apri revisione").fontWeight(.semibold)
+                    }
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.cyan)
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.cyan.opacity(0.35)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .animation(.easeInOut(duration: 0.2), value: loop.confirmations.count)
     }
 
     private var hint: String {
@@ -182,10 +221,16 @@ struct TurnRow: View {
                     Text("· \(route.rawValue) \(ms)ms").font(Theme.mono).foregroundStyle(Theme.dim.opacity(0.7))
                 }
             }
-            Text(turn.text.isEmpty ? "…" : turn.text)
-                .font(.system(size: 13)).foregroundStyle(turn.role == "user" ? Theme.dim : Theme.text)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            if turn.role == "card" {
+                MarkdownText(text: turn.text)
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
+            } else {
+                Text(turn.text.isEmpty ? "…" : turn.text)
+                    .font(.system(size: 13)).foregroundStyle(turn.role == "user" ? Theme.dim : Theme.text)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -193,6 +238,7 @@ struct TurnRow: View {
         switch turn.role {
         case "user": "TU"
         case "event": "AVVISO"
+        case "card": "SCHEDA"
         default: "JARVIS"
         }
     }

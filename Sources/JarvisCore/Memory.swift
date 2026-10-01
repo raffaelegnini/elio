@@ -31,6 +31,12 @@ public actor Memory {
                 route TEXT
             );
             CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                at REAL NOT NULL,
+                text TEXT NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0
+            );
             """)
     }
 
@@ -64,6 +70,32 @@ public actor Memory {
     public func set(_ key: String, _ value: String) {
         run("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [key, value])
+    }
+
+    // MARK: - Reminders
+
+    public struct Reminder: Sendable { public let id: Int; public let text: String; public let at: Date }
+
+    public func addReminder(text: String, at: Date) {
+        run("INSERT INTO reminders (at, text) VALUES (?, ?)", [at.timeIntervalSince1970, text])
+    }
+
+    /// Pending reminders; with `dueBefore` only those already due.
+    public func reminders(dueBefore: Date?) -> [Reminder] {
+        var rows: [Reminder] = []
+        let sql = dueBefore == nil
+            ? "SELECT id, text, at FROM reminders WHERE done = 0 ORDER BY at"
+            : "SELECT id, text, at FROM reminders WHERE done = 0 AND at <= ? ORDER BY at"
+        query(sql, dueBefore.map { [$0.timeIntervalSince1970] } ?? []) { stmt in
+            rows.append(Reminder(id: Int(sqlite3_column_int64(stmt, 0)),
+                                 text: String(cString: sqlite3_column_text(stmt, 1)),
+                                 at: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))))
+        }
+        return rows
+    }
+
+    public func markReminderDone(_ id: Int) {
+        run("UPDATE reminders SET done = 1 WHERE id = ?", [id])
     }
 
     // MARK: - SQLite helpers

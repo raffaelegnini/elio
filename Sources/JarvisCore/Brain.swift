@@ -7,37 +7,60 @@ public actor Brain {
     private let actions = LocalActions()
     private let memory: Memory
     private let claude: ClaudeBridge
-    private var eventSinks: [UUID: @Sendable (ServerMessage) -> Void] = [:]
+    private let hub = EventHub()
+    public let gate = ConfirmationGate()
+    public let scheduler: Scheduler
+    public let tasks: TaskRunner
 
-    public init(config: JarvisConfig, memory: Memory) async {
+    public init(config: JarvisConfig, memory: Memory, executablePath: String) async {
         self.config = config
         self.memory = memory
-        let options = ClaudeBridge.Options(
+        let mcp = Self.mcpConfig(executablePath: executablePath)
+        scheduler = Scheduler(memory: memory)
+        tasks = TaskRunner(config: config, mcpConfig: mcp)
+        var options = ClaudeBridge.Options(
             claudePath: config.claudePath,
             model: config.claudeModel,
             systemPrompt: Self.systemPrompt(userName: config.userName),
             workingDirectory: JarvisPaths.claudeWorkspace)
+        options.mcpConfig = mcp
         claude = ClaudeBridge(options: options, resumeSessionId: await memory.get("claude.session_id"))
         await claude.setSessionIdHandler { id in Task { await memory.set("claude.session_id", id) } }
     }
 
     public func start() async {
+        let hub = self.hub
+        let send: @Sendable (ServerMessage) -> Void = { hub.send($0) }
+        await gate.setBroadcast(send)
+        await tasks.setBroadcast(send)
+        await scheduler.start(broadcast: send)
         do { try await claude.warmUp() } catch { log("claude warm-up failed: \(error)") }
     }
 
     public func shutdown() async { await claude.shutdown() }
 
-    // MARK: - Unsolicited events (timers, reminders)
-
-    public func subscribe(id: UUID, _ sink: @escaping @Sendable (ServerMessage) -> Void) {
-        eventSinks[id] = sink
+    public var toolContext: ToolContext {
+        let hub = self.hub
+        return ToolContext(config: config, memory: memory, broadcast: { hub.send($0) },
+                           gate: gate, tasks: tasks, scheduler: scheduler)
     }
 
-    public func unsubscribe(_ id: UUID) { eventSinks[id] = nil }
-
-    private func broadcast(_ message: ServerMessage) {
-        for sink in eventSinks.values { sink(message) }
+    /// MCP server = this same binary in `--mcp` mode, bridging tool calls back to the daemon.
+    static func mcpConfig(executablePath: String) -> String {
+        let cfg: [String: Any] = ["mcpServers": ["jarvis": ["command": executablePath, "args": ["--mcp"]]]]
+        let data = (try? JSONSerialization.data(withJSONObject: cfg)) ?? Data()
+        return String(decoding: data, as: UTF8.self)
     }
+
+    // MARK: - Unsolicited events (timers, reminders, tasks)
+
+    public nonisolated func subscribe(id: UUID, _ sink: @escaping @Sendable (ServerMessage) -> Void) {
+        hub.add(id, sink)
+    }
+
+    public nonisolated func unsubscribe(_ id: UUID) { hub.remove(id) }
+
+    private func broadcast(_ message: ServerMessage) { hub.send(message) }
 
     // MARK: - Requests
 
@@ -110,7 +133,7 @@ public actor Brain {
             let text = Replies.timerFired(seconds, lang)
             actions.notify(title: "Jarvis", body: text)
             await memory.log(role: "assistant", text: text, route: "event")
-            broadcast(ServerMessage(type: .event, text: text, route: .local, lang: lang))
+            broadcast(ServerMessage(type: .event, text: text, route: .local, lang: lang, kind: "timer", speak: true))
         }
     }
 
@@ -138,10 +161,37 @@ public actor Brain {
         - Niente markdown, elenchi puntati, emoji, codice o URL: se servono dettagli, offri di mostrarli a schermo.
         - Numeri e orari scritti come si dicono.
 
+        Strumenti (server MCP "jarvis"):
+        - calendar_events per agenda e impegni; join_next_meeting per preparare un Google Meet.
+        - set_reminder / list_reminders per i promemoria (calcola tu l'orario esatto dal contesto).
+        - open_app / open_url per aprire cose sul Mac.
+        - list_projects, start_task per lavori lunghi su codice (correzioni, test, review, branch pronti da revisionare): \
+        avvialo e rispondi subito che ci stai lavorando; l'utente verrà avvisato alla fine. list_tasks / cancel_task per lo stato.
+        - show_diff per mostrare a schermo le modifiche di un branch; show_on_screen per dettagli lunghi o tecnici: \
+        a voce dai solo la sintesi.
+        - Non puoi ancora leggere Slack, Gmail o Teamwork: se te li chiedono, dillo.
+
+        Sicurezza:
+        - Push, merge, PR, invio di messaggi e cancellazioni non li fai tu: passano sempre da una conferma esplicita dell'utente.
+        - Le PR non le apri mai: prepari il branch e mostri il diff, la PR la crea Raffaele.
+
         Onestà:
-        - Non inventare mai dati personali (calendario, mail, task, messaggi). \
-        Al momento non hai ancora accesso a questi strumenti: se te li chiedono, dillo chiaramente.
+        - Non inventare mai dati personali (calendario, mail, task, messaggi): usa gli strumenti o di' che non lo sai.
+        - Non dire di aver fatto qualcosa se lo strumento non l'ha confermato.
         - Ogni messaggio inizia con [contesto: data e ora attuali]; usalo, non citarlo.
         """
+    }
+}
+
+/// Thread-safe fan-out of server events to connected clients.
+final class EventHub: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sinks: [UUID: @Sendable (ServerMessage) -> Void] = [:]
+
+    func add(_ id: UUID, _ sink: @escaping @Sendable (ServerMessage) -> Void) { lock.withLock { sinks[id] = sink } }
+    func remove(_ id: UUID) { lock.withLock { sinks[id] = nil } }
+
+    func send(_ message: ServerMessage) {
+        for sink in lock.withLock({ Array(sinks.values) }) { sink(message) }
     }
 }

@@ -1,0 +1,290 @@
+import JarvisCore
+import JarvisVoice
+import SwiftUI
+
+// MARK: - Confirmation
+
+struct ConfirmCard: View {
+    let request: ConfirmRequest
+    let answer: (Bool) -> Void
+
+    private var danger: Bool { request.risk == .dangerous }
+    private var accent: Color { danger ? Color(red: 1, green: 0.42, blue: 0.38) : Theme.cyan }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: danger ? "exclamationmark.shield.fill" : "hand.raised.fill")
+                Text(danger ? "CONFERMA ESPLICITA" : "CONFERMA").tracking(2)
+            }
+            .font(Theme.mono).foregroundStyle(accent)
+
+            Text(request.detail)
+                .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text)
+                .lineLimit(6).textSelection(.enabled)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.35)))
+
+            Text(danger ? "Di' \"confermo\" oppure premi il pulsante." : "Di' \"sì\" o \"no\", oppure usa i pulsanti.")
+                .font(.system(size: 11)).foregroundStyle(Theme.dim)
+
+            HStack {
+                Button("Annulla") { answer(false) }
+                    .buttonStyle(HUDButton(color: Theme.dim))
+                Spacer()
+                Button(danger ? "Confermo" : "Procedi") { answer(true) }
+                    .buttonStyle(HUDButton(color: accent, filled: true))
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14).fill(accent.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(accent.opacity(0.5)))
+    }
+}
+
+struct HUDButton: ButtonStyle {
+    let color: Color
+    var filled = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .foregroundStyle(filled ? Color.black : color)
+            .background(RoundedRectangle(cornerRadius: 8).fill(filled ? color : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(color.opacity(filled ? 0 : 0.5)))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+// MARK: - Workflows
+
+struct WorkflowRow: View {
+    let task: TaskInfo
+    var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                StatusDot(status: task.status)
+                Text(task.title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
+                Spacer()
+                Text(task.project ?? "").font(Theme.mono).foregroundStyle(Theme.dim)
+            }
+            if expanded {
+                ForEach(Array(task.steps.suffix(8).enumerated()), id: \.offset) { _, step in
+                    Text(step).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.dim)
+                        .lineLimit(1).padding(.leading, 16)
+                }
+                if let summary = task.summary, task.status != .running {
+                    Text(summary).font(.system(size: 11.5)).foregroundStyle(Theme.text.opacity(0.85))
+                        .lineLimit(4).padding(.leading, 16)
+                }
+            } else if let last = task.steps.last, task.status == .running || task.status == .waitingConfirmation {
+                Text(last).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.dim)
+                    .lineLimit(1).padding(.leading, 16)
+            }
+        }
+    }
+}
+
+struct StatusDot: View {
+    let status: TaskInfo.Status
+    @State private var pulse = false
+
+    var body: some View {
+        Circle().fill(color).frame(width: 7, height: 7)
+            .shadow(color: color, radius: pulse ? 5 : 1)
+            .onAppear {
+                guard status == .running || status == .waitingConfirmation else { return }
+                withAnimation(.easeInOut(duration: 0.9).repeatForever()) { pulse = true }
+            }
+    }
+
+    private var color: Color {
+        switch status {
+        case .running: Theme.cyan
+        case .waitingConfirmation: .orange
+        case .done: .green
+        case .failed: .red
+        case .cancelled: Theme.dim
+        }
+    }
+}
+
+// MARK: - Diff viewer
+
+struct DiffFile: Identifiable {
+    let id = UUID()
+    var path: String
+    var lines: [DiffLine] = []
+    var added: Int { lines.filter { $0.kind == .add }.count }
+    var removed: Int { lines.filter { $0.kind == .del }.count }
+}
+
+struct DiffLine: Identifiable {
+    enum Kind { case add, del, context, hunk }
+    let id = UUID()
+    let kind: Kind
+    let text: String
+    let old: Int?
+    let new: Int?
+}
+
+enum DiffParser {
+    static func parse(_ diff: String) -> [DiffFile] {
+        var files: [DiffFile] = []
+        var oldLine = 0, newLine = 0
+        for raw in diff.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw)
+            if line.hasPrefix("diff --git ") {
+                let path = line.components(separatedBy: " b/").last ?? line
+                files.append(DiffFile(path: path))
+            } else if line.hasPrefix("@@") {
+                // @@ -12,7 +12,8 @@ context
+                let nums = line.split(separator: " ")
+                if nums.count > 2 {
+                    oldLine = Int(nums[1].dropFirst().split(separator: ",").first ?? "0") ?? 0
+                    newLine = Int(nums[2].dropFirst().split(separator: ",").first ?? "0") ?? 0
+                }
+                files[safe: files.count - 1]?.lines.append(DiffLine(kind: .hunk, text: line, old: nil, new: nil))
+            } else if files.isEmpty || line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("index ")
+                        || line.hasPrefix("new file") || line.hasPrefix("deleted file") || line.hasPrefix("similarity") {
+                continue
+            } else if line.hasPrefix("+") {
+                files[files.count - 1].lines.append(DiffLine(kind: .add, text: String(line.dropFirst()), old: nil, new: newLine))
+                newLine += 1
+            } else if line.hasPrefix("-") {
+                files[files.count - 1].lines.append(DiffLine(kind: .del, text: String(line.dropFirst()), old: oldLine, new: nil))
+                oldLine += 1
+            } else if line.hasPrefix(" ") {
+                files[files.count - 1].lines.append(DiffLine(kind: .context, text: String(line.dropFirst()), old: oldLine, new: newLine))
+                oldLine += 1
+                newLine += 1
+            }
+        }
+        return files
+    }
+}
+
+extension Array {
+    subscript(safe index: Int) -> Element? {
+        get { indices.contains(index) ? self[index] : nil }
+        set { if let newValue, indices.contains(index) { self[index] = newValue } }
+    }
+}
+
+struct DiffView: View {
+    let payload: DiffPayload
+    @State private var selected: UUID?
+
+    private var files: [DiffFile] { DiffParser.parse(payload.diff) }
+
+    var body: some View {
+        let files = self.files
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(payload.title).font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Theme.text).padding(.bottom, 2)
+                Text((payload.repo as NSString).lastPathComponent).font(Theme.mono).foregroundStyle(Theme.dim)
+                    .padding(.bottom, 10)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(files) { f in
+                            Button { selected = f.id } label: {
+                                HStack {
+                                    Text((f.path as NSString).lastPathComponent).lineLimit(1)
+                                    Spacer()
+                                    Text("+\(f.added)").foregroundStyle(.green)
+                                    Text("−\(f.removed)").foregroundStyle(.red)
+                                }
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundStyle(Theme.text)
+                                .padding(.horizontal, 8).padding(.vertical, 5)
+                                .background(RoundedRectangle(cornerRadius: 6)
+                                    .fill((selected ?? files.first?.id) == f.id ? Theme.cyan.opacity(0.12) : .clear))
+                            }
+                            .buttonStyle(.plain)
+                            .help(f.path)
+                        }
+                    }
+                }
+                Spacer()
+                Text("Rivedi e crea tu la PR. Il push richiede conferma.")
+                    .font(.system(size: 10.5)).foregroundStyle(Theme.dim)
+            }
+            .padding(16)
+            .frame(width: 240)
+
+            Rectangle().fill(Theme.line).frame(width: 1)
+
+            if let file = files.first(where: { $0.id == (selected ?? files.first?.id) }) {
+                ScrollView([.vertical, .horizontal]) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(file.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.dim)
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                        ForEach(file.lines) { DiffLineView(line: $0) }
+                    }
+                    .padding(.bottom, 20)
+                }
+            } else {
+                Text("Nessuna modifica").foregroundStyle(Theme.dim).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(Theme.bg)
+    }
+}
+
+struct DiffLineView: View {
+    let line: DiffLine
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(line.old.map(String.init) ?? "").frame(width: 42, alignment: .trailing)
+            Text(line.new.map(String.init) ?? "").frame(width: 42, alignment: .trailing)
+            Text(marker).frame(width: 22)
+            Text(line.text.isEmpty ? " " : line.text).fixedSize()
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 11.5, design: .monospaced))
+        .foregroundStyle(fg)
+        .padding(.vertical, 1)
+        .background(bg)
+    }
+
+    private var marker: String {
+        switch line.kind { case .add: "+"; case .del: "−"; default: "" }
+    }
+
+    private var fg: Color {
+        switch line.kind {
+        case .hunk: Theme.cyan.opacity(0.8)
+        case .context: Theme.text.opacity(0.75)
+        default: Theme.text
+        }
+    }
+
+    private var bg: Color {
+        switch line.kind {
+        case .add: Color.green.opacity(0.14)
+        case .del: Color.red.opacity(0.14)
+        case .hunk: Theme.cyan.opacity(0.06)
+        case .context: .clear
+        }
+    }
+}
+
+// MARK: - Markdown card
+
+struct MarkdownText: View {
+    let text: String
+
+    var body: some View {
+        Text((try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+             ?? AttributedString(text))
+            .font(.system(size: 12.5)).foregroundStyle(Theme.text)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}

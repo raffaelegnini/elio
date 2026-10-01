@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import JarvisCore
 import JarvisVoice
 import ServiceManagement
@@ -14,19 +15,11 @@ struct JarvisApp: App {
         } label: {
             Image(systemName: delegate.menuIcon)
         }
-        Window("Jarvis", id: "dashboard") {
-            if let loop = delegate.loop {
-                DashboardView(loop: loop)
-            }
-        }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 1100, height: 720)
     }
 }
 
 struct MenuContent: View {
     let delegate: AppDelegate
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         if let loop = delegate.loop {
@@ -35,9 +28,9 @@ struct MenuContent: View {
             Divider()
             Button("Parla con Jarvis  ⌥⌘J") { delegate.activate() }
             Button("Mostra HUD") { delegate.hud.show(pinned: true) }
-            Button("Dashboard") {
-                openWindow(id: "dashboard")
-                NSApp.activate()
+            Button("Dashboard") { delegate.showDashboard() }
+            if !loop.diffs.isEmpty {
+                Button("Revisione ultimo diff") { delegate.showDashboard(review: loop.diffs.first) }
             }
             Divider()
             Toggle("Ascolto sempre attivo (\"Jarvis…\")", isOn: Binding(
@@ -55,6 +48,8 @@ struct MenuContent: View {
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private(set) var loop: VoiceLoop?
     let hud = HUDController()
+    let dashboardState = DashboardState()
+    private var dashboard: NSWindow?
     private var hotKey: HotKey?
     private var observer: Task<Void, Never>?
 
@@ -75,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let loop = VoiceLoop(config: config, token: token)
         self.loop = loop
         objectWillChange.send()
-        hud.attach(loop)
+        hud.attach(loop, openReview: { [weak self] diff in self?.showDashboard(review: diff) })
 
         hotKey = HotKey(keyCode: 38 /* J */, modifiers: [.option, .command]) { [weak self] in
             self?.activate()
@@ -89,18 +84,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         loop?.activate()
     }
 
+    func showDashboard(review: DiffPayload? = nil) {
+        guard let loop else { return }
+        if let review { dashboardState.reviewing = review }
+        if dashboard == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                                  backing: .buffered, defer: false)
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.isReleasedWhenClosed = false
+            window.backgroundColor = NSColor(Theme.bg)
+            window.contentView = NSHostingView(rootView: DashboardView(loop: loop, state: dashboardState))
+            window.center()
+            window.setFrameAutosaveName("JarvisDashboard")
+            dashboard = window
+        }
+        dashboard?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
     /// Shows the HUD while Jarvis is engaged, hides it a few seconds after.
     private func observeState(_ loop: VoiceLoop) {
         withObservationTracking {
             _ = loop.state
+            _ = loop.confirmations.count
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
                 self.objectWillChange.send()
-                switch loop.state {
-                case .hearing, .thinking, .speaking: self.hud.show(pinned: false)
-                case .listening, .idle: self.hud.scheduleHide(after: 6)
-                case .off: break
+                if !loop.confirmations.isEmpty {
+                    // Never let a pending confirmation disappear from view.
+                    self.hud.show(pinned: true)
+                } else {
+                    switch loop.state {
+                    case .hearing, .thinking, .speaking: self.hud.show(pinned: false)
+                    case .listening, .idle: self.hud.scheduleHide(after: 6)
+                    case .off: break
+                    }
                 }
                 self.observeState(loop)
             }
@@ -119,4 +140,10 @@ extension VoiceLoop.State {
         case .off: "spento"
         }
     }
+}
+
+@MainActor
+@Observable
+final class DashboardState {
+    var reviewing: DiffPayload?
 }

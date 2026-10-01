@@ -1,3 +1,4 @@
+import JarvisCore
 import JarvisVoice
 import SwiftUI
 
@@ -5,10 +6,41 @@ import SwiftUI
 /// Workflows and the morning brief plug in here in later phases.
 struct DashboardView: View {
     let loop: VoiceLoop
+    let state: DashboardState
     @State private var input = ""
 
     var body: some View {
         HStack(spacing: 0) {
+            if let diff = state.reviewing {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("REVISIONE").font(Theme.mono).tracking(3).foregroundStyle(Theme.cyan)
+                        Spacer()
+                        Button("Chiudi") { state.reviewing = nil }.buttonStyle(HUDButton(color: Theme.dim))
+                    }
+                    .padding(.horizontal, 16).padding(.top, 34).padding(.bottom, 10)
+                    DiffView(payload: diff)
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                brain
+            }
+
+            Rectangle().fill(Theme.line).frame(width: 1)
+            sidebar
+        }
+        .background(
+            ZStack {
+                Theme.bg
+                RadialGradient(colors: [Theme.tint(loop.state).opacity(0.10), .clear],
+                               center: .init(x: 0.33, y: 0.45), startRadius: 0, endRadius: 520)
+            }
+            .ignoresSafeArea()
+        )
+        .preferredColorScheme(.dark)
+    }
+
+    private var brain: some View {
             VStack(spacing: 18) {
                 OrbView(state: loop.state, level: loop.level)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -33,10 +65,13 @@ struct DashboardView: View {
             }
             .padding(32)
             .frame(maxWidth: .infinity)
+    }
 
-            Rectangle().fill(Theme.line).frame(width: 1)
-
+    private var sidebar: some View {
             VStack(alignment: .leading, spacing: 20) {
+                if let req = loop.confirmations.first {
+                    ConfirmCard(request: req) { loop.answer(req, approved: $0) }
+                }
                 Section(title: "SISTEMA") {
                     StatRow(name: "Daemon", value: loop.connected ? "online" : "offline", ok: loop.connected)
                     StatRow(name: "Microfono", value: loop.state == .off ? "spento" : "attivo", ok: loop.state != .off)
@@ -44,9 +79,27 @@ struct DashboardView: View {
                     StatRow(name: "Latenza media", value: averageLatency, ok: true)
                     StatRow(name: "Voce (sessione)", value: "\(loop.charactersThisSession) caratteri", ok: true)
                 }
-                Section(title: "WORKFLOW ATTIVI") {
-                    Text("Nessun workflow in esecuzione")
-                        .font(.system(size: 12)).foregroundStyle(Theme.dim)
+                Section(title: "WORKFLOW") {
+                    if loop.tasks.isEmpty {
+                        Text("Nessun workflow").font(.system(size: 12)).foregroundStyle(Theme.dim)
+                    }
+                    ForEach(loop.tasks.reversed().prefix(5)) { WorkflowRow(task: $0, expanded: true) }
+                }
+                if !loop.diffs.isEmpty {
+                    Section(title: "DA REVISIONARE") {
+                        ForEach(Array(loop.diffs.enumerated()), id: \.offset) { _, d in
+                            Button { state.reviewing = d } label: {
+                                HStack {
+                                    Image(systemName: "arrow.triangle.branch")
+                                    Text(d.title).lineLimit(1)
+                                    Spacer()
+                                    Text((d.repo as NSString).lastPathComponent).foregroundStyle(Theme.dim)
+                                }
+                                .font(.system(size: 12)).foregroundStyle(Theme.text)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
                 Section(title: "CONVERSAZIONE") {
                     ScrollView {
@@ -58,17 +111,8 @@ struct DashboardView: View {
                 }
             }
             .padding(24)
+            .padding(.top, 10)
             .frame(width: 380)
-        }
-        .background(
-            ZStack {
-                Theme.bg
-                RadialGradient(colors: [Theme.tint(loop.state).opacity(0.10), .clear],
-                               center: .init(x: 0.33, y: 0.45), startRadius: 0, endRadius: 520)
-            }
-            .ignoresSafeArea()
-        )
-        .preferredColorScheme(.dark)
     }
 
     private var averageLatency: String {

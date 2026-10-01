@@ -8,6 +8,10 @@ public struct JarvisConfig: Codable, Sendable {
     public var port: UInt16 = 8765
     public var elevenLabsVoiceId: String = "JBFqnCBsd6RMkjVDRZzb" // George
     public var elevenLabsModel: String = "eleven_flash_v2_5"
+    /// Model for background agents (code, reviews).
+    public var agentModel: String = "opus"
+    /// Where to look for git repositories.
+    public var projectRoots: [String] = ["~/Desktop/dev"]
 
     public init() {}
 
@@ -21,6 +25,8 @@ public struct JarvisConfig: Codable, Sendable {
         port = try c.decodeIfPresent(UInt16.self, forKey: .port) ?? d.port
         elevenLabsVoiceId = try c.decodeIfPresent(String.self, forKey: .elevenLabsVoiceId) ?? d.elevenLabsVoiceId
         elevenLabsModel = try c.decodeIfPresent(String.self, forKey: .elevenLabsModel) ?? d.elevenLabsModel
+        agentModel = try c.decodeIfPresent(String.self, forKey: .agentModel) ?? d.agentModel
+        projectRoots = try c.decodeIfPresent([String].self, forKey: .projectRoots) ?? d.projectRoots
     }
 
     static func defaultClaudePath() -> String {

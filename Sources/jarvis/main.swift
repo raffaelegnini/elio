@@ -69,6 +69,24 @@ do {
 }
 
 let args = CommandLine.arguments.dropFirst()
+
+// jarvis events            → print every event (tasks, confirmations, diffs…)
+// jarvis confirm <id> yes|no
+if args.first == "events" {
+    while true {
+        let msg = try await receive()
+        guard msg.type == .event else { continue }
+        print("[\(msg.kind ?? "event")] id=\(msg.id ?? "-") \(msg.text ?? "")")
+        if let payload = msg.payload { print("   \(payload.prefix(400))") }
+    }
+}
+if args.first == "confirm", args.count == 3 {
+    let a = Array(args)
+    try await send(.confirm(id: a[1], approved: a[2] == "yes"))
+    try await Task.sleep(for: .milliseconds(300))
+    exit(0)
+}
+
 if !args.isEmpty {
     try await ask(args.joined(separator: " "))
     exit(0)

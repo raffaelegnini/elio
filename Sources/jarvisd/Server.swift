@@ -2,6 +2,10 @@ import Foundation
 import JarvisCore
 import Network
 
+func log(_ message: String) {
+    FileHandle.standardError.write(Data("[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n".utf8))
+}
+
 /// Local WebSocket server on 127.0.0.1. Clients must send `X-Jarvis-Token`;
 /// requests carrying an `Origin` header (i.e. from a browser page) are rejected.
 final class Server: @unchecked Sendable {
@@ -85,6 +89,17 @@ final class Server: @unchecked Sendable {
                     self.send(reply, on: conn)
                 }
             }
+        case .listTools(let id):
+            send(ServerMessage(type: .toolResult, id: id, payload: ToolRegistry.listingJSON()), on: conn)
+        case .tool(let id, let name, let args):
+            Task {
+                let ctx = await brain.toolContext
+                let (result, isError) = await ToolRegistry.call(name: name, argsJSON: args, ctx: ctx)
+                log("tool \(name) → \(isError ? "ERROR " : "")\(result.prefix(160))")
+                self.send(ServerMessage(type: .toolResult, id: id, payload: result, isError: isError), on: conn)
+            }
+        case .confirm(let id, let approved):
+            Task { await brain.gate.answer(id: id, approved: approved) }
         }
     }
 

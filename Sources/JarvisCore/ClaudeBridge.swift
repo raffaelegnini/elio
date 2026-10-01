@@ -16,6 +16,10 @@ public actor ClaudeBridge {
         public var workingDirectory: URL
         /// Silence after which a turn is considered stuck and the process is restarted.
         public var turnTimeout: TimeInterval = 120
+        /// Hard cap per turn: tool heartbeats keep `lastActivity` fresh, so silence alone isn't enough.
+        public var maxTurnDuration: TimeInterval = 180
+        /// MCP servers (JSON) available to the session; their tools are pre-approved.
+        public var mcpConfig: String?
 
         public init(claudePath: String, model: String, systemPrompt: String, workingDirectory: URL) {
             self.claudePath = claudePath
@@ -94,7 +98,8 @@ public actor ClaudeBridge {
             // Wait until the reader finishes the turn, watching for a stuck process.
             while current != nil {
                 try await Task.sleep(for: .milliseconds(200))
-                if Date().timeIntervalSince(lastActivity) > options.turnTimeout {
+                if Date().timeIntervalSince(lastActivity) > options.turnTimeout
+                    || Date().timeIntervalSince(currentStart) > options.maxTurnDuration {
                     finishTurn(error: JarvisError.claudeTimeout)
                     restart()
                 }
@@ -134,9 +139,14 @@ public actor ClaudeBridge {
             // Only the Jarvis workspace settings: keeps the user's hooks/plugins out of this session.
             "--setting-sources", "project",
             "--strict-mcp-config",
+            // No built-in tools (no shell, no file edits) in the conversational session:
+            // only Jarvis tools. Code work goes to background agents behind the confirmation gate.
             "--tools", "",
             "--system-prompt", options.systemPrompt,
         ]
+        if let mcp = options.mcpConfig {
+            args += ["--mcp-config", mcp, "--allowedTools", "mcp__jarvis", "--disallowedTools", "mcp__jarvis__approve"]
+        }
         if let sessionId { args += ["--resume", sessionId] }
         p.arguments = args
         p.currentDirectoryURL = options.workingDirectory

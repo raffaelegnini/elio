@@ -1,0 +1,143 @@
+import Foundation
+
+/// A capability Claude can call through the Jarvis MCP server.
+public struct JarvisTool: Sendable {
+    public let name: String
+    public let description: String
+    /// JSON Schema of the input object.
+    public let schema: [String: any Sendable]
+    public let run: @Sendable (_ args: [String: Any], _ ctx: ToolContext) async throws -> String
+
+    public init(name: String, description: String, properties: [String: [String: any Sendable]] = [:],
+                required: [String] = [],
+                run: @escaping @Sendable (_ args: [String: Any], _ ctx: ToolContext) async throws -> String) {
+        self.name = name
+        self.description = description
+        self.schema = ["type": "object", "properties": properties, "required": required]
+        self.run = run
+    }
+
+    var listing: [String: Any] {
+        ["name": name, "description": description, "inputSchema": schema]
+    }
+}
+
+public struct ToolError: Error, CustomStringConvertible {
+    public let description: String
+    public init(_ message: String) { description = message }
+}
+
+/// Everything a tool may touch.
+public struct ToolContext: Sendable {
+    public let config: JarvisConfig
+    public let memory: Memory
+    public let broadcast: @Sendable (ServerMessage) -> Void
+    public let gate: ConfirmationGate
+    public let tasks: TaskRunner
+    public let scheduler: Scheduler
+    /// Set when the call comes from a background agent (for approvals).
+    public var taskId: String?
+}
+
+public enum ToolRegistry {
+    public static let all: [JarvisTool] = [
+        CalendarTools.events,
+        MacTools.openURL,
+        MacTools.openApp,
+        MeetingTools.joinNext,
+        ProjectTools.list,
+        ProjectTools.showDiff,
+        TaskTools.start,
+        TaskTools.list,
+        TaskTools.cancel,
+        ScreenTools.show,
+        ReminderTools.set,
+        ReminderTools.list,
+        ApprovalTool.approve,
+    ]
+
+    public static func listingJSON() -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: all.map(\.listing))) ?? Data("[]".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    public static func call(name: String, argsJSON: String, ctx: ToolContext) async -> (String, Bool) {
+        guard let tool = all.first(where: { $0.name == name }) else { return ("Tool sconosciuto: \(name)", true) }
+        var args = (try? JSONSerialization.jsonObject(with: Data(argsJSON.utf8))) as? [String: Any] ?? [:]
+        var taskCtx = ctx
+        if let task = args.removeValue(forKey: "_task") as? String, !task.isEmpty { taskCtx.taskId = task }
+        let ctx = taskCtx
+        // Approvals wait for the user; everything else must answer quickly, or the
+        // conversation stalls (e.g. a macOS permission prompt nobody has clicked yet).
+        let timeout: TimeInterval = name == "approve" ? 600 : (name == "start_task" ? 60 : 20)
+        let box = ArgsBox(args)
+        do {
+            return (try await withTimeout(timeout) { try await tool.run(box.value, ctx) }, false)
+        } catch is TimeoutError {
+            return ("Lo strumento \(name) non ha risposto entro \(Int(timeout)) secondi. Probabilmente macOS sta chiedendo un permesso a Jarvis: controlla se c'è una finestra di autorizzazione aperta.", true)
+        } catch {
+            return ("Errore: \(error)", true)
+        }
+    }
+}
+
+// MARK: - Helpers
+
+struct TimeoutError: Error {}
+
+private final class ArgsBox: @unchecked Sendable {
+    let value: [String: Any]
+    init(_ value: [String: Any]) { self.value = value }
+}
+
+private final class Once: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func claim() -> Bool { lock.withLock { defer { done = true }; return !done } }
+}
+
+/// Races an operation against a deadline. Unlike a task group it returns on time even when the
+/// operation is stuck in a blocking call that ignores cancellation (it is left to finish on its own).
+func withTimeout<T: Sendable>(_ seconds: TimeInterval, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+    try await withCheckedThrowingContinuation { (c: CheckedContinuation<T, Error>) in
+        let once = Once()
+        Task.detached {
+            do {
+                let value = try await op()
+                if once.claim() { c.resume(returning: value) }
+            } catch {
+                if once.claim() { c.resume(throwing: error) }
+            }
+        }
+        Task.detached {
+            try? await Task.sleep(for: .seconds(seconds))
+            if once.claim() { c.resume(throwing: TimeoutError()) }
+        }
+    }
+}
+
+func prop(_ description: String, type: String = "string") -> [String: any Sendable] {
+    ["type": type, "description": description]
+}
+
+@discardableResult
+func shell(_ launchPath: String, _ args: [String], cwd: String? = nil) throws -> String {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: launchPath)
+    p.arguments = args
+    if let cwd { p.currentDirectoryURL = URL(fileURLWithPath: cwd) }
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = Pipe()
+    try p.run()
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    guard p.terminationStatus == 0 else {
+        throw ToolError("\((args.first ?? launchPath)) exit \(p.terminationStatus)")
+    }
+    return String(decoding: data, as: UTF8.self)
+}
+
+func expandPath(_ path: String) -> String {
+    (path as NSString).expandingTildeInPath
+}

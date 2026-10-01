@@ -92,3 +92,17 @@ struct SpeakableTests {
         #expect(Speakable.clean("**Fatto**: vedi https://x.y/z e `git status`") == "Fatto: vedi e git status")
     }
 }
+
+struct ConfirmationAnswerTests {
+    @Test func dangerousNeedsTheExplicitWord() {
+        #expect(ConfirmationAnswer.parse("sì vai", risk: .dangerous) == .needsExplicit)
+        #expect(ConfirmationAnswer.parse("Confermo.", risk: .dangerous) == .approve)
+        #expect(ConfirmationAnswer.parse("no aspetta", risk: .dangerous) == .deny)
+    }
+
+    @Test func normalAcceptsYes() {
+        #expect(ConfirmationAnswer.parse("Sì, procedi", risk: .normal) == .approve)
+        #expect(ConfirmationAnswer.parse("che ore sono", risk: .normal) == .unrelated)
+        #expect(ConfirmationAnswer.parse("non farlo", risk: .normal) == .deny)
+    }
+}

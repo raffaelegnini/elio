@@ -27,6 +27,14 @@ public final class VoiceLoop {
     public private(set) var charactersThisSession = 0
     public private(set) var lastError: String?
     public var alwaysListening = true
+    /// Background agents, newest last.
+    public private(set) var tasks: [TaskInfo] = []
+    /// Actions waiting for the user's explicit OK.
+    public private(set) var confirmations: [ConfirmRequest] = []
+    public private(set) var diffs: [DiffPayload] = []
+    public private(set) var cards: [CardPayload] = []
+    /// Bumped when a new diff arrives, so the UI can open the review panel.
+    public private(set) var diffSignal = 0
 
     private let config: JarvisConfig
     private let audio = AudioIO()
@@ -195,6 +203,7 @@ public final class VoiceLoop {
             activate()
             return
         }
+        if answerByVoice(command) { return }
         send(command)
     }
 
@@ -213,10 +222,8 @@ public final class VoiceLoop {
     }
 
     private func handle(_ msg: ServerMessage) {
-        if msg.type == .event, let text = msg.text {
-            turns.append(Turn(role: "event", text: text, route: msg.route))
-            speaker.enqueue(text, lang: msg.lang)
-            speaker.endUtterance()
+        if msg.type == .event {
+            handleEvent(msg)
             return
         }
         guard msg.id != nil, msg.id == currentRequestId else { return }
@@ -247,6 +254,70 @@ public final class VoiceLoop {
             break
         }
         trimTurns()
+    }
+
+    private func handleEvent(_ msg: ServerMessage) {
+        switch msg.kind {
+        case "task", "taskDone":
+            if let info = TaskInfo.fromJSON(msg.payload) {
+                if let i = tasks.firstIndex(where: { $0.id == info.id }) { tasks[i] = info } else { tasks.append(info) }
+                if tasks.count > 30 { tasks.removeFirst(tasks.count - 30) }
+            }
+        case "confirm":
+            if let req = ConfirmRequest.fromJSON(msg.payload), !confirmations.contains(where: { $0.id == req.id }) {
+                confirmations.append(req)
+            }
+        case "confirmResolved":
+            confirmations.removeAll { $0.id == msg.id }
+        case "diff":
+            if let d = DiffPayload.fromJSON(msg.payload) {
+                diffs.insert(d, at: 0)
+                if diffs.count > 10 { diffs.removeLast() }
+                diffSignal += 1
+            }
+        case "card":
+            if let c = CardPayload.fromJSON(msg.payload) {
+                cards.insert(c, at: 0)
+                if cards.count > 10 { cards.removeLast() }
+                turns.append(Turn(role: "card", text: "\(c.title)\n\(c.body)"))
+            }
+        default:
+            break
+        }
+        guard msg.speak == true, let text = msg.text else { return }
+        turns.append(Turn(role: "event", text: text, route: msg.route))
+        speaker.enqueue(text, lang: msg.lang)
+        speaker.endUtterance()
+        trimTurns()
+    }
+
+    /// Answers a confirmation from the HUD buttons.
+    public func answer(_ req: ConfirmRequest, approved: Bool) {
+        confirmations.removeAll { $0.id == req.id }
+        client.send(.confirm(id: req.id, approved: approved))
+        turns.append(Turn(role: "user", text: approved ? "✓ Confermato: \(req.detail)" : "✕ Annullato"))
+    }
+
+    /// Spoken answer to the oldest pending confirmation. Dangerous actions accept only
+    /// an explicit "confermo"; a plain "sì" is not enough. Returns true if consumed.
+    private func answerByVoice(_ text: String) -> Bool {
+        guard let req = confirmations.first else { return false }
+        switch ConfirmationAnswer.parse(text, risk: req.risk) {
+        case .approve:
+            answer(req, approved: true)
+            speaker.enqueue("Procedo.")
+            speaker.endUtterance()
+        case .deny:
+            answer(req, approved: false)
+            speaker.enqueue("Annullato.")
+            speaker.endUtterance()
+        case .needsExplicit:
+            speaker.enqueue("Per questa azione mi serve che tu dica esattamente: confermo.")
+            speaker.endUtterance()
+        case .unrelated:
+            return false
+        }
+        return true
     }
 
     private func appendToReply(_ text: String) {

@@ -7,6 +7,10 @@ import JarvisCore
 setvbuf(stderr, nil, _IONBF, 0)
 signal(SIGPIPE, SIG_IGN)
 
+if CommandLine.arguments.contains("--mcp") {
+    await MCPBridge.run()
+}
+
 let config = JarvisConfig.load()
 let token: String
 let memory: Memory
@@ -18,7 +22,8 @@ do {
     exit(1)
 }
 
-let brain = await Brain(config: config, memory: memory)
+let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
+let brain = await Brain(config: config, memory: memory, executablePath: executable)
 let server = try Server(brain: brain, token: token, port: config.port)
 server.start()
 await brain.start()

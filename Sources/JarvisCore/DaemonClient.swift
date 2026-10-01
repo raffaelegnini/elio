@@ -22,6 +22,8 @@ public final class DaemonClient: @unchecked Sendable {
 
     public func start() { connect() }
 
+    public var isConnected: Bool { lock.withLock { connected } }
+
     public func stop() {
         lock.withLock { stopped = true }
         socket?.cancel(with: .goingAway, reason: nil)
