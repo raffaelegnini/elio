@@ -132,6 +132,18 @@ public struct TaskLogEntry: Codable, Sendable, Identifiable {
     }
 }
 
+extension TaskLogEntry {
+    /// Agents often `cat .env` or edit config files: logs never keep the secrets.
+    public var redacted: TaskLogEntry {
+        var e = self
+        e.title = SecretFilter.redact(title)
+        e.body = SecretFilter.redact(body)
+        e.removed = removed.map { SecretFilter.redact($0) }
+        e.added = added.map { SecretFilter.redact($0) }
+        return e
+    }
+}
+
 /// A question from the assistant or an agent that needs the user's answer.
 public struct QuestionRequest: Codable, Sendable, Identifiable {
     public var id: String

@@ -157,6 +157,12 @@ final class Server: @unchecked Sendable {
     }
 
     private func send(_ message: ServerMessage, on conn: NWConnection) {
+        var message = message
+        if mode == .remote {
+            if message.type == .delta { return }
+            message.text = message.text.map { SecretFilter.redact($0) }
+            message.payload = message.payload.map { SecretFilter.redact($0) }
+        }
         guard let data = try? encoder.encode(message) else { return }
         let meta = NWProtocolWebSocket.Metadata(opcode: .text)
         let ctx = NWConnection.ContentContext(identifier: "msg", metadata: [meta])

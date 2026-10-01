@@ -46,7 +46,7 @@ public final class PhoneNotifier: @unchecked Sendable {
         req.setValue(title, forHTTPHeaderField: "Title")
         req.setValue(kind == "confirm" ? "high" : "default", forHTTPHeaderField: "Priority")
         req.setValue("robot", forHTTPHeaderField: "Tags")
-        req.httpBody = Data(String(text.prefix(400)).utf8)
+        req.httpBody = Data(String(SecretFilter.redact(text).prefix(400)).utf8)
         URLSession.shared.dataTask(with: req).resume()
     }
 }

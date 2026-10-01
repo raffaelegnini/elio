@@ -242,10 +242,8 @@ struct TurnRow: View {
                     .padding(10)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.04)))
             } else {
-                Text(turn.text.isEmpty ? "…" : turn.text)
-                    .font(.system(size: 13)).foregroundStyle(turn.role == "user" ? Theme.dim : Theme.text)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                SecretAwareText(text: turn.text.isEmpty ? "…" : turn.text,
+                                color: turn.role == "user" ? Theme.dim : Theme.text)
             }
         }
     }

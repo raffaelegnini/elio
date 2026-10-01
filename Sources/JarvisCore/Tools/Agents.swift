@@ -302,6 +302,7 @@ public actor TaskRunner {
     private func logEntry(_ entry: TaskLogEntry) {
         lastLogKind[entry.taskId] = entry.kind
         if let memory { Task { await memory.addTaskLog(entry) } }
+        let entry = entry.redacted
         broadcast?(ServerMessage(type: .event, id: entry.taskId, kind: "taskLog", payload: entry.jsonString()))
     }
 

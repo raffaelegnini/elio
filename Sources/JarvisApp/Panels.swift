@@ -1,3 +1,4 @@
+import AppKit
 import JarvisCore
 import JarvisVoice
 import SwiftUI
@@ -281,10 +282,52 @@ struct MarkdownText: View {
     let text: String
 
     var body: some View {
-        Text((try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-             ?? AttributedString(text))
+        let shown = SecretFilter.redact(text, with: "••••••••")
+        Text((try? AttributedString(markdown: shown, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+             ?? AttributedString(shown))
             .font(.system(size: 12.5)).foregroundStyle(Theme.text)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+// MARK: - Secrets on screen
+
+/// Text whose secrets are masked until the user asks to see them. The clear text lives only in
+/// memory: it isn't spoken, archived or sent to the phone (see SecretFilter).
+struct SecretAwareText: View {
+    let text: String
+    var font: Font = .system(size: 13)
+    var color: Color = Theme.text
+    @State private var revealed = false
+    @State private var copied = false
+
+    var body: some View {
+        if SecretFilter.contains(text) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(revealed ? SecretFilter.unwrap(text) : SecretFilter.redact(text, with: "••••••••"))
+                    .font(font).foregroundStyle(color)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(Theme.accent)
+                    Text("Contiene dati riservati").font(.system(size: 10.5)).foregroundStyle(Theme.dim)
+                    Button(revealed ? "Nascondi" : "Mostra") { revealed.toggle() }
+                    Button(copied ? "Copiato ✓" : "Copia segreti") {
+                        let secrets = SecretFilter.find(text).map { SecretFilter.unwrap(String(text[$0])) }
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(secrets.joined(separator: "\n"), forType: .string)
+                        copied = true
+                    }
+                }
+                .font(.system(size: 10.5, weight: .semibold))
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.accent)
+            }
+        } else {
+            Text(text).font(font).foregroundStyle(color)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

@@ -24,6 +24,9 @@ do {
 }
 
 let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
+let scrubbed = await memory.scrubSecrets()
+if scrubbed > 0 { fputs("archive: redacted secrets in \(scrubbed) rows\n", stderr) }
+
 let brain = await Brain(config: config, memory: memory, executablePath: executable)
 let server = try Server(brain: brain, token: token, port: config.port)
 server.start()

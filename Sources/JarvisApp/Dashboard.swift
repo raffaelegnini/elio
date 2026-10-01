@@ -163,8 +163,8 @@ struct DashboardView: View {
                 Text(loop.state.label.uppercased())
                     .font(.system(size: 12, weight: .semibold, design: .monospaced)).tracking(4)
                     .foregroundStyle(Theme.tint(loop.state))
-                Text(loop.partial.isEmpty ? lastReply : loop.partial)
-                    .font(.system(size: 14)).foregroundStyle(loop.partial.isEmpty ? Theme.dim : Theme.text)
+                SecretAwareText(text: loop.partial.isEmpty ? lastReply : loop.partial, font: .system(size: 14),
+                                color: loop.partial.isEmpty ? Theme.dim : Theme.text)
                     .multilineTextAlignment(.center).lineLimit(3)
                     .frame(maxWidth: 560)
                 HStack(spacing: 10) {

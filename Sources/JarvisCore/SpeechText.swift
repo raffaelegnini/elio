@@ -120,7 +120,7 @@ public struct SentenceSplitter {
 /// Removes things that sound bad when read aloud (markdown, URLs, code ticks).
 public enum Speakable {
     public static func clean(_ text: String) -> String {
-        var t = text
+        var t = SecretFilter.speakable(text)
         t = t.replacingOccurrences(of: #"https?://\S+"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"[*_#`>|~]+"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)

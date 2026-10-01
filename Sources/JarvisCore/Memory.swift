@@ -84,7 +84,7 @@ public actor Memory {
 
     public func log(role: String, text: String, route: String? = nil) {
         run("INSERT INTO messages (ts, role, text, route) VALUES (?, ?, ?, ?)",
-            [Date().timeIntervalSince1970, role, text, route])
+            [Date().timeIntervalSince1970, role, SecretFilter.redact(text), route])
     }
 
     public func recentMessages(limit: Int = 20) -> [Message] {
@@ -169,9 +169,30 @@ public actor Memory {
 
     // MARK: - Archive
 
+    /// One pass over what was stored before the secret filter existed. Returns rows changed.
+    @discardableResult
+    public func scrubSecrets() -> Int {
+        var changed = 0
+        for (table, col) in [("messages", "text"), ("task_logs", "json"), ("task_history", "summary")] {
+            var rows: [(Int64, String)] = []
+            query("SELECT rowid, \(col) FROM \(table) WHERE \(col) IS NOT NULL", []) { s in
+                rows.append((sqlite3_column_int64(s, 0), String(cString: sqlite3_column_text(s, 1))))
+            }
+            for (id, value) in rows {
+                let clean = table == "task_logs"
+                    ? (TaskLogEntry.fromJSON(value)?.redacted.jsonString() ?? value)
+                    : SecretFilter.redact(value)
+                guard clean != value else { continue }
+                run("UPDATE \(table) SET \(col) = ? WHERE rowid = ?", [clean, Int(id)])
+                changed += 1
+            }
+        }
+        return changed
+    }
+
     public func addTaskLog(_ entry: TaskLogEntry) {
         run("INSERT INTO task_logs (task_id, json, ts) VALUES (?, ?, ?)",
-            [entry.taskId, entry.jsonString(), entry.date.timeIntervalSince1970])
+            [entry.taskId, entry.redacted.jsonString(), entry.date.timeIntervalSince1970])
     }
 
     public func taskLog(_ taskId: String) -> [String] {
@@ -316,7 +337,7 @@ public actor Memory {
 
     public func recordTask(_ t: TaskInfo) {
         run("INSERT OR REPLACE INTO task_history (id, title, project, status, summary, ended) VALUES (?, ?, ?, ?, ?, ?)",
-            [t.id, t.title, t.project, t.status.rawValue, t.summary, (t.endedAt ?? Date()).timeIntervalSince1970])
+            [t.id, t.title, t.project, t.status.rawValue, t.summary.map { SecretFilter.redact($0) }, (t.endedAt ?? Date()).timeIntervalSince1970])
     }
 
     public func tasksEnded(since: Date) -> [TaskInfo] {
