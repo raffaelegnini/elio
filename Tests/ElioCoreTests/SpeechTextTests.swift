@@ -148,6 +148,11 @@ struct ConfirmationAnswerTests {
         #expect(ConfirmationAnswer.parse("invialo", risk: .dangerous) == .approve)
         #expect(ConfirmationAnswer.parse("sì però prima dimmi bene a chi lo stai mandando", risk: .dangerous) == .needsExplicit)
         #expect(ConfirmationAnswer.parse("no non mandarlo", risk: .dangerous) == .deny)
+        // Real session: a leading "no" before an order is a yes; echoed "non puoi" is gone after Echo.remove.
+        #expect(ConfirmationAnswer.parse("No, allora Elio invia il messaggio a Damiano", risk: .dangerous) == .approve)
+        #expect(ConfirmationAnswer.parse("no", risk: .dangerous) == .deny)
+        #expect(ConfirmationAnswer.parse("lascia stare", risk: .normal) == .deny)
+        #expect(ConfirmationAnswer.parse("sì sì sì vai", risk: .dangerous) == .approve)
         #expect(ConfirmationAnswer.parse("Confermo.", risk: .dangerous) == .approve)
         #expect(ConfirmationAnswer.parse("no aspetta", risk: .dangerous) == .deny)
     }
@@ -156,5 +161,6 @@ struct ConfirmationAnswerTests {
         #expect(ConfirmationAnswer.parse("Sì, procedi", risk: .normal) == .approve)
         #expect(ConfirmationAnswer.parse("che ore sono", risk: .normal) == .unrelated)
         #expect(ConfirmationAnswer.parse("non farlo", risk: .normal) == .deny)
+        #expect(ConfirmationAnswer.parse("che ore sono", risk: .dangerous) == .unrelated)
     }
 }

@@ -20,6 +20,11 @@ public final class AudioIO: @unchecked Sendable {
     /// When output goes to Bluetooth (AirPods), capture from the Mac's built-in mic:
     /// using the AirPods mic switches them to the hands-free profile (16–24 kHz, robotic sound).
     public var preferBuiltInMicWithBluetooth = true
+    /// Echo cancellation on the mic when Elio plays through the speakers: macOS removes what the
+    /// speakers emit (measured: Elio's voice drops from +12 dB to below room noise), so anything the
+    /// mic still hears while Elio talks is the user. Not used with headphones (no echo there).
+    public var echoCancellation = true
+    public private(set) var aecActive = false
     private var observers: [NSObjectProtocol] = []
 
     public init() {}
@@ -49,7 +54,7 @@ public final class AudioIO: @unchecked Sendable {
         })
     }
 
-    private func restartInput() {
+    func restartInput() {
         inputEngine.inputNode.removeTap(onBus: 0)
         inputEngine.stop()
         inputEngine.reset()
@@ -68,7 +73,15 @@ public final class AudioIO: @unchecked Sendable {
 
     private func startInput() throws {
         let input = inputEngine.inputNode
-        if let unit = input.audioUnit {
+        let useAEC = echoCancellation && !AudioDevices.defaultOutputIsHeadphones()
+        if input.isVoiceProcessingEnabled != useAEC { try input.setVoiceProcessingEnabled(useAEC) }
+        aecActive = useAEC
+        if useAEC {
+            // Don't lower other apps' audio while Elio listens all day.
+            input.voiceProcessingOtherAudioDuckingConfiguration =
+                AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
+        }
+        if !useAEC, let unit = input.audioUnit {
             let wanted: AudioDeviceID? = preferBuiltInMicWithBluetooth && AudioDevices.defaultOutputIsBluetooth()
                 ? AudioDevices.builtInMicrophone() : AudioDevices.defaultInput()
             if var id = wanted {
@@ -91,6 +104,11 @@ public final class AudioIO: @unchecked Sendable {
     }
 
     /// Mute: the mic is really released (no orange indicator), output keeps working.
+    /// Re-applies echo cancellation / device choice (settings changed, AEC auto-disabled).
+    public func reconfigureInput() {
+        restartInput()
+    }
+
     public func setInputEnabled(_ on: Bool) throws {
         if on {
             guard !inputEngine.isRunning else { return }

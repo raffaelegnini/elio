@@ -219,6 +219,7 @@ public actor TaskRunner {
             "--strict-mcp-config", "--mcp-config", mcpConfig,
             "--permission-prompt-tool", "mcp__elio__approve",
             "--allowedTools", "Read", "Grep", "Glob", "TodoWrite",
+        ] + (config.browserAutonomy ? ["--chrome"] : []) + [
             "--disallowedTools", "mcp__elio__start_task",
         ]
         var env = ProcessInfo.processInfo.environment

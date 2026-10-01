@@ -33,6 +33,8 @@ public struct ElioConfig: Codable, Sendable {
     public var nudgeMissedMeetings: Bool = true
     public var repeatReminders: Bool = true
     public var confirmCodeExecution: Bool = false
+    public var echoCancellation: Bool = true
+    public var browserAutonomy: Bool = true
     public var webPort: UInt16 = 8766
     public var remotePort: UInt16 = 8767
 
@@ -69,6 +71,8 @@ public struct ElioConfig: Codable, Sendable {
         nudgeMissedMeetings = try c.decodeIfPresent(Bool.self, forKey: .nudgeMissedMeetings) ?? d.nudgeMissedMeetings
         repeatReminders = try c.decodeIfPresent(Bool.self, forKey: .repeatReminders) ?? d.repeatReminders
         confirmCodeExecution = try c.decodeIfPresent(Bool.self, forKey: .confirmCodeExecution) ?? d.confirmCodeExecution
+        echoCancellation = try c.decodeIfPresent(Bool.self, forKey: .echoCancellation) ?? d.echoCancellation
+        browserAutonomy = try c.decodeIfPresent(Bool.self, forKey: .browserAutonomy) ?? d.browserAutonomy
     }
 
     static func defaultClaudePath() -> String {

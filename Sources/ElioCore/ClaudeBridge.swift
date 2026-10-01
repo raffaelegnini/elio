@@ -20,6 +20,8 @@ public actor ClaudeBridge {
         public var maxTurnDuration: TimeInterval = 180
         /// MCP servers (JSON) available to the session; their tools are pre-approved.
         public var mcpConfig: String?
+        /// Claude in Chrome: the user's real browser (already logged in everywhere).
+        public var browser = false
 
         public init(claudePath: String, model: String, systemPrompt: String, workingDirectory: URL) {
             self.claudePath = claudePath
@@ -163,8 +165,12 @@ public actor ClaudeBridge {
         ]
         if let mcp = options.mcpConfig {
             // Integration MCP tools are not pre-approved: they go through PermissionPolicy via `approve`.
-            args += ["--mcp-config", mcp, "--allowedTools", "mcp__elio", "WebSearch", "WebFetch",
-                     "--permission-prompt-tool", "mcp__elio__approve"]
+            args += ["--mcp-config", mcp, "--allowedTools", "mcp__elio", "WebSearch", "WebFetch"]
+            if options.browser { args += ["mcp__claude-in-chrome"] }
+            args += ["--permission-prompt-tool", "mcp__elio__approve"]
+        }
+        if options.browser {
+            args += ["--chrome"]
         }
         if let sessionId { args += ["--resume", sessionId] }
         p.arguments = args

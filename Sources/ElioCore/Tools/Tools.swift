@@ -83,6 +83,8 @@ public enum ToolRegistry {
         DirectoryTools.refresh,
         DirectoryTools.integrationSync,
         IntegrationTools.propose,
+        IntegrationTools.setSecret,
+        IntegrationTools.activate,
         IntegrationTools.notes,
         IntegrationTools.list,
         IntegrationTools.request,
@@ -112,7 +114,7 @@ public enum ToolRegistry {
         let timeout: TimeInterval = switch name {
         case "approve": 600
         case "ask_user": 1560
-        case "slack_clock_in", "slack_send": 150   // waits for the user's confirmation
+        case "slack_clock_in", "slack_send", "integration_activate": 150   // waits for the user's confirmation
         case "slack_mentions", "slack_dms": 45
         case "start_task": 60
         default: 20

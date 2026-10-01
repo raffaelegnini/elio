@@ -70,6 +70,7 @@ public final class VoiceLoop {
     private var inUtterance = false
     /// When Elio last stopped talking (its voice may still echo in the room).
     private var lastSpeechEnd = Date.distantPast
+    private var emptyWithAEC = 0
     private var utteranceArmed = false
     /// Utterance captured while Elio was speaking through the speakers.
     private var bargeCandidate = false
@@ -166,7 +167,7 @@ public final class VoiceLoop {
             pipeline.inputFormat = audio.inputFormat
             if !muted, let format = audio.inputFormat { try await stt.start(inputFormat: format) }
             inputDevice = audio.inputDeviceName
-            VoiceLog.write("audio started: in '\(inputDevice)' out '\(audio.outputDeviceName)' bt-out \(AudioDevices.defaultOutputIsBluetooth()) builtin-mic \(AudioDevices.builtInMicrophone().map { AudioDevices.name(of: $0) } ?? "-"), format: \(String(describing: audio.inputFormat))")
+            VoiceLog.write("audio started (aec \(audio.aecActive)): in '\(inputDevice)' out '\(audio.outputDeviceName)' bt-out \(AudioDevices.defaultOutputIsBluetooth()) builtin-mic \(AudioDevices.builtInMicrophone().map { AudioDevices.name(of: $0) } ?? "-"), format: \(String(describing: audio.inputFormat))")
             audio.onRouteChange = { [weak self] format in
                 guard let self else { return }
                 self.inputDevice = self.audio.inputDeviceName
@@ -237,6 +238,10 @@ public final class VoiceLoop {
         addressAs = config.addressAs
         briefOpeningEnabled = config.briefOpening
         audio.preferBuiltInMicWithBluetooth = config.builtInMicWithBluetooth
+        if audio.echoCancellation != config.echoCancellation {
+            audio.echoCancellation = config.echoCancellation
+            if state != .off { audio.reconfigureInput() }
+        }
         if config.elevenLabsVoiceId != voiceId {
             voiceId = config.elevenLabsVoiceId
             speaker.setVoice(voiceId)
@@ -288,8 +293,9 @@ public final class VoiceLoop {
     private func handle(_ event: InputPipeline.Event) {
         switch event {
         case .speechStart:
-            if speaker.isSpeaking, AudioDevices.defaultOutputIsHeadphones() {
-                // No echo in headphones: any speech is the user talking over Elio.
+            if speaker.isSpeaking, audio.aecActive || AudioDevices.defaultOutputIsHeadphones() {
+                // Echo cancelled (or headphones): whatever the mic hears now is the user → stop talking.
+                VoiceLog.write("barge-in: user spoke over Elio")
                 interrupt()
             }
             inUtterance = true
@@ -312,11 +318,12 @@ public final class VoiceLoop {
     /// through the speakers, a stop word it isn't saying itself interrupts it.
     private func heard(_ text: String) {
         guard inUtterance else { return }
-        if speaker.isSpeaking {
+        if speaker.isSpeaking, !audio.aecActive {
+            // No echo cancellation: tell the user's words from Elio's own by content.
             // Answering a confirmation/question while Elio is still asking it.
-            let answering = (confirmations.first.map { ConfirmationAnswer.parse(Echo.remove(from: text, spoken: spokenText), risk: $0.risk) != .unrelated } ?? false)
-                || (!questions.isEmpty && !Echo.remove(from: text, spoken: spokenText).isEmpty && !utteranceArmed)
-            if answering || BargeIn.detect(text, whileSaying: spokenText) {
+            let answering = (confirmations.first.map { ConfirmationAnswer.parse(Echo.remove(from: text, spoken: speaker.recentlySpoken()), risk: $0.risk) != .unrelated } ?? false)
+                || (!questions.isEmpty && !Echo.remove(from: text, spoken: speaker.recentlySpoken()).isEmpty && !utteranceArmed)
+            if answering || BargeIn.detect(text, whileSaying: speaker.recentlySpoken()) {
                 VoiceLog.write("barge-in on '\(text)'")
                 interrupt()
                 utteranceArmed = true   // what follows "Elio, aspetta…" is a command
@@ -337,11 +344,22 @@ public final class VoiceLoop {
     private func endUtterance() async {
         guard let stt else { return }
         var text = await stt.finalizeSegment()
-        let spokeRecently = speaker.isSpeaking || Date().timeIntervalSince(lastSpeechEnd) < 2
-        VoiceLog.write("heard: '\(text)'\(spokeRecently ? " (Elio spoke recently)" : "")")
+        let spokeRecently = speaker.isSpeaking || Date().timeIntervalSince(lastSpeechEnd) < 3
+        VoiceLog.write("heard: '\(text)'\(spokeRecently ? " (Elio spoke recently)" : "")\(audio.aecActive ? " [aec]" : "")")
+        // Safety net: if echo cancellation swallows the user's voice, turn it off by itself.
+        if audio.aecActive {
+            emptyWithAEC = text.isEmpty ? emptyWithAEC + 1 : 0
+            if emptyWithAEC >= 6 {
+                emptyWithAEC = 0
+                VoiceLog.write("aec: 6 empty utterances in a row, disabling echo cancellation")
+                audio.echoCancellation = false
+                audio.reconfigureInput()
+                lastError = "Cancellazione eco disattivata: non sentivo bene la tua voce."
+            }
+        }
         partial = ""
         // Elio's own voice picked up by the mic is never a command.
-        if spokeRecently { text = Echo.remove(from: text, spoken: spokenText) }
+        if spokeRecently { text = Echo.remove(from: text, spoken: speaker.recentlySpoken()) }
         if state == .hearing, !isArmed { state = .listening }
         guard !text.isEmpty else { return }
         if speaker.isSpeaking { return }  // still talking and no stop word: ignore
@@ -459,8 +477,8 @@ public final class VoiceLoop {
             }
         case "questionResolved":
             questions.removeAll { $0.id == msg.id }
-        case "integrationSetup":
-            if let id = msg.id { onIntegrationSetup?(id) }
+        case "integrationUpdated":
+            break  // Elio configures integrations itself; Settings just shows the result
         case "task", "taskDone":
             if let info = TaskInfo.fromJSON(msg.payload) {
                 if let i = tasks.firstIndex(where: { $0.id == info.id }) { tasks[i] = info } else { tasks.append(info) }
@@ -554,7 +572,9 @@ public final class VoiceLoop {
             speaker.enqueue("Per questa azione mi serve che tu dica esattamente: confermo.")
             speaker.endUtterance()
         case .unrelated:
-            return false
+            speaker.enqueue("Mi scusi, \(addressAs): procedo? Sì o no.")
+            speaker.endUtterance()
+            armedUntil = Date().addingTimeInterval(20)
         }
         return true
     }

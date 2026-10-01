@@ -186,13 +186,52 @@ public enum IntegrationTools {
         let changed = existing.map { sensitive($0) != sensitive(item) } ?? true
         if changed { item.enabled = false }
         IntegrationStore.upsert(item)
-        ctx.broadcast(ServerMessage(type: .event, id: id, text: name, kind: "integrationSetup", payload: item.jsonString()))
+        ctx.broadcast(ServerMessage(type: .event, id: id, text: name, kind: "integrationUpdated", payload: item.jsonString()))
         if !item.enabled {
-            return "Configurazione proposta. L'app ha aperto le Impostazioni: l'utente deve controllarla, " +
-                (item.authType != .none ? "inserire la chiave " : "") + "e attivarla. Diglielo in una frase e aspetta."
+            return item.authType != .none && !item.hasSecret
+                ? "Configurazione salvata. Ora procurati tu la chiave dal browser (l'utente è già loggato) e salvala con integration_set_secret, poi chiama integration_activate."
+                : "Configurazione salvata. Chiama integration_activate per attivarla."
         }
-        if item.kind == .mcp { await ctx.requestSessionRestart() }
         return "Integrazione invariata e attiva."
+    }
+
+    static let setSecret = ElioTool(
+        name: "integration_set_secret",
+        description: """
+        Salva nel Portachiavi la chiave/token di un'integrazione che hai ottenuto tu (es. generandola dal browser, \
+        dove l'utente è già loggato). Non ripeterla mai in chat né a voce.
+        """,
+        properties: ["id": prop("Id dell'integrazione"), "secret": prop("La chiave/token")],
+        required: ["id", "secret"]
+    ) { args, ctx in
+        guard let item = IntegrationStore.get(args["id"] as? String ?? "") else { throw ToolError("Integrazione non trovata") }
+        let secret = (args["secret"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard secret.count >= 8 else { throw ToolError("Chiave troppo corta") }
+        KeychainItem.write(service: item.secretService, value: secret)
+        return "Chiave salvata per \(item.name). Ora integration_activate."
+    }
+
+    static let activate = ElioTool(
+        name: "integration_activate",
+        description: "Attiva un'integrazione configurata: l'utente dà un semplice OK a voce (protegge da pagine web malevole).",
+        properties: ["id": prop("Id dell'integrazione")],
+        required: ["id"]
+    ) { args, ctx in
+        guard var item = IntegrationStore.get(args["id"] as? String ?? "") else { throw ToolError("Integrazione non trovata") }
+        if item.enabled { return "\(item.name) è già attiva." }
+        guard !item.needsSecret else { throw ToolError("Manca ancora la chiave: procurala e salvala con integration_set_secret") }
+        let target = item.kind == .mcp && !item.mcpCommand.isEmpty
+            ? "eseguendo \(([item.mcpCommand] + item.mcpArgs).joined(separator: " "))"
+            : "verso \(URL(string: item.baseURL)?.host ?? item.baseURL)"
+        let ok = await ctx.gate.request(ConfirmRequest(
+            id: UUID().uuidString, title: "Attivo l'integrazione \(item.name) \(target)",
+            detail: "\(item.name): \(item.kind == .api ? "API" : "MCP") \(target)",
+            risk: item.kind == .mcp && !item.mcpCommand.isEmpty ? .dangerous : .normal, taskId: ctx.taskId), timeout: 120)
+        guard ok else { return "L'utente non ha confermato l'attivazione." }
+        item.enabled = true
+        IntegrationStore.upsert(item)
+        if item.kind == .mcp { await ctx.requestSessionRestart() }
+        return "\(item.name) attiva. Leggi la documentazione, salva le note con integration_notes e imposta integration_sync."
     }
 
     static let notes = ElioTool(

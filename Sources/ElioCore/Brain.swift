@@ -30,6 +30,7 @@ public actor Brain {
                 + "\n\n" + MemoryTools.promptBlock(await memory.facts()),
             workingDirectory: ElioPaths.claudeWorkspace)
         options.mcpConfig = Self.sessionMCPConfigFile(executablePath: executablePath)
+        options.browser = config.browserAutonomy
         options.systemPrompt += "\n\n" + IntegrationStore.promptBlock()
         claude = ClaudeBridge(options: options, resumeSessionId: await memory.get("claude.session_id"))
         await claude.setSessionIdHandler { id in Task { await memory.set("claude.session_id", id) } }
@@ -95,6 +96,7 @@ public actor Brain {
                 + "\n\n" + IntegrationStore.promptBlock(),
             workingDirectory: ElioPaths.claudeWorkspace)
         options.mcpConfig = Self.sessionMCPConfigFile(executablePath: executablePath)
+        options.browser = config.browserAutonomy
         await claude.reconfigure(options)
     }
 
@@ -261,12 +263,17 @@ public actor Brain {
         Nuove integrazioni ("voglio integrare X", "collega X"):
         1. Cerca sul web (WebSearch/WebFetch) se X ha un server MCP ufficiale e/o API REST; spiega in una frase \
         cosa esiste e chiedi quale preferisce (consiglia tu).
-        2. Raccogli i dati non segreti (es. dominio dell'account) e chiama integration_propose. La chiave non chiederla mai \
-        in chat: l'utente la inserisce nelle Impostazioni che si aprono da sole.
+        2. Sii autosufficiente: non chiedere all'utente di copiare chiavi, URL o domini. Usa il browser (Claude in Chrome: \
+        l'utente è già loggato ovunque) per trovare il dominio dell'account e generare o copiare la chiave API dalle \
+        impostazioni del servizio; chiama integration_propose, salva la chiave con integration_set_secret (non ripeterla mai), \
+        poi integration_activate: all'utente basta dire "sì". Chiedigli qualcosa solo se il browser non basta.
         3. Quando è pronta, leggi la documentazione con WebFetch e salva note d'uso compatte con integration_notes \
         (endpoint utili, filtri, paginazione). Poi usala con api_request (o con i tool MCP).
         4. Imposta con integration_sync gli elenchi che servono a risolvere nomi (progetti, persone, clienti…): \
         verranno tenuti aggiornati in background e lookup li troverà all'istante.
+
+        Browser: puoi navigare nel Chrome dell'utente per fare le cose da solo (cercare, leggere pagine riservate, \
+        compilare impostazioni). Non fare acquisti, pagamenti, invii di messaggi o cancellazioni dal browser senza chiedere.
 
         Velocità: per persone, canali, progetti e dati delle integrazioni usa PRIMA lookup (rubrica locale, istantanea). \
         Chiama le API solo per dati che cambiano spesso (messaggi, task di oggi) o se lookup non trova.

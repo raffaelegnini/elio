@@ -257,18 +257,24 @@ public enum ConfirmationAnswer: Equatable {
     case approve, deny, needsExplicit, unrelated
 
     public static func parse(_ text: String, risk: ConfirmRequest.Risk) -> ConfirmationAnswer {
-        let t = " " + text.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .,!?")) + " "
+        let clean = text.lowercased().replacingOccurrences(of: #"[.,!?;:]"#, with: " ", options: .regularExpression)
+        let t = " " + clean.split(separator: " ").joined(separator: " ") + " "
         let has = { (words: [String]) in words.contains { t.contains(" \($0) ") } }
-        if has(["no", "non", "annulla", "annullato", "stop", "aspetta", "fermo", "non farlo", "lascia stare", "cancel", "don't"]) { return .deny }
+        let words = t.split(separator: " ").count
+        // Refusals: explicit ones only. A leading "no" followed by an order ("no, allora invia") is a yes.
+        let refusal = t.range(of: #" non (inviare|inviarlo|inviarla|mandare|mandarlo|mandarla|farlo|farla|procedere|andare|scrivere|scriverlo) "#,
+                              options: .regularExpression) != nil
+            || has(["annulla", "annullalo", "lascia stare", "lascia perdere", "stop", "fermo", "fermati", "aspetta", "cancel", "don't"])
+            || t.range(of: #"^ (no )+$"#, options: .regularExpression) != nil
+        if refusal { return .deny }
         if has(["confermo", "conferma", "confermato", "i confirm", "confirm"]) { return .approve }
         let strong = ["vai", "procedi", "invia", "invialo", "inviala", "mandalo", "mandala", "manda", "fallo", "falla",
                       "go ahead", "send it", "do it"]
-        let soft = ["sì", "si", "ok", "okay", "certo", "va bene", "yes", "esatto", "perfetto"]
-        let words = t.split(separator: " ").count
-        // A short, unambiguous yes ("sì sì vai", "procedi", "invialo") is an explicit confirmation;
-        // for delicate actions a lone "ok"/"sì" in a long sentence is not.
-        if has(strong) { return words <= 8 ? .approve : (risk == .dangerous ? .needsExplicit : .approve) }
-        if has(soft) { return risk == .dangerous && words > 4 ? .needsExplicit : .approve }
+        if has(strong) { return .approve }
+        let soft = ["sì", "si", "ok", "okay", "certo", "va bene", "yes", "esatto", "perfetto", "d'accordo"]
+        // A lone "sì/ok" in a long, unrelated sentence isn't a clear yes for a delicate action.
+        if has(soft) { return risk == .dangerous && words > 6 ? .needsExplicit : .approve }
+        if t.trimmingCharacters(in: .whitespaces) == "no" { return .deny }
         return .unrelated
     }
 }

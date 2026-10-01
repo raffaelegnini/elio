@@ -43,10 +43,22 @@ public final class Speaker {
 
     public func setVoice(_ id: String) { voiceId = id }
 
+    /// Everything said recently (acks, replies, confirmation prompts): the mic may hear it back.
+    private var spoken: [(Date, String)] = []
+
+    public func recentlySpoken(within seconds: TimeInterval = 20) -> String {
+        let cutoff = Date().addingTimeInterval(-seconds)
+        spoken.removeAll { $0.0 < cutoff }
+        return spoken.map(\.1).joined(separator: " ")
+    }
+
+    private func remember(_ text: String) { spoken.append((Date(), text)) }
+
     /// Queue a sentence of the current reply.
     public func enqueue(_ sentence: String, lang: Lang? = nil) {
         let text = Speakable.clean(sentence)
         guard !text.isEmpty else { return }
+        remember(text)
         utteranceOpen = true
         setSpeaking(true)
         jobs?.yield(SentenceJob(text: text, buffers: produce(text, lang: lang)))
@@ -91,6 +103,7 @@ public final class Speaker {
         let text = Speakable.clean(sentence)
         guard let stream, !text.isEmpty else { return }
         setSpeaking(true)
+        remember(text)
         streamText += text + " "
         // No per-sentence flush: forcing generation mid-reply produced pauses between sentences.
         stream.push(text, flush: false)

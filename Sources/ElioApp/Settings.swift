@@ -255,6 +255,8 @@ private struct VoiceSettings: View {
                 .font(.system(size: 12.5))
             Toggle("Con le AirPods usa il microfono del Mac (audio più pulito)", isOn: $model.config.builtInMicWithBluetooth)
                 .font(.system(size: 12.5))
+            Toggle("Cancellazione dell'eco (interrompilo parlando anche con gli altoparlanti)", isOn: $model.config.echoCancellation)
+                .font(.system(size: 12.5))
         }
     }
 }
@@ -282,6 +284,10 @@ private struct BrainSettings: View {
         Group(title: "Sicurezza degli agenti",
               note: "Push, merge, cancellazioni e messaggi chiedono sempre conferma. Test e build eseguono il codice del progetto: con questa opzione chiedono conferma anche loro.") {
             Toggle("Conferma anche build e test", isOn: $model.config.confirmCodeExecution).font(.system(size: 12.5))
+        }
+        Group(title: "Autonomia",
+              note: "Con il browser Elio usa il tuo Chrome (dove sei già loggato) per fare le cose da solo, per esempio prendere le chiavi API delle integrazioni. Acquisti, invii e cancellazioni li chiede sempre.") {
+            Toggle("Elio può usare il browser da solo", isOn: $model.config.browserAutonomy).font(.system(size: 12.5))
         }
     }
 }

@@ -20,6 +20,8 @@ public enum PermissionPolicy {
             return decideBash((input["command"] as? String) ?? "")
         default:
             if tool.hasPrefix("mcp__elio__") { return .allow }
+            // The user asked Elio to drive their browser on its own (Settings → Autonomia).
+            if tool.hasPrefix("mcp__claude-in-chrome__") && browserAutonomy { return .allow }
             if tool.hasPrefix("mcp__") { return decideIntegrationTool(tool) }
             return .confirm(.normal)
         }
@@ -99,6 +101,7 @@ public enum PermissionPolicy {
     /// Settings → "conferma anche build e test": running the project's own code
     /// (tests, linters, builds) then needs an OK too.
     nonisolated(unsafe) public static var strictCodeExecution = false
+    nonisolated(unsafe) public static var browserAutonomy = true
 
     static var activeSafe: [String] { strictCodeExecution ? safe.filter { !runsProjectCode.contains($0) } : safe }
 

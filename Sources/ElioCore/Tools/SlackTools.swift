@@ -221,6 +221,16 @@ public enum SlackTools {
 
 /// Generic-password items in the login Keychain.
 public enum KeychainItem {
+    /// Written by the daemon itself (so it can read it back without prompts).
+    public static func write(service: String, value: String) {
+        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
+        SecItemDelete(base as CFDictionary)
+        var item = base
+        item[kSecAttrAccount as String] = "elio"
+        item[kSecValueData as String] = Data(value.utf8)
+        SecItemAdd(item as CFDictionary, nil)
+    }
+
     public static func read(service: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
