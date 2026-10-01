@@ -17,6 +17,8 @@ public enum PermissionPolicy {
             return .allow
         case "Edit", "Write", "MultiEdit", "NotebookEdit":
             let path = (input["file_path"] as? String) ?? (input["notebook_path"] as? String) ?? ""
+            // .git/config (fsmonitor, pager…) and hooks run code at the next `git status`/`commit`.
+            if canonical(path).components(separatedBy: "/").contains(".git") { return .confirm(.normal) }
             if onMac, isInside(path, FileManager.default.homeDirectoryForCurrentUser.path), !isSensitive(path) {
                 return .allow
             }
@@ -56,18 +58,22 @@ public enum PermissionPolicy {
             return .confirm(.dangerous)
         }
         // Command substitution / redirection to files: can't reason about it safely.
+        // Escaped quotes make quoting ambiguous (a "quoted" > may be a real redirection), and process
+        // substitution runs commands: never auto-approve those.
+        if cmd.contains("\\\"") || cmd.contains("\\'") || cmd.contains("<(") || cmd.contains(">(") {
+            return .confirm(.normal)
+        }
         // A ">" inside quotes ("<noreply@…>") is text, not a redirection; $( and ` expand even in double quotes.
         let unquoted = cmd.replacingOccurrences(of: #"'[^']*'|"[^"]*""#, with: "''", options: .regularExpression)
         if cmd.contains("$(") || cmd.contains("`") || unquoted.range(of: #"(^|[^0-9&])>{1,2}\s*[^&\s]"#, options: .regularExpression) != nil {
             return .confirm(.normal)
         }
-        let parts = cmd.replacingOccurrences(of: #"\s+2>(/dev/null|&1)"#, with: "", options: .regularExpression)
-            .splitOutsideQuotes(";|&")
+        // Newlines separate commands in the shell just like ";".
+        let parts = cmd.replacingOccurrences(of: #"\s+2>(/dev/null|&1)(?=\s|$|[;&|)])"#, with: "", options: .regularExpression)
+            .splitOutsideQuotes(";|&\n\r")
             // Grouping parentheses/braces don't change what runs: `(git checkout x || git checkout -b x)`.
             .map { $0.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "(){}"))) }
             .filter { !$0.isEmpty }
-            // `git -C <repo> status` is the same command run in another folder.
-            .map { $0.replacingOccurrences(of: #"^git\s+-C\s+('[^']*'|"[^"]*"|[\w./~-]+)\s+"#, with: "git ", options: .regularExpression) }
         let allSafe = parts.allSatisfy { part in
             // A safe command can still be turned into code execution / file writes by its options
             // (`git fetch --upload-pack=…`, `find -exec`, `eslint --rulesdir`): check every token.
@@ -105,7 +111,8 @@ public enum PermissionPolicy {
         if outward.contains(where: { cmd.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }) {
             return .confirm(.normal)
         }
-        // Overwriting redirection (quoted text like "<noreply@…>" is not one).
+        // Overwriting redirection (quoted text like "<noreply@…>" is not one, unless quotes are escaped).
+        if cmd.contains("\\\"") || cmd.contains("\\'") { return .confirm(.normal) }
         let unquoted = cmd.replacingOccurrences(of: #"'[^']*'|"[^"]*""#, with: "''", options: .regularExpression)
         if unquoted.range(of: #"(^|[^0-9&>])>(?!>)\s*(?!/dev/null|&)\S"#, options: .regularExpression) != nil {
             return .confirm(.normal)

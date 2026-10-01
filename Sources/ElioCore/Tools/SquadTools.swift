@@ -48,7 +48,8 @@ extension TaskRunner {
         - Codice: lavora su un branch locale `elio/<slug-breve>` (lo stesso per tutta la squadra, se lavorate sullo stesso repo: \
         mettetevi d'accordo), committa lì. Mai push, merge, rebase né PR: Raffaele rivede il diff e crea lui la PR.
         - Per creare o modificare file usa Edit/Write (già autorizzati nel progetto), non printf/echo/cat con > o >>: \
-        quelli chiedono una conferma a Raffaele e vi bloccano. Comandi git semplici, uno per volta.
+        quelli chiedono una conferma a Raffaele e vi bloccano. Comandi git semplici, uno per volta, senza `git -C` né `cd`: \
+        siete già nella cartella del progetto.
         - Non cancellare file e non inviare messaggi fuori dalla squadra senza conferma.
         - Se ti manca un'informazione che solo Raffaele ha, chiedi con mcp__elio__ask_user.
         - Termina con un riassunto di massimo due frasi del tuo lavoro.
