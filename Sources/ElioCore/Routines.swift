@@ -59,14 +59,14 @@ public actor Routines {
         // The app plays the opening theme while Claude prepares the brief.
         await brain?.publish(ServerMessage(type: .event, kind: "briefStart"))
         await brain?.runRoutine(kind: "brief", prompt: """
-        [routine: briefing del mattino] Raffaele ha appena iniziato la giornata lavorativa. Prepara il briefing:
-        1. calendar_events per oggi; 2. list_reminders; 3. night_recap per i lavori fatti stanotte; 4. list_tasks;
-        5. slack_mentions e slack_dms per le ultime 16 ore (se Slack non è collegato, ignoralo).
-        Poi mostra il dettaglio con show_on_screen (titolo "Briefing di oggi": agenda completa con orari, promemoria, \
-        esito dei lavori notturni con i branch da revisionare, menzioni e DM Slack importanti).
-        A voce: saluto breve, quanti meeting e qual è il primo, cose da ricordare, esito dei lavori notturni, \
-        chi lo cerca su Slack. Massimo cinque frasi.
-        Infine chiama slack_clock_in: chiede lei la conferma all'utente (se Slack non è collegato, ricordagli di farlo a mano).
+        [routine: briefing] Raffaele ha appena iniziato la giornata. L'app lo ha GIÀ salutato e gli ha detto che gli fai \
+        un riassunto: non salutare, non dire "ecco il briefing", entra subito nel contenuto.
+        Racconta MENTRE raccogli, una sezione alla volta: chiama uno strumento e subito dopo dì in una frase cosa hai \
+        trovato, poi passa al successivo. Ordine: calendar_events di oggi → list_reminders → night_recap e list_tasks → \
+        slack_mentions e slack_dms delle ultime 16 ore (se Slack non è collegato, salta). Frasi brevi e parlate, \
+        niente elenchi né markdown nel testo. Al massimo sei frasi in tutto.
+        Alla fine mostra il dettaglio con show_on_screen (titolo "Briefing di oggi": agenda con orari, promemoria, \
+        lavori notturni e branch da revisionare, menzioni e DM importanti) e chiama slack_clock_in.
         """)
     }
 
@@ -85,11 +85,11 @@ public actor Routines {
         await memory.set("routine.recap.last", Self.dayKey(Date()))
         await brain?.publish(ServerMessage(type: .event, kind: "recapStart"))
         await brain?.runRoutine(kind: "recap", prompt: """
-        [routine: recap della giornata] Raffaele chiude la giornata. Raccogli: day_summary (lavori degli agenti, \
-        promemoria, conversazioni di oggi), calendar_events di oggi e di domani, slack_mentions e slack_dms di oggi \
-        (se Slack non è collegato, salta), list_tasks.
-        Mostra il dettaglio con show_on_screen (titolo "Recap di oggi": fatto, in sospeso, domani).
-        A voce, massimo quattro frasi: cosa è stato fatto, cosa resta aperto, il primo impegno di domani.
+        [routine: recap] Raffaele chiude la giornata. L'app lo ha GIÀ salutato e gli ha detto che gli fai il riassunto: \
+        non salutare, entra subito nel contenuto. Racconta MENTRE raccogli, una frase dopo ogni strumento: \
+        day_summary → calendar_events di oggi e di domani → slack_mentions e slack_dms di oggi (se c'è Slack) → list_tasks. \
+        Frasi brevi e parlate, al massimo cinque in tutto: fatto, in sospeso, primo impegno di domani.
+        Alla fine show_on_screen (titolo "Recap di oggi": fatto, in sospeso, domani).
         """)
     }
 

@@ -7,16 +7,17 @@ import Foundation
 final class StreamingTTS: @unchecked Sendable {
     private let task: URLSessionWebSocketTask
     private let format: AVAudioFormat
-    private let onAudio: @Sendable (AVAudioPCMBuffer) -> Void
-    private let onFinish: @Sendable (Error?) -> Void
+    private var onAudio: (@Sendable (AVAudioPCMBuffer) -> Void)?
+    private var onFinish: (@Sendable (Error?) -> Void)?
+    let openedAt = Date()
     private let lock = NSLock()
     private var finished = false
     private var leftover = Data()
     private(set) var charactersSent = 0
 
     init(apiKey: String, voiceId: String, model: String, format: AVAudioFormat,
-         onAudio: @escaping @Sendable (AVAudioPCMBuffer) -> Void,
-         onFinish: @escaping @Sendable (Error?) -> Void) {
+         onAudio: (@Sendable (AVAudioPCMBuffer) -> Void)? = nil,
+         onFinish: (@Sendable (Error?) -> Void)? = nil) {
         var comps = URLComponents(string: "wss://api.elevenlabs.io/v1/text-to-speech/\(voiceId)/stream-input")!
         comps.queryItems = [
             URLQueryItem(name: "model_id", value: model),
@@ -38,6 +39,16 @@ final class StreamingTTS: @unchecked Sendable {
         ])
         receive()
     }
+
+    /// Attaches the consumer of a socket opened in advance.
+    func attach(onAudio: @escaping @Sendable (AVAudioPCMBuffer) -> Void, onFinish: @escaping @Sendable (Error?) -> Void) {
+        lock.withLock {
+            self.onAudio = onAudio
+            self.onFinish = onFinish
+        }
+    }
+
+    var isUsable: Bool { lock.withLock { !finished } && Date().timeIntervalSince(openedAt) < 25 }
 
     /// Feed text; `flush` forces generation of what's buffered (end of a sentence).
     func push(_ text: String, flush: Bool) {
@@ -102,7 +113,8 @@ final class StreamingTTS: @unchecked Sendable {
             lock.withLock { leftover = data.suffix(1) }
             data = data.dropLast()
         }
-        for b in Speaker.buffers(fromPCM16: data, format: format) { onAudio(b) }
+        let handler = lock.withLock { onAudio }
+        for b in Speaker.buffers(fromPCM16: data, format: format) { handler?(b) }
     }
 
     private func finish(_ error: Error?) {
@@ -112,6 +124,6 @@ final class StreamingTTS: @unchecked Sendable {
         }
         guard first else { return }
         task.cancel(with: .normalClosure, reason: nil)
-        onFinish(error)
+        lock.withLock { onFinish }?(error)
     }
 }

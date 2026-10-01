@@ -117,7 +117,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         objectWillChange.send()
         loop.onIntegrationSetup = { [weak self] id in self?.showSettings(tab: .integrations, integration: id) }
         loop.onRoutineStart = { [weak self] in self?.showDashboard(forceFront: true) }
-        loop.onCard = { card in CardWindows.shared.show(title: card.title, markdown: card.body) }
+        loop.onCard = { [weak self] card in
+            // Briefing/recap details belong to the dashboard; other cards get their own window.
+            if loop.routineMode, let self {
+                self.dashboardState.inlineCard = card
+                self.showDashboard(forceFront: true)
+            } else {
+                CardWindows.shared.show(title: card.title, markdown: card.body)
+            }
+        }
         loop.onSettingsChanged = { [weak self] cfg in
             Brand.shared.apply(cfg)
             WakeWord.configure(name: cfg.assistantName, aliases: cfg.wakeAliases)
@@ -278,6 +286,8 @@ final class DashboardState {
     var reviewing: DiffPayload?
     /// Agent whose live activity is open full-size.
     var theater: String?
+    /// Briefing / recap details shown inside the dashboard.
+    var inlineCard: CardPayload?
 }
 
 extension Notification.Name {

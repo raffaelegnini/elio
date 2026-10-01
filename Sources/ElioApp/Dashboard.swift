@@ -31,6 +31,31 @@ struct DashboardView: View {
             }
             .padding(.top, 104).padding(.horizontal, 18).padding(.bottom, 180)
 
+            if let card = state.inlineCard {
+                Movable(id: "briefing") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack {
+                            Rectangle().fill(Theme.accent).frame(width: 3, height: 12)
+                            Text(card.title.uppercased()).font(Theme.mono).tracking(2).foregroundStyle(Theme.dim)
+                            Spacer()
+                            Button { CardWindows.shared.show(title: card.title, markdown: card.body) } label: {
+                                Image(systemName: "macwindow.on.rectangle")
+                            }
+                            .buttonStyle(.plain).foregroundStyle(Theme.dim).help("Apri in una finestra")
+                            Button { state.inlineCard = nil } label: { Image(systemName: "xmark") }
+                                .buttonStyle(.plain).foregroundStyle(Theme.dim).help("Chiudi")
+                        }
+                        .padding(.horizontal, 14).padding(.top, 12).padding(.trailing, 22)
+                        HTMLView(markdown: card.body)
+                    }
+                    .frame(width: 520, height: 380)
+                    .glassCard()
+                }
+                .padding(.top, 104)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            }
+
             VStack {
                 Spacer()
                 if let running = runningTask, state.theater == nil {
@@ -43,7 +68,7 @@ struct DashboardView: View {
                         .onTapGesture { state.theater = running.id }
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                console
+                Movable(id: "console") { console }
             }
             .padding(.bottom, 18)
             .animation(.easeInOut(duration: 0.3), value: runningTask?.id)
@@ -104,6 +129,9 @@ struct DashboardView: View {
                 Chip(label: "VOCE \(loop.charactersThisSession)", on: true, help: "Caratteri ElevenLabs in questa sessione")
                 RoutineButton(title: "BRIEFING", icon: "sunrise.fill") { loop.submit(text: "briefing") }
                 RoutineButton(title: "RECAP", icon: "moon.stars.fill") { loop.submit(text: "recap della giornata") }
+                HeaderButton(icon: "rectangle.3.group", help: "Ripristina la disposizione dei pannelli") {
+                    NotificationCenter.default.post(name: .resetDashboardLayout, object: nil)
+                }
                 HeaderButton(icon: "clock.arrow.circlepath", help: "Archivio (⌥⌘A)") {
                     NotificationCenter.default.post(name: .openArchive, object: nil)
                 }
@@ -127,30 +155,34 @@ struct DashboardView: View {
 
     private var leftColumn: some View {
         VStack(spacing: 16) {
-            GlassPanel(title: "AGENDA DI OGGI", trailing: agenda.isEmpty ? nil : "\(agenda.count)") {
-                if agenda.isEmpty {
-                    Text(agendaNote ?? "Nessun impegno").font(.system(size: 12)).foregroundStyle(Theme.dim)
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 10) {
-                            ForEach(agenda) { AgendaRow(item: $0) }
+            Movable(id: "agenda") {
+                GlassPanel(title: "AGENDA DI OGGI", trailing: agenda.isEmpty ? nil : "\(agenda.count)") {
+                    if agenda.isEmpty {
+                        Text(agendaNote ?? "Nessun impegno").font(.system(size: 12)).foregroundStyle(Theme.dim)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(agenda) { AgendaRow(item: $0) }
+                            }
+                        }
+                        .scrollIndicators(.never)
+                    }
+                }
+            }
+            Movable(id: "promemoria") {
+                GlassPanel(title: "PROMEMORIA", trailing: reminders.isEmpty ? nil : "\(reminders.count)") {
+                    if reminders.isEmpty {
+                        Text("Nessun promemoria").font(.system(size: 12)).foregroundStyle(Theme.dim)
+                    }
+                    ForEach(reminders, id: \.self) { r in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "bell").font(.system(size: 10)).foregroundStyle(Theme.accent).padding(.top, 2)
+                            Text(r).font(.system(size: 12)).foregroundStyle(Theme.text)
                         }
                     }
-                    .scrollIndicators(.never)
                 }
+                .frame(maxHeight: 200)
             }
-            GlassPanel(title: "PROMEMORIA", trailing: reminders.isEmpty ? nil : "\(reminders.count)") {
-                if reminders.isEmpty {
-                    Text("Nessun promemoria").font(.system(size: 12)).foregroundStyle(Theme.dim)
-                }
-                ForEach(reminders, id: \.self) { r in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "bell").font(.system(size: 10)).foregroundStyle(Theme.accent).padding(.top, 2)
-                        Text(r).font(.system(size: 12)).foregroundStyle(Theme.text)
-                    }
-                }
-            }
-            .frame(maxHeight: 200)
             Spacer(minLength: 0)
         }
     }
@@ -197,7 +229,7 @@ struct DashboardView: View {
 
     private var rightColumn: some View {
         VStack(spacing: 16) {
-            GlassPanel(title: "WORKFLOW", trailing: runningCount > 0 ? "\(runningCount) attivi" : nil) {
+            Movable(id: "workflow") { GlassPanel(title: "WORKFLOW", trailing: runningCount > 0 ? "\(runningCount) attivi" : nil) {
                 if loop.tasks.isEmpty {
                     Text("Nessun agente al lavoro").font(.system(size: 12)).foregroundStyle(Theme.dim)
                 }
@@ -207,8 +239,8 @@ struct DashboardView: View {
                         .onTapGesture { state.theater = t.id }
                 }
             }
-            .frame(maxHeight: 260)
-            GlassPanel(title: "ATTIVITÀ NEURALE", trailing: nil) {
+            .frame(maxHeight: 260) }
+            Movable(id: "attivita") { GlassPanel(title: "ATTIVITÀ NEURALE", trailing: nil) {
                 if loop.activity.isEmpty {
                     Text("In attesa…").font(.system(size: 12)).foregroundStyle(Theme.dim)
                 }
@@ -218,9 +250,9 @@ struct DashboardView: View {
                     }
                 }
                 .scrollIndicators(.never)
-            }
+            } }
             if !loop.diffs.isEmpty {
-                GlassPanel(title: "DA REVISIONARE", trailing: "\(loop.diffs.count)") {
+                Movable(id: "revisione") { GlassPanel(title: "DA REVISIONARE", trailing: "\(loop.diffs.count)") {
                     ForEach(Array(loop.diffs.prefix(3).enumerated()), id: \.offset) { _, d in
                         Button { state.reviewing = d } label: {
                             HStack {
@@ -233,7 +265,7 @@ struct DashboardView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                }
+                } }
             }
         }
     }

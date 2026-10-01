@@ -51,19 +51,30 @@ public actor Brain {
     }
 
     /// Runs a proactive prompt through the conversation session and speaks the result.
+    /// Runs a proactive prompt and streams it live: the app speaks each sentence as Claude writes it,
+    /// between tool calls, so the briefing is told while the information is being gathered.
     public func runRoutine(kind: String, prompt: String) async {
         var text = ""
         do {
             for try await event in await claude.ask(Self.withContext(prompt)) {
-                if case .done(let full, _) = event { text = full }
+                switch event {
+                case .delta(let chunk):
+                    broadcast(ServerMessage(type: .event, text: chunk, kind: "routineDelta"))
+                case .tool(let name, let toolId, let started):
+                    broadcast(ServerMessage(type: .event, id: toolId, text: name, kind: "tool",
+                                            payload: started ? "{\"phase\":\"start\"}" : "{\"phase\":\"end\"}"))
+                case .done(let full, _):
+                    text = full
+                }
             }
         } catch {
             log("routine \(kind) failed: \(error)")
-            return
         }
+        broadcast(ServerMessage(type: .event, kind: "routineDone"))
         guard !text.isEmpty else { return }
         await memory.log(role: "assistant", text: text, route: "routine:\(kind)")
-        broadcast(ServerMessage(type: .event, text: text, lang: .it, kind: kind, speak: true))
+        // Already spoken live by the app; this one is for the archive, the phone and notifications.
+        broadcast(ServerMessage(type: .event, text: text, lang: .it, kind: kind, speak: true, isError: false))
     }
 
     /// Speaks a fixed message (no Claude round-trip).

@@ -46,6 +46,17 @@ public final class VoiceLoop {
     /// When each tool first fired during the current routine.
     public private(set) var litTools: [String: Date] = [:]
     private var routineSpeaking = false
+    private var routineLive = false
+    private var routineStreaming = false
+    private var routineText = ""
+    private var routineSplitter = SentenceSplitter()
+
+    static func greeting(addressAs: String, brief: Bool) -> String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let hello = hour < 13 ? "Buongiorno" : hour < 18 ? "Buon pomeriggio" : "Buonasera"
+        return brief ? "\(hello), \(addressAs). Le preparo un riassunto della giornata."
+                     : "\(hello), \(addressAs). Le faccio il riassunto di oggi."
+    }
     public var alwaysListening = true
     /// Background agents, newest last.
     public private(set) var tasks: [TaskInfo] = []
@@ -244,7 +255,10 @@ public final class VoiceLoop {
                 if let format, !self.muted { Task { try? await self.stt?.start(inputFormat: format) } }
             }
             state = muted ? .muted : .listening
-            speaker.warmCache(Self.acks + Acknowledgement.all(addressAs: addressAs))
+            speaker.warmCache(Self.acks + Acknowledgement.all(addressAs: addressAs)
+                              + ["Buongiorno", "Buon pomeriggio", "Buonasera"].flatMap { h in
+                                  ["\(h), \(addressAs). Le preparo un riassunto della giornata.",
+                                   "\(h), \(addressAs). Le faccio il riassunto di oggi."] })
         } catch {
             lastError = "Audio: \(error.localizedDescription)"
             state = .off
@@ -383,7 +397,7 @@ public final class VoiceLoop {
             // Drop what the recognizer heard before (background, Elio's own voice).
             stt?.resetSegment()
             partial = ""
-            if utteranceArmed, state != .thinking { state = .hearing }
+            if utteranceArmed, state != .thinking { state = .hearing; speaker.prewarm() }
         case .speechEnd:
             guard inUtterance else { return }
             inUtterance = false
@@ -445,6 +459,7 @@ public final class VoiceLoop {
             partial = text
         } else if WakeWord.strip(text) != nil {
             wakeSeen = true
+            speaker.prewarm()
             partial = text
             if state != .thinking { state = .hearing }
         }
@@ -594,14 +609,42 @@ public final class VoiceLoop {
     private func handleEvent(_ msg: ServerMessage) {
         switch msg.kind {
         case "briefStart", "recapStart":
-            if briefOpeningEnabled, msg.kind == "briefStart" { playOpening() }
+            let isBrief = msg.kind == "briefStart"
+            if briefOpeningEnabled, isBrief { playOpening() }
             routineMode = true
             litTools = [:]
-            onRoutineStart?()
             routineSpeaking = false
-        case "brief", "recap":
+            onRoutineStart?()
+            // Greeting right away (cached), the theme dips under it; then Elio tells the briefing live.
+            duckOpening()
+            speaker.enqueue(Self.greeting(addressAs: addressAs, brief: isBrief))
+            speaker.endUtterance()
+            routineSplitter = SentenceSplitter()
+            routineText = ""
+            routineLive = true
+            turns.append(Turn(role: "elio", text: ""))
+        case "routineDelta":
+            guard routineLive, let chunk = msg.text else { break }
+            if routineText.isEmpty {
+                fadeOpening()
+                routineStreaming = speaker.beginStream()
+            }
+            routineText += chunk
+            if let i = turns.lastIndex(where: { $0.role == "elio" }) { turns[i].text = routineText }
+            for sentence in routineSplitter.push(chunk) {
+                if routineStreaming { speaker.streamSentence(sentence) } else { speaker.enqueue(sentence) }
+            }
+        case "routineDone":
+            if let rest = routineSplitter.flush() {
+                if routineStreaming { speaker.streamSentence(rest) } else { speaker.enqueue(rest) }
+            }
+            if routineStreaming { speaker.endStream() } else { speaker.endUtterance() }
+            routineStreaming = false
+            routineLive = false
             routineSpeaking = true
-            fadeOpening()  // the theme fades out under the briefing voice, not under anything else
+        case "brief", "recap":
+            // Already told live; keep it only for history.
+            return
         case "taskLog":
             if let entry = TaskLogEntry.fromJSON(msg.payload) {
                 var log = taskLogs[entry.taskId] ?? []
@@ -686,11 +729,7 @@ public final class VoiceLoop {
         guard msg.speak == true, let text = msg.text else { return }
         turns.append(Turn(role: "event", text: text, route: msg.route))
         spokenText = text
-        // Split long proactive messages (briefing) so the voice starts on the first sentence.
-        var splitter = SentenceSplitter()
-        for sentence in splitter.push(text + " ") { speaker.enqueue(sentence, lang: msg.lang) }
-        if let rest = splitter.flush() { speaker.enqueue(rest, lang: msg.lang) }
-        speaker.endUtterance()
+        speaker.say(text, lang: msg.lang)
         trimTurns()
     }
 
@@ -773,6 +812,11 @@ public final class VoiceLoop {
         player.volume = 0.8
         player.play()
         opening = player
+    }
+
+    /// The greeting plays over the theme: lower it, keep it going until the briefing starts.
+    private func duckOpening() {
+        opening?.setVolume(0.25, fadeDuration: 0.6)
     }
 
     /// Elio starts talking: the theme fades out under the voice.

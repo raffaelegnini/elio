@@ -85,8 +85,16 @@ public final class Speaker {
         let (buffers, sink) = AsyncThrowingStream<AVAudioPCMBuffer, Error>.makeStream()
         streamSink = sink
         let job = SentenceJob(text: "stream", buffers: buffers)
-        stream = StreamingTTS(
-            apiKey: apiKey, voiceId: voiceId, model: model, format: audio.playbackFormat,
+        // Reuse a socket opened while the user was still talking: no handshake on the critical path.
+        let tts: StreamingTTS
+        if let warm = warmStream, warm.isUsable {
+            tts = warm
+        } else {
+            warmStream?.cancel()
+            tts = StreamingTTS(apiKey: apiKey, voiceId: voiceId, model: model, format: audio.playbackFormat)
+        }
+        warmStream = nil
+        tts.attach(
             onAudio: { [weak self] buffer in
                 sink.yield(buffer)
                 Task { @MainActor in self?.streamAudioArrived(job, generation: gen) }
@@ -94,8 +102,31 @@ public final class Speaker {
             onFinish: { [weak self] error in
                 Task { @MainActor in self?.streamFinished(error, job: job, generation: gen) }
             })
+        stream = tts
         utteranceOpen = true
         return true
+    }
+
+    private var warmStream: StreamingTTS?
+
+    /// Opens the ElevenLabs socket ahead of time (the user started talking to Elio).
+    public func prewarm() {
+        guard let apiKey, stream == nil, warmStream?.isUsable != true else { return }
+        warmStream = StreamingTTS(apiKey: apiKey, voiceId: voiceId, model: model, format: audio.playbackFormat)
+    }
+
+    /// Says a text through the streaming socket when long (smoother), from cache/HTTP when short.
+    public func say(_ text: String, lang: Lang? = nil) {
+        var splitter = SentenceSplitter()
+        var sentences = splitter.push(text + " ")
+        if let rest = splitter.flush() { sentences.append(rest) }
+        if sentences.count >= 2, stream == nil, beginStream() {
+            for s in sentences { streamSentence(s) }
+            endStream()
+        } else {
+            for s in sentences { enqueue(s, lang: lang) }
+            endUtterance()
+        }
     }
 
     /// Text of the reply as it arrives (whole sentences work best).
