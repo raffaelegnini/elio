@@ -1,0 +1,219 @@
+import AppKit
+import JarvisVoice
+import SwiftUI
+
+/// Floating, non-activating panel in the top-right corner. Appears when Jarvis is engaged.
+@MainActor
+final class HUDController {
+    private var panel: HUDPanel?
+    private var hideTask: Task<Void, Never>?
+    private var pinned = false
+
+    func attach(_ loop: VoiceLoop) {
+        let panel = HUDPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 520))
+        let host = NSHostingView(rootView: HUDView(loop: loop, close: { [weak self] in self?.hide() }))
+        host.wantsLayer = true
+        host.layer?.cornerRadius = 22
+        host.layer?.masksToBounds = true
+        panel.contentView = host
+        self.panel = panel
+    }
+
+    func show(pinned: Bool) {
+        guard let panel else { return }
+        hideTask?.cancel()
+        self.pinned = self.pinned || pinned
+        if !panel.isVisible {
+            position(panel)
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { $0.duration = 0.18; panel.animator().alphaValue = 1 }
+        }
+    }
+
+    func scheduleHide(after seconds: Double) {
+        guard !pinned else { return }
+        hideTask?.cancel()
+        hideTask = Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            if !Task.isCancelled { hide() }
+        }
+    }
+
+    func hide() {
+        pinned = false
+        guard let panel, panel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.25; panel.animator().alphaValue = 0 }) {
+            Task { @MainActor in panel.orderOut(nil) }
+        }
+    }
+
+    private func position(_ panel: NSPanel) {
+        guard let screen = NSScreen.main?.visibleFrame else { return }
+        panel.setFrameOrigin(NSPoint(x: screen.maxX - panel.frame.width - 16, y: screen.maxY - panel.frame.height - 12))
+    }
+}
+
+final class HUDPanel: NSPanel {
+    init(contentRect: NSRect) {
+        super.init(contentRect: contentRect, styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
+                   backing: .buffered, defer: false)
+        isFloatingPanel = true
+        level = .floating
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        isMovableByWindowBackground = true
+        hidesOnDeactivate = false
+    }
+
+    override var canBecomeKey: Bool { true }
+}
+
+struct HUDView: View {
+    let loop: VoiceLoop
+    let close: () -> Void
+    @State private var input = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            OrbView(state: loop.state, level: loop.level)
+                .frame(height: 210)
+                .contentShape(Circle())
+                .onTapGesture { loop.activate() }
+            status
+            conversation
+            inputBar
+        }
+        .background(
+            ZStack {
+                VisualEffect()
+                Theme.panel
+                LinearGradient(colors: [Theme.tint(loop.state).opacity(0.10), .clear], startPoint: .top, endPoint: .center)
+            }
+        )
+        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Theme.line, lineWidth: 1))
+        .preferredColorScheme(.dark)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Circle().fill(loop.connected ? Theme.cyan : .red).frame(width: 6, height: 6)
+                .shadow(color: loop.connected ? Theme.cyan : .red, radius: 4)
+            Text("J.A.R.V.I.S.").font(.system(size: 11, weight: .semibold, design: .monospaced)).tracking(3)
+                .foregroundStyle(Theme.text)
+            Spacer()
+            Text(loop.charactersThisSession > 0 ? "\(loop.charactersThisSession) CHR" : "")
+                .font(Theme.mono).foregroundStyle(Theme.dim)
+            Button(action: close) {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.dim)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16).padding(.top, 14)
+    }
+
+    private var status: some View {
+        VStack(spacing: 6) {
+            Text(loop.state.label.uppercased())
+                .font(.system(size: 11, weight: .semibold, design: .monospaced)).tracking(2.5)
+                .foregroundStyle(Theme.tint(loop.state))
+            Text(loop.partial.isEmpty ? hint : loop.partial)
+                .font(.system(size: 13)).foregroundStyle(loop.partial.isEmpty ? Theme.dim : Theme.text)
+                .multilineTextAlignment(.center).lineLimit(2)
+                .frame(minHeight: 34)
+            if let err = loop.lastError {
+                Text(err).font(Theme.mono).foregroundStyle(.orange).lineLimit(2)
+            }
+        }
+        .padding(.horizontal, 20)
+    }
+
+    private var hint: String {
+        loop.alwaysListening ? "Di' \"Jarvis…\" oppure ⌥⌘J" : "Premi ⌥⌘J per parlare"
+    }
+
+    private var conversation: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(loop.turns.suffix(12)) { turn in
+                        TurnRow(turn: turn).id(turn.id)
+                    }
+                }
+                .padding(.horizontal, 16).padding(.vertical, 8)
+            }
+            .scrollIndicators(.never)
+            .onChange(of: loop.turns.last?.text) {
+                if let id = loop.turns.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            }
+        }
+        .frame(maxHeight: .infinity)
+        .mask(LinearGradient(colors: [.clear, .black, .black], startPoint: .top, endPoint: .init(x: 0.5, y: 0.15)))
+    }
+
+    private var inputBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.cyan)
+            TextField("Scrivi a Jarvis…", text: $input)
+                .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.text)
+                .onSubmit {
+                    loop.submit(text: input)
+                    input = ""
+                }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
+        .padding(12)
+    }
+}
+
+struct TurnRow: View {
+    let turn: VoiceLoop.Turn
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(label).font(Theme.mono).tracking(1.5).foregroundStyle(color)
+                if let ms = turn.latencyMs, let route = turn.route {
+                    Text("· \(route.rawValue) \(ms)ms").font(Theme.mono).foregroundStyle(Theme.dim.opacity(0.7))
+                }
+            }
+            Text(turn.text.isEmpty ? "…" : turn.text)
+                .font(.system(size: 13)).foregroundStyle(turn.role == "user" ? Theme.dim : Theme.text)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var label: String {
+        switch turn.role {
+        case "user": "TU"
+        case "event": "AVVISO"
+        default: "JARVIS"
+        }
+    }
+
+    private var color: Color {
+        switch turn.role {
+        case "user": Theme.dim
+        case "event": .orange
+        default: Theme.cyan
+        }
+    }
+}
+
+struct VisualEffect: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material = .hudWindow
+        v.blendingMode = .behindWindow
+        v.state = .active
+        return v
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
