@@ -152,7 +152,7 @@ struct DashboardView: View {
 
     private var leftColumn: some View {
         VStack(spacing: 16) {
-            Movable(id: "agenda") {
+            Movable(id: "agenda", dormant: off(.agenda)) {
                 GlassPanel(title: "AGENDA DI OGGI", trailing: agenda.isEmpty ? nil : "\(agenda.count)") {
                     if agenda.isEmpty {
                         Text(agendaNote ?? "Nessun impegno").font(.system(size: 12)).foregroundStyle(Theme.dim)
@@ -166,7 +166,7 @@ struct DashboardView: View {
                     }
                 }
             }
-            Movable(id: "promemoria") {
+            Movable(id: "promemoria", dormant: off(.promemoria)) {
                 GlassPanel(title: "PROMEMORIA", trailing: reminders.isEmpty ? nil : "\(reminders.count)") {
                     if reminders.isEmpty {
                         Text("Nessun promemoria").font(.system(size: 12)).foregroundStyle(Theme.dim)
@@ -226,7 +226,7 @@ struct DashboardView: View {
 
     private var rightColumn: some View {
         VStack(spacing: 16) {
-            Movable(id: "workflow") { GlassPanel(title: "WORKFLOW", trailing: runningCount > 0 ? "\(runningCount) attivi" : nil) {
+            Movable(id: "workflow", dormant: off(.agenti)) { GlassPanel(title: "WORKFLOW", trailing: runningCount > 0 ? "\(runningCount) attivi" : nil) {
                 if loop.tasks.isEmpty {
                     Text("Nessun agente al lavoro").font(.system(size: 12)).foregroundStyle(Theme.dim)
                 }
@@ -249,7 +249,7 @@ struct DashboardView: View {
                 .scrollIndicators(.never)
             } }
             if !loop.diffs.isEmpty {
-                Movable(id: "revisione") { GlassPanel(title: "DA REVISIONARE", trailing: "\(loop.diffs.count)") {
+                Movable(id: "revisione", dormant: off(.codice)) { GlassPanel(title: "DA REVISIONARE", trailing: "\(loop.diffs.count)") {
                     ForEach(Array(loop.diffs.prefix(3).enumerated()), id: \.offset) { _, d in
                         Button { state.reviewing = d } label: {
                             HStack {
@@ -280,6 +280,11 @@ struct DashboardView: View {
                 .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
                 .padding(.horizontal, 20).padding(.bottom, 20)
         }
+    }
+
+    /// Briefing in progress and this panel's source not consulted yet: it stays "switched off".
+    private func off(_ cap: Capability) -> Bool {
+        loop.routineMode && !loop.litTools.keys.contains { Capability.of(tool: $0) == cap }
     }
 
     private var runningTask: TaskInfo? {
