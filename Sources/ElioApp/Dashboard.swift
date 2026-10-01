@@ -168,10 +168,16 @@ struct DashboardView: View {
                 Text(loop.state.label.uppercased())
                     .font(.system(size: 12, weight: .semibold, design: .monospaced)).tracking(4)
                     .foregroundStyle(Theme.tint(loop.state))
-                SecretAwareText(text: loop.partial.isEmpty ? lastReply : loop.partial, font: .system(size: 14),
-                                color: loop.partial.isEmpty ? Theme.dim : Theme.text)
-                    .multilineTextAlignment(.center).lineLimit(3)
-                    .frame(maxWidth: 560)
+                // Long replies scroll inside a fixed area instead of spilling over the input field.
+                ScrollView {
+                    SecretAwareText(text: loop.partial.isEmpty ? lastReply : loop.partial, font: .system(size: 14),
+                                    color: loop.partial.isEmpty ? Theme.dim : Theme.text)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                }
+                .scrollIndicators(.automatic)
+                .frame(maxWidth: 560, maxHeight: 96)
+                .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 10) {
                     Image(systemName: "chevron.right").foregroundStyle(Theme.accent)
                     TextField("Scrivi a \(Brand.shared.name)…", text: $input)
