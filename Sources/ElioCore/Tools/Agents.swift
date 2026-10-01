@@ -206,6 +206,8 @@ public actor TaskRunner {
         self.config = config
         self.mcpConfig = mcpConfig
         self.memory = memory
+        // Agents orphaned by a previous daemon (crash, update) can no longer report or ask: stop them.
+        _ = try? shell("/usr/bin/pkill", ["-P", "1", "-f", "claude -p Sei .*(un agente di Elio|squadra coordinata da Elio)"])
     }
 
     public func setBroadcast(_ b: @escaping @Sendable (ServerMessage) -> Void) { broadcast = b }
@@ -334,8 +336,10 @@ public actor TaskRunner {
                 usageByCall[id] = calls
                 let base = baseUsage[id] ?? (tasks[id]?.info.tokensIn ?? 0, tasks[id]?.info.tokensOut ?? 0)
                 baseUsage[id] = base
-                tasks[id]?.info.tokensIn = base.0 + calls.values.reduce(0) { $0 + $1.0 }
-                tasks[id]?.info.tokensOut = base.1 + calls.values.reduce(0) { $0 + $1.1 }
+                let tokIn = base.0 + calls.values.reduce(0) { $0 + $1.0 }
+                let tokOut = base.1 + calls.values.reduce(0) { $0 + $1.1 }
+                tasks[id]?.info.tokensIn = tokIn
+                tasks[id]?.info.tokensOut = tokOut
             }
             let content = ((ev["message"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
             for block in content {
@@ -373,7 +377,11 @@ public actor TaskRunner {
             let text = ev["result"] as? String ?? ""
             tasks[id]?.info.summary = text
             if ev["is_error"] as? Bool == true { tasks[id]?.info.status = .failed }
-            if let cost = ev["total_cost_usd"] as? Double { tasks[id]?.info.costUSD = (tasks[id]?.info.costUSD ?? 0) + cost }
+            // Read first, then write: `tasks[id]?.x = tasks[id]?.x + …` is an exclusivity violation (crash).
+            if let cost = ev["total_cost_usd"] as? Double {
+                let previous = tasks[id]?.info.costUSD ?? 0
+                tasks[id]?.info.costUSD = previous + cost
+            }
             if let sid = ev["session_id"] as? String { tasks[id]?.info.sessionId = sid }
         default:
             break

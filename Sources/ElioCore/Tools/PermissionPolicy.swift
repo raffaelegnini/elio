@@ -60,8 +60,10 @@ public enum PermissionPolicy {
         if cmd.contains("$(") || cmd.contains("`") || cmd.range(of: #"(^|[^0-9&])>{1,2}\s*[^&\s]"#, options: .regularExpression) != nil {
             return .confirm(.normal)
         }
-        let parts = cmd.components(separatedBy: CharacterSet(charactersIn: ";|&"))
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let parts = cmd.replacingOccurrences(of: #"\s+2>(/dev/null|&1)"#, with: "", options: .regularExpression)
+            .splitOutsideQuotes(";|&")
+            // Grouping parentheses/braces don't change what runs: `(git checkout x || git checkout -b x)`.
+            .map { $0.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "(){}"))) }
             .filter { !$0.isEmpty }
         let allSafe = parts.allSatisfy { part in
             // A safe command can still be turned into code execution / file writes by its options
@@ -96,8 +98,9 @@ public enum PermissionPolicy {
 
     private static func isInside(_ path: String, _ dir: String) -> Bool {
         guard !path.isEmpty, !dir.isEmpty else { return false }
-        let p = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: dir)).standardizedFileURL.path
-        let d = URL(fileURLWithPath: dir).standardizedFileURL.path
+        // Symlinks resolved on both sides (/tmp → /private/tmp, ~/Desktop aliases).
+        let p = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: dir)).standardizedFileURL.resolvingSymlinksInPath().path
+        let d = URL(fileURLWithPath: dir).standardizedFileURL.resolvingSymlinksInPath().path
         return p == d || p.hasPrefix(d.hasSuffix("/") ? d : d + "/")
     }
 
@@ -175,6 +178,7 @@ public enum PermissionPolicy {
         #"^(swift\s+(build|test)|xcodebuild)(\s+[\w./:=-]+)*$"#,
         #"^make\s+(test|lint|check|build)$"#,
         #"^(python3?\s+-m\s+(pytest|mypy|ruff)|pytest|ruff|mypy)(\s+[\w./:=-]+)*$"#,
+        #"^(python3?\s+-c|node\s+-e)\s+('[^']*'|"[^"]*")$"#,
     ]
 
     /// Read-only or local, reversible developer commands. Every pattern is anchored at both ends and
@@ -188,6 +192,7 @@ public enum PermissionPolicy {
         #"^git\s+commit(\s+(-m|-a|-am|--all|--message)?\s*('[^']*'|"[^"]*"|[\w.-]+))+$"#,
         #"^git\s+(checkout\s+-b|switch\s+-c)\s+[\w./-]+$"#,
         #"^git\s+switch\s+[\w./-]+$"#,
+        #"^git\s+checkout\s+elio/[\w./-]+$"#,
         #"^(ls|pwd|cat|head|tail|wc|uniq|cut|diff|file|which|echo|printf|date|stat|du|basename|dirname|realpath|cal|mdls|pdfinfo|textutil\s+-info|lpstat)(\s+('[^']*'|"[^"]*"|[\w./@:=+,*~-]+))*$"#,
         #"^(grep|rg|ag|fd)(\s+('[^']*'|"[^"]*"|[^\s;&|<>`$]+))*$"#,
         #"^(jq|yq)(\s+('[^']*'|"[^"]*"|[\w./@:=,-]+))*$"#,
@@ -199,4 +204,26 @@ public enum PermissionPolicy {
         #"^swift\s+package\s+(resolve|describe)$"#,
         #"^(node|python3?)\s+--version$"#,
     ]
+}
+
+extension String {
+    /// Splits on any of `separators`, except inside '…' or "…" (a `;` in a quoted script is not a new command).
+    func splitOutsideQuotes(_ separators: String) -> [String] {
+        var out: [String] = [], cur = "", quote: Character?
+        for ch in self {
+            if let q = quote {
+                cur.append(ch)
+                if ch == q { quote = nil }
+            } else if ch == "'" || ch == "\"" {
+                quote = ch
+                cur.append(ch)
+            } else if separators.contains(ch) {
+                out.append(cur); cur = ""
+            } else {
+                cur.append(ch)
+            }
+        }
+        out.append(cur)
+        return out
+    }
 }
