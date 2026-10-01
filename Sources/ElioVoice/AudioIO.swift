@@ -23,7 +23,7 @@ public final class AudioIO: @unchecked Sendable {
     /// Echo cancellation on the mic when Elio plays through the speakers: macOS removes what the
     /// speakers emit (measured: Elio's voice drops from +12 dB to below room noise), so anything the
     /// mic still hears while Elio talks is the user. Not used with headphones (no echo there).
-    public var echoCancellation = true
+    public var echoCancellation = false
     public private(set) var aecActive = false
     private var observers: [NSObjectProtocol] = []
 

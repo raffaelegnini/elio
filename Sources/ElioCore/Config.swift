@@ -33,7 +33,7 @@ public struct ElioConfig: Codable, Sendable {
     public var nudgeMissedMeetings: Bool = true
     public var repeatReminders: Bool = true
     public var confirmCodeExecution: Bool = false
-    public var echoCancellation: Bool = true
+    public var echoCancellation: Bool = false
     public var browserAutonomy: Bool = true
     /// Only the enrolled owner's voice can command or interrupt Elio.
     public var speakerVerification: Bool = true
