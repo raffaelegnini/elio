@@ -11,13 +11,15 @@ public actor Brain {
     public let gate = ConfirmationGate()
     public let scheduler: Scheduler
     public let tasks: TaskRunner
+    public let routines: Routines
 
     public init(config: JarvisConfig, memory: Memory, executablePath: String) async {
         self.config = config
         self.memory = memory
         let mcp = Self.mcpConfig(executablePath: executablePath)
         scheduler = Scheduler(memory: memory)
-        tasks = TaskRunner(config: config, mcpConfig: mcp)
+        tasks = TaskRunner(config: config, mcpConfig: mcp, memory: memory)
+        routines = Routines(config: config, memory: memory)
         var options = ClaudeBridge.Options(
             claudePath: config.claudePath,
             model: config.claudeModel,
@@ -33,8 +35,32 @@ public actor Brain {
         let send: @Sendable (ServerMessage) -> Void = { hub.send($0) }
         await gate.setBroadcast(send)
         await tasks.setBroadcast(send)
+        await scheduler.attach(tasks: tasks)
         await scheduler.start(broadcast: send)
         do { try await claude.warmUp() } catch { log("claude warm-up failed: \(error)") }
+        await routines.start(brain: self)
+    }
+
+    /// Runs a proactive prompt through the conversation session and speaks the result.
+    public func runRoutine(kind: String, prompt: String) async {
+        var text = ""
+        do {
+            for try await event in await claude.ask(Self.withContext(prompt)) {
+                if case .done(let full, _) = event { text = full }
+            }
+        } catch {
+            log("routine \(kind) failed: \(error)")
+            return
+        }
+        guard !text.isEmpty else { return }
+        await memory.log(role: "assistant", text: text, route: "routine:\(kind)")
+        broadcast(ServerMessage(type: .event, text: text, lang: .it, kind: kind, speak: true))
+    }
+
+    /// Speaks a fixed message (no Claude round-trip).
+    public func announce(kind: String, text: String) async {
+        await memory.log(role: "assistant", text: text, route: "routine:\(kind)")
+        broadcast(ServerMessage(type: .event, text: text, lang: .it, kind: kind, speak: true))
     }
 
     public func shutdown() async { await claude.shutdown() }
@@ -124,6 +150,9 @@ public actor Brain {
             return Replies.volume(change, level: level, m.lang)
         case .stop:
             return Replies.stopped(m.lang)
+        case .brief:
+            Task { await routines.runBrief() }
+            return m.lang == .it ? "Preparo il briefing." : "Preparing your briefing."
         }
     }
 
@@ -165,6 +194,7 @@ public actor Brain {
         - calendar_events per agenda e impegni; join_next_meeting per preparare un Google Meet.
         - set_reminder / list_reminders per i promemoria (calcola tu l'orario esatto dal contesto).
         - open_app / open_url per aprire cose sul Mac.
+        - schedule_task per lavori da fare più tardi o di notte ("stanotte sistema…"); night_recap per i risultati.
         - list_projects, start_task per lavori lunghi su codice (correzioni, test, review, branch pronti da revisionare): \
         avvialo e rispondi subito che ci stai lavorando; l'utente verrà avvisato alla fine. list_tasks / cancel_task per lo stato.
         - show_diff per mostrare a schermo le modifiche di un branch; show_on_screen per dettagli lunghi o tecnici: \
@@ -179,6 +209,8 @@ public actor Brain {
         - Non inventare mai dati personali (calendario, mail, task, messaggi): usa gli strumenti o di' che non lo sai.
         - Non dire di aver fatto qualcosa se lo strumento non l'ha confermato.
         - Ogni messaggio inizia con [contesto: data e ora attuali]; usalo, non citarlo.
+        - I messaggi che iniziano con [routine: …] sono attività proattive avviate da te, non dall'utente: \
+        eseguile e rispondi come se parlassi tu per primo.
         """
     }
 }

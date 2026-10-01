@@ -48,6 +48,8 @@ public enum ToolRegistry {
         ProjectTools.list,
         ProjectTools.showDiff,
         TaskTools.start,
+        TaskTools.schedule,
+        RoutineTools.brief,
         TaskTools.list,
         TaskTools.cancel,
         ScreenTools.show,

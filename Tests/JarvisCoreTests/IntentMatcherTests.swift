@@ -17,6 +17,8 @@ struct IntentMatcherTests {
         ("alza il volume", .volume(.up), .it),
         ("mute", .volume(.mute), .en),
         ("Basta", .stop, .it),
+        ("Jarvis, fammi il briefing", .brief, .it),
+        ("recap della notte", .brief, .it),
     ])
     func matches(input: String, intent: LocalIntent, lang: Lang) {
         #expect(m.match(input) == MatchedIntent(intent: intent, lang: lang))

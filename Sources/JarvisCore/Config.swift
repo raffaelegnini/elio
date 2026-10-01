@@ -12,6 +12,11 @@ public struct JarvisConfig: Codable, Sendable {
     public var agentModel: String = "opus"
     /// Where to look for git repositories.
     public var projectRoots: [String] = ["~/Desktop/dev"]
+    /// Morning brief: on the first unlock after `briefEarliest` on weekdays, or at `briefLatest`.
+    public var briefEarliest: String = "07:30"
+    public var briefLatest: String = "09:30"
+    /// Open the Meet pre-join this many minutes before a meeting (0 = off).
+    public var meetingLeadMinutes: Int = 2
 
     public init() {}
 
@@ -27,6 +32,9 @@ public struct JarvisConfig: Codable, Sendable {
         elevenLabsModel = try c.decodeIfPresent(String.self, forKey: .elevenLabsModel) ?? d.elevenLabsModel
         agentModel = try c.decodeIfPresent(String.self, forKey: .agentModel) ?? d.agentModel
         projectRoots = try c.decodeIfPresent([String].self, forKey: .projectRoots) ?? d.projectRoots
+        briefEarliest = try c.decodeIfPresent(String.self, forKey: .briefEarliest) ?? d.briefEarliest
+        briefLatest = try c.decodeIfPresent(String.self, forKey: .briefLatest) ?? d.briefLatest
+        meetingLeadMinutes = try c.decodeIfPresent(Int.self, forKey: .meetingLeadMinutes) ?? d.meetingLeadMinutes
     }
 
     static func defaultClaudePath() -> String {

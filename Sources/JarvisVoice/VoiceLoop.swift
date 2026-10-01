@@ -286,7 +286,10 @@ public final class VoiceLoop {
         }
         guard msg.speak == true, let text = msg.text else { return }
         turns.append(Turn(role: "event", text: text, route: msg.route))
-        speaker.enqueue(text, lang: msg.lang)
+        // Split long proactive messages (briefing) so the voice starts on the first sentence.
+        var splitter = SentenceSplitter()
+        for sentence in splitter.push(text + " ") { speaker.enqueue(sentence, lang: msg.lang) }
+        if let rest = splitter.flush() { speaker.enqueue(rest, lang: msg.lang) }
         speaker.endUtterance()
         trimTurns()
     }

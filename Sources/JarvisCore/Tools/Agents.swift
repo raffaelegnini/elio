@@ -97,8 +97,11 @@ public actor Scheduler {
     private let memory: Memory
     private var broadcast: (@Sendable (ServerMessage) -> Void)?
     private var loop: Task<Void, Never>?
+    private var tasks: TaskRunner?
 
     public init(memory: Memory) { self.memory = memory }
+
+    public func attach(tasks: TaskRunner) { self.tasks = tasks }
 
     public func start(broadcast: @escaping @Sendable (ServerMessage) -> Void) {
         self.broadcast = broadcast
@@ -119,6 +122,14 @@ public actor Scheduler {
     }
 
     private func fireDue() async {
+        for job in await memory.scheduledTasks(dueBefore: Date()) {
+            await memory.markScheduledTaskDone(job.id)
+            do {
+                _ = try await tasks?.start(title: job.title, prompt: job.prompt, cwd: job.cwd)
+            } catch {
+                log("scheduled task failed to start: \(error)")
+            }
+        }
         for r in await memory.reminders(dueBefore: Date()) {
             await memory.markReminderDone(r.id)
             let text = "Promemoria: \(r.text)."
@@ -145,9 +156,12 @@ public actor TaskRunner {
     private var finished: [TaskInfo] = []
     private var broadcast: (@Sendable (ServerMessage) -> Void)?
 
-    public init(config: JarvisConfig, mcpConfig: String) {
+    private let memory: Memory?
+
+    public init(config: JarvisConfig, mcpConfig: String, memory: Memory? = nil) {
         self.config = config
         self.mcpConfig = mcpConfig
+        self.memory = memory
     }
 
     public func setBroadcast(_ b: @escaping @Sendable (ServerMessage) -> Void) { broadcast = b }
@@ -250,6 +264,8 @@ public actor TaskRunner {
         finished.append(t.info)
         if finished.count > 20 { finished.removeFirst() }
         broadcastTask(t.info)
+        let record = t.info
+        if let memory { Task { await memory.recordTask(record) } }
 
         let summary = Self.spokenSummary(t.info.summary)
         let text: String
@@ -314,6 +330,28 @@ public actor TaskRunner {
 }
 
 public enum TaskTools {
+    static let schedule = JarvisTool(
+        name: "schedule_task",
+        description: "Programma un task in background per più tardi (es. 'stanotte'): parte all'orario indicato e il risultato finisce nel recap del mattino.",
+        properties: [
+            "title": prop("Titolo breve del task"),
+            "prompt": prop("Istruzioni complete per l'agente"),
+            "project_path": prop("Percorso assoluto del repository"),
+            "at": prop("Quando avviarlo, ISO8601 con fuso orario"),
+        ],
+        required: ["title", "prompt", "project_path", "at"]
+    ) { args, ctx in
+        let path = expandPath(args["project_path"] as? String ?? "")
+        guard FileManager.default.fileExists(atPath: path) else { throw ToolError("Cartella non trovata: \(path)") }
+        guard let at = (args["at"] as? String).flatMap(parseDate) else { throw ToolError("Orario non valido") }
+        await ctx.memory.addScheduledTask(at: at, title: args["title"] as? String ?? "Task",
+                                          prompt: args["prompt"] as? String ?? "", cwd: path)
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "it_IT")
+        f.dateFormat = "EEEE 'alle' HH:mm"
+        return "Task programmato per \(f.string(from: at))."
+    }
+
     static let start = JarvisTool(
         name: "start_task",
         description: """

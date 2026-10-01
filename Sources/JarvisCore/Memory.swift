@@ -31,6 +31,22 @@ public actor Memory {
                 route TEXT
             );
             CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                at REAL NOT NULL,
+                title TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                cwd TEXT NOT NULL,
+                done INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS task_history (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                project TEXT,
+                status TEXT NOT NULL,
+                summary TEXT,
+                ended REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 at REAL NOT NULL,
@@ -96,6 +112,58 @@ public actor Memory {
 
     public func markReminderDone(_ id: Int) {
         run("UPDATE reminders SET done = 1 WHERE id = ?", [id])
+    }
+
+    // MARK: - Scheduled agent tasks
+
+    public struct ScheduledTask: Sendable {
+        public let id: Int; public let at: Date; public let title: String; public let prompt: String; public let cwd: String
+    }
+
+    public func addScheduledTask(at: Date, title: String, prompt: String, cwd: String) {
+        run("INSERT INTO scheduled_tasks (at, title, prompt, cwd) VALUES (?, ?, ?, ?)",
+            [at.timeIntervalSince1970, title, prompt, cwd])
+    }
+
+    public func scheduledTasks(dueBefore: Date?) -> [ScheduledTask] {
+        var rows: [ScheduledTask] = []
+        let sql = dueBefore == nil
+            ? "SELECT id, at, title, prompt, cwd FROM scheduled_tasks WHERE done = 0 ORDER BY at"
+            : "SELECT id, at, title, prompt, cwd FROM scheduled_tasks WHERE done = 0 AND at <= ? ORDER BY at"
+        query(sql, dueBefore.map { [$0.timeIntervalSince1970] } ?? []) { stmt in
+            rows.append(ScheduledTask(id: Int(sqlite3_column_int64(stmt, 0)),
+                                      at: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)),
+                                      title: String(cString: sqlite3_column_text(stmt, 2)),
+                                      prompt: String(cString: sqlite3_column_text(stmt, 3)),
+                                      cwd: String(cString: sqlite3_column_text(stmt, 4))))
+        }
+        return rows
+    }
+
+    public func markScheduledTaskDone(_ id: Int) {
+        run("UPDATE scheduled_tasks SET done = 1 WHERE id = ?", [id])
+    }
+
+    // MARK: - Task history (for the morning recap)
+
+    public func recordTask(_ t: TaskInfo) {
+        run("INSERT OR REPLACE INTO task_history (id, title, project, status, summary, ended) VALUES (?, ?, ?, ?, ?, ?)",
+            [t.id, t.title, t.project, t.status.rawValue, t.summary, (t.endedAt ?? Date()).timeIntervalSince1970])
+    }
+
+    public func tasksEnded(since: Date) -> [TaskInfo] {
+        var rows: [TaskInfo] = []
+        query("SELECT id, title, project, status, summary, ended FROM task_history WHERE ended >= ? ORDER BY ended",
+              [since.timeIntervalSince1970]) { stmt in
+            let ended = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 5))
+            rows.append(TaskInfo(id: String(cString: sqlite3_column_text(stmt, 0)),
+                                 title: String(cString: sqlite3_column_text(stmt, 1)),
+                                 project: sqlite3_column_text(stmt, 2).map { String(cString: $0) },
+                                 status: TaskInfo.Status(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .done,
+                                 summary: sqlite3_column_text(stmt, 4).map { String(cString: $0) },
+                                 startedAt: ended, endedAt: ended))
+        }
+        return rows
     }
 
     // MARK: - SQLite helpers

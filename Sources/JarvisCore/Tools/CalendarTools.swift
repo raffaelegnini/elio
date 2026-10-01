@@ -7,6 +7,8 @@ import Foundation
 public enum CalendarTools {
     static let store = EKEventStore()
 
+    public static var isAuthorized: Bool { EKEventStore.authorizationStatus(for: .event) == .fullAccess }
+
     static func ensureAccess() async throws {
         let status = EKEventStore.authorizationStatus(for: .event)
         if status == .fullAccess { return }

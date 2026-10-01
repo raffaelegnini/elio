@@ -8,6 +8,7 @@ public enum LocalIntent: Equatable, Sendable {
     case time
     case volume(VolumeChange)
     case stop
+    case brief
 
     public enum VolumeChange: Equatable, Sendable {
         case set(Int), up, down, mute, unmute
@@ -29,6 +30,13 @@ public struct IntentMatcher: Sendable {
         guard !text.isEmpty else { return nil }
 
         if let m = matchStop(text) { return m }
+        if text.range(of: #"^(?:fammi |dammi |fai )?(?:il )?(?:briefing|recap)(?: del mattino| di oggi| della notte)?$"#,
+                      options: .regularExpression) != nil {
+            return MatchedIntent(intent: .brief, lang: .it)
+        }
+        if text.range(of: #"^(?:give me |start )?(?:the |my )?(?:morning )?briefing$"#, options: .regularExpression) != nil {
+            return MatchedIntent(intent: .brief, lang: .en)
+        }
         if let m = matchTime(text) { return m }
         if let m = matchTimer(text) { return m }
         if let m = matchVolume(text) { return m }
