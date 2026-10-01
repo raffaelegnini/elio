@@ -278,6 +278,10 @@ private struct BrainSettings: View {
             Field(label: "Percorso di claude", text: $model.config.claudePath)
             Field(label: "Cartelle dei progetti", text: listBinding($model.config.projectRoots), placeholder: "~/Desktop/dev")
         }
+        Group(title: "Sicurezza degli agenti",
+              note: "Push, merge, cancellazioni e messaggi chiedono sempre conferma. Test e build eseguono il codice del progetto: con questa opzione chiedono conferma anche loro.") {
+            Toggle("Conferma anche build e test", isOn: $model.config.confirmCodeExecution).font(.system(size: 12.5))
+        }
     }
 }
 

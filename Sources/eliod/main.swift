@@ -13,6 +13,7 @@ if CommandLine.arguments.contains("--mcp") {
 
 let config = ElioConfig.load()
 WakeWord.configure(name: config.assistantName, aliases: config.wakeAliases)
+PermissionPolicy.strictCodeExecution = config.confirmCodeExecution
 let token: String
 let memory: Memory
 do {

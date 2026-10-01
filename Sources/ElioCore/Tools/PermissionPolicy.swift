@@ -55,7 +55,10 @@ public enum PermissionPolicy {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         let allSafe = parts.allSatisfy { part in
-            safe.contains { part.range(of: $0, options: .regularExpression) != nil }
+            // A safe command can still be turned into code execution / file writes by its options
+            // (`git fetch --upload-pack=…`, `find -exec`, `eslint --rulesdir`): check every token.
+            guard !tokens(part).contains(where: isForbiddenOption) else { return false }
+            return activeSafe.contains { part.range(of: $0, options: .regularExpression) != nil }
         }
         return allSafe ? .allow : .confirm(.normal)
     }
@@ -93,22 +96,75 @@ public enum PermissionPolicy {
         #"\bdd\s+if="#,
     ]
 
-    /// Read-only or local, reversible developer commands.
-    static let safe: [String] = [
-        #"^git\s+(status|diff|log|show|branch(\s+--?(list|show-current|a|r|v)\b.*)?$|branch$|rev-parse|ls-files|blame|fetch|remote\s+-v|stash(\s+(list|show|push)\b.*)?$|add\b|commit\b|checkout\s+-b\b|switch\s+(-c\s)?[\w./-]+$)"#,
-        #"^(ls|pwd|cat|head|tail|wc|sort|uniq|cut|tr|diff|file|which|echo|printf|date|env|tree|stat|du|basename|dirname|realpath)\b"#,
-        #"^(grep|rg|ag|fd|jq|yq)\b"#,
-        #"^sed\s+-n\b"#,
-        #"^find\b"#,
-        #"^cd\s"#,
-        #"^(npm|pnpm|yarn|bun)\s+(test|run\s+(test|lint|build|typecheck|check|format)|ci|install|i|list|ls|outdated|audit)\b"#,
-        #"^npx\s+(tsc|eslint|prettier|vitest|jest|playwright\s+test)\b"#,
-        #"^(composer)\s+(install|dump-autoload|validate|show|outdated)\b"#,
-        #"^(php\s+artisan\s+(test|route:list|config:show|about|model:show))\b"#,
-        #"^(\./)?vendor/bin/(phpunit|pest|phpstan|pint|psalm)\b"#,
-        #"^(swift\s+(build|test|package\s+(resolve|describe))|xcodebuild)\b"#,
-        #"^(make\s+(test|lint|check|build))\b"#,
-        #"^(python3?\s+-m\s+(pytest|mypy|ruff)|pytest|ruff|mypy)\b"#,
-        #"^(node|python3?)\s+--version\b"#,
+    /// Settings → "conferma anche build e test": running the project's own code
+    /// (tests, linters, builds) then needs an OK too.
+    nonisolated(unsafe) public static var strictCodeExecution = false
+
+    static var activeSafe: [String] { strictCodeExecution ? safe.filter { !runsProjectCode.contains($0) } : safe }
+
+    /// Options that execute programs, load code or write files, whatever the command.
+    static func isForbiddenOption(_ token: String) -> Bool {
+        let t = token.lowercased()
+        let flags = ["--upload-pack", "--receive-pack", "--exec", "--output", "--output-directory", "--ext-diff",
+                     "--textconv", "--config", "--rulesdir", "--resolve-plugins-relative-to", "--plugin", "--require",
+                     "--loader", "--import", "--conftest", "--rootdir", "--confcutdir", "--pager", "--open-files-in-pager",
+                     "--exec-path", "--git-dir", "--work-tree", "--template", "--init-file"]
+        if flags.contains(where: { t == $0 || t.hasPrefix($0 + "=") }) { return true }
+        // find actions that run or write; -o (output) style flags for writers.
+        if ["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"].contains(t) { return true }
+        return false
+    }
+
+    /// Splits a command into words, honouring simple quotes.
+    static func tokens(_ s: String) -> [String] {
+        var out: [String] = [], cur = "", quote: Character?
+        for ch in s {
+            if let q = quote {
+                if ch == q { quote = nil } else { cur.append(ch) }
+            } else if ch == "'" || ch == "\"" {
+                quote = ch
+            } else if ch.isWhitespace {
+                if !cur.isEmpty { out.append(cur); cur = "" }
+            } else {
+                cur.append(ch)
+            }
+        }
+        if !cur.isEmpty { out.append(cur) }
+        return out
+    }
+
+    /// Commands that run the project's own code (allowed by default, confirmed in strict mode).
+    static let runsProjectCode: [String] = [
+        #"^(npm|pnpm|yarn|bun)\s+(test|run\s+(test|lint|build|typecheck|check|format)|ci|install|i)(\s+[\w./@:=-]+)*$"#,
+        #"^npx\s+(tsc|eslint|prettier|vitest|jest|playwright\s+test)(\s+[\w./@:=*-]+)*$"#,
+        #"^composer\s+install(\s+[\w./=-]+)*$"#,
+        #"^php\s+artisan\s+test(\s+[\w./:=-]+)*$"#,
+        #"^(\./)?vendor/bin/(phpunit|pest|phpstan|pint|psalm)(\s+[\w./:=-]+)*$"#,
+        #"^(swift\s+(build|test)|xcodebuild)(\s+[\w./:=-]+)*$"#,
+        #"^make\s+(test|lint|check|build)$"#,
+        #"^(python3?\s+-m\s+(pytest|mypy|ruff)|pytest|ruff|mypy)(\s+[\w./:=-]+)*$"#,
+    ]
+
+    /// Read-only or local, reversible developer commands. Every pattern is anchored at both ends and
+    /// only allows plain arguments (words, paths, refs); options that could run code are rejected above.
+    static let safe: [String] = runsProjectCode + [
+        #"^git\s+(status|diff|log|show|blame|ls-files|rev-parse|fetch)(\s+[\w./@:^~=-]+)*$"#,
+        #"^git\s+branch(\s+(--list|--show-current|-a|-r|-v|-vv))*$"#,
+        #"^git\s+remote\s+-v$"#,
+        #"^git\s+stash(\s+(list|show|push)(\s+[\w./-]+)*)?$"#,
+        #"^git\s+add(\s+[\w./*-]+)+$"#,
+        #"^git\s+commit(\s+(-m|-a|-am|--all|--message)?\s*('[^']*'|"[^"]*"|[\w.-]+))+$"#,
+        #"^git\s+(checkout\s+-b|switch\s+-c)\s+[\w./-]+$"#,
+        #"^git\s+switch\s+[\w./-]+$"#,
+        #"^(ls|pwd|cat|head|tail|wc|uniq|cut|diff|file|which|echo|printf|date|stat|du|basename|dirname|realpath)(\s+('[^']*'|"[^"]*"|[\w./@:=+,*~-]+))*$"#,
+        #"^(grep|rg|ag|fd)(\s+('[^']*'|"[^"]*"|[^\s;&|<>`$]+))*$"#,
+        #"^(jq|yq)(\s+('[^']*'|"[^"]*"|[\w./@:=,-]+))*$"#,
+        #"^find(\s+('[^']*'|"[^"]*"|[^\s;&|<>`$]+))*$"#,
+        #"^cd\s+[\w./~-]+$"#,
+        #"^(npm|pnpm|yarn|bun)\s+(list|ls|outdated|audit)(\s+[\w./@-]+)*$"#,
+        #"^composer\s+(dump-autoload|validate|show|outdated)(\s+[\w./-]+)*$"#,
+        #"^php\s+artisan\s+(route:list|config:show|about|model:show)(\s+[\w./:=-]+)*$"#,
+        #"^swift\s+package\s+(resolve|describe)$"#,
+        #"^(node|python3?)\s+--version$"#,
     ]
 }

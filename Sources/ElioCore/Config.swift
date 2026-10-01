@@ -32,6 +32,7 @@ public struct ElioConfig: Codable, Sendable {
     public var recapTime: String = ""
     public var nudgeMissedMeetings: Bool = true
     public var repeatReminders: Bool = true
+    public var confirmCodeExecution: Bool = false
     public var webPort: UInt16 = 8766
     public var remotePort: UInt16 = 8767
 
@@ -67,6 +68,7 @@ public struct ElioConfig: Codable, Sendable {
         recapTime = try c.decodeIfPresent(String.self, forKey: .recapTime) ?? d.recapTime
         nudgeMissedMeetings = try c.decodeIfPresent(Bool.self, forKey: .nudgeMissedMeetings) ?? d.nudgeMissedMeetings
         repeatReminders = try c.decodeIfPresent(Bool.self, forKey: .repeatReminders) ?? d.repeatReminders
+        confirmCodeExecution = try c.decodeIfPresent(Bool.self, forKey: .confirmCodeExecution) ?? d.confirmCodeExecution
     }
 
     static func defaultClaudePath() -> String {
