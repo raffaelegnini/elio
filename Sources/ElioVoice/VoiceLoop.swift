@@ -80,6 +80,16 @@ public final class VoiceLoop {
     public private(set) var squadMessages: [SquadMessage] = []
     /// Claude token usage (refreshed by the daemon every minute).
     public private(set) var usage: UsageSnapshot?
+
+    /// Fills the observable state with sample data (`ElioApp --snapshot`, UI checks without a daemon).
+    public func loadSample(tasks: [TaskInfo], squads: [SquadInfo], messages: [SquadMessage], usage: UsageSnapshot?,
+                           routine: Bool, lit: [String], state: State) {
+        self.tasks = tasks; self.squads = squads; self.squadMessages = messages; self.usage = usage
+        self.routineMode = routine
+        self.litTools = Dictionary(uniqueKeysWithValues: lit.map { ($0, Date()) })
+        self.state = state
+        self.connected = true
+    }
     /// Actions waiting for the user's explicit OK.
     public private(set) var confirmations: [ConfirmRequest] = []
     public private(set) var diffs: [DiffPayload] = []

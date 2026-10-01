@@ -24,12 +24,15 @@ struct DashboardView: View {
                 Spacer(minLength: 0)
             }
 
-            HStack(alignment: .top, spacing: 0) {
-                leftColumn.frame(width: 300)
-                Spacer(minLength: 0)
-                rightColumn.frame(width: 340)
+            if !state.squadMode {
+                HStack(alignment: .top, spacing: 0) {
+                    leftColumn.frame(width: 300)
+                    Spacer(minLength: 0)
+                    rightColumn.frame(width: 340)
+                }
+                .padding(.top, 104).padding(.horizontal, 18).padding(.bottom, 180)
+                .transition(.opacity)
             }
-            .padding(.top, 104).padding(.horizontal, 18).padding(.bottom, 180)
 
             if let card = state.inlineCard {
                 Movable(id: "briefing") {
@@ -58,7 +61,7 @@ struct DashboardView: View {
 
             VStack {
                 Spacer()
-                if let running = runningTask, state.theater == nil {
+                if let running = runningTask, state.theater == nil, !state.squadMode {
                     AgentTheater(loop: loop, taskId: running.id, compact: true)
                         .frame(width: 640, height: 230)
                         .glassCard()
@@ -90,6 +93,7 @@ struct DashboardView: View {
 
             if state.squadMode, state.theater == nil {
                 SquadView(loop: loop, state: state)
+                    .background(RoundedRectangle(cornerRadius: 16).fill(Theme.bg.opacity(0.82)))
                     .glassCard()
                     .padding(.horizontal, 40).padding(.top, 100).padding(.bottom, 30)
                     .transition(.scale(scale: 0.97).combined(with: .opacity))

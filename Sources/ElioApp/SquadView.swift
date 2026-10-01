@@ -7,6 +7,8 @@ import SwiftUI
 struct SquadView: View {
     let loop: VoiceLoop
     let state: DashboardState
+    /// Off only for snapshots (ImageRenderer doesn't draw scroll view content).
+    var scrolls = true
     @State private var selected: String?
 
     private var squad: SquadInfo? {
@@ -23,12 +25,11 @@ struct SquadView: View {
             header
             if let s = squad {
                 HStack(alignment: .top, spacing: 14) {
-                    ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
-                            ForEach(members(s)) { m in MemberCard(loop: loop, member: m) { state.theater = m.id } }
-                        }
-                        .padding(2)
+                    let grid = LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
+                        ForEach(members(s)) { m in MemberCard(loop: loop, member: m) { state.theater = m.id } }
                     }
+                    .padding(2)
+                    if scrolls { ScrollView { grid } } else { VStack { grid; Spacer(minLength: 0) } }
                     board(s).frame(width: 340)
                 }
                 .padding(16)
@@ -75,9 +76,28 @@ struct SquadView: View {
     private func board(_ s: SquadInfo) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("BACHECA").font(Theme.mono).tracking(2).foregroundStyle(Theme.dim)
+            if !scrolls {
+                VStack(alignment: .leading, spacing: 8) { messages(s) }
+                Spacer(minLength: 0)
+            } else {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
+                        messages(s)
+                    }
+                }
+                .onChange(of: loop.squadMessages.count) {
+                    if let last = loop.squadMessages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                }
+            }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.black.opacity(0.25)))
+    }
+
+    @ViewBuilder
+    private func messages(_ s: SquadInfo) -> some View {
                         ForEach(loop.squadMessages.filter { $0.squad == s.id }) { m in
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack(spacing: 4) {
@@ -95,15 +115,6 @@ struct SquadView: View {
                             .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(m.to == "elio" ? 0.07 : 0.035)))
                             .id(m.id)
                         }
-                    }
-                }
-                .onChange(of: loop.squadMessages.count) {
-                    if let last = loop.squadMessages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
-                }
-            }
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Color.black.opacity(0.25)))
     }
 
     private func footer(_ s: SquadInfo) -> some View {

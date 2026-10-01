@@ -100,18 +100,9 @@ struct Dormant: ViewModifier {
     func body(content: Content) -> some View {
         content
             .saturation(off ? 0 : 1)
-            .brightness(off ? -0.25 : 0)
-            .opacity(off ? 0.45 : 1)
-            .scaleEffect(off ? 0.985 : 1)
-            .overlay {
-                if off {
-                    RoundedRectangle(cornerRadius: 12).strokeBorder(Color.white.opacity(0.06))
-                        .overlay(alignment: .center) {
-                            Image(systemName: "power").font(.system(size: 14, weight: .semibold)).foregroundStyle(.white.opacity(0.25))
-                        }
-                        .allowsHitTesting(false)
-                }
-            }
+            .opacity(off ? 0.28 : 1)
+            .blur(radius: off ? 1.2 : 0)
+            .scaleEffect(off ? 0.98 : 1)
             .animation(.easeOut(duration: 0.6), value: off)
     }
 }

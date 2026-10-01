@@ -44,7 +44,7 @@ final class NotchIsland {
     }
 }
 
-private struct IslandView: View {
+struct IslandView: View {
     let loop: VoiceLoop
     let openDashboard: () -> Void
     let openSettings: () -> Void

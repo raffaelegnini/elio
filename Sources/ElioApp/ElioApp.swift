@@ -9,6 +9,14 @@ import SwiftUI
 struct ElioApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
+    init() {
+        // Snapshot mode runs before the app connects to anything (works with the screen locked).
+        if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
+            MainActor.assumeIsolated { Snapshots.render(to: CommandLine.arguments[i + 1]) }
+            exit(0)
+        }
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuContent(delegate: delegate)
@@ -108,6 +116,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
+            Snapshots.render(to: CommandLine.arguments[i + 1])
+            exit(0)
+        }
         let config = ElioConfig.load()
         Brand.shared.apply(config)
         WakeWord.configure(name: config.assistantName, aliases: config.wakeAliases)

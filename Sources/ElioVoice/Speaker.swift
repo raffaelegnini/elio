@@ -422,6 +422,8 @@ public final class Speaker {
 
 public enum Keychain {
     public static func read(service: String) -> String? {
+        // Snapshot rendering must never wait on a keychain access prompt.
+        if CommandLine.arguments.contains("--snapshot") { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
