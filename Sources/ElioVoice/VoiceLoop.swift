@@ -75,6 +75,11 @@ public final class VoiceLoop {
     public var alwaysListening = true
     /// Background agents, newest last.
     public private(set) var tasks: [TaskInfo] = []
+    /// Squads of agents and their message board.
+    public private(set) var squads: [SquadInfo] = []
+    public private(set) var squadMessages: [SquadMessage] = []
+    /// Claude token usage (refreshed by the daemon every minute).
+    public private(set) var usage: UsageSnapshot?
     /// Actions waiting for the user's explicit OK.
     public private(set) var confirmations: [ConfirmRequest] = []
     public private(set) var diffs: [DiffPayload] = []
@@ -693,6 +698,18 @@ public final class VoiceLoop {
             }
         case "integrationUpdated":
             break  // Elio configures integrations itself; Settings just shows the result
+        case "squad", "squadDone":
+            if let sq = SquadInfo.fromJSON(msg.payload) {
+                if let i = squads.firstIndex(where: { $0.id == sq.id }) { squads[i] = sq } else { squads.append(sq) }
+                if squads.count > 8 { squads.removeFirst() }
+            }
+        case "squadMessage":
+            if let m = SquadMessage.fromJSON(msg.payload) {
+                squadMessages.append(m)
+                if squadMessages.count > 300 { squadMessages.removeFirst(squadMessages.count - 300) }
+            }
+        case "usage":
+            usage = UsageSnapshot.fromJSON(msg.payload)
         case "task", "taskDone":
             if let info = TaskInfo.fromJSON(msg.payload) {
                 if let i = tasks.firstIndex(where: { $0.id == info.id }) { tasks[i] = info } else { tasks.append(info) }

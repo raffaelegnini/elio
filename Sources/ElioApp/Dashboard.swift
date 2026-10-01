@@ -88,6 +88,13 @@ struct DashboardView: View {
                 .transition(.scale(scale: 0.96).combined(with: .opacity))
             }
 
+            if state.squadMode, state.theater == nil {
+                SquadView(loop: loop, state: state)
+                    .glassCard()
+                    .padding(.horizontal, 40).padding(.top, 100).padding(.bottom, 30)
+                    .transition(.scale(scale: 0.97).combined(with: .opacity))
+            }
+
             if let diff = state.reviewing {
                 review(diff)
                     .background(.ultraThinMaterial)
@@ -123,9 +130,18 @@ struct DashboardView: View {
             Spacer()
             HStack(spacing: 8) {
                 StatusPill(loop: loop)
+                UsagePill(loop: loop)
                 RoutineButton(title: "Briefing", icon: "sunrise") { loop.submit(text: "briefing") }
                 RoutineButton(title: "Recap", icon: "moon.stars") { loop.submit(text: "recap della giornata") }
                 Rectangle().fill(Theme.line).frame(width: 1, height: 22).padding(.horizontal, 4)
+                HeaderButton(icon: "person.3", help: "Squadra di agenti") {
+                    withAnimation(.spring(duration: 0.35)) { state.squadMode.toggle() }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if loop.squads.contains(where: { $0.endedAt == nil }) {
+                        Circle().fill(.green).frame(width: 7, height: 7).offset(x: -2, y: 2)
+                    }
+                }
                 HeaderButton(icon: "rectangle.3.group", help: "Ripristina la disposizione dei pannelli") {
                     NotificationCenter.default.post(name: .resetDashboardLayout, object: nil)
                 }

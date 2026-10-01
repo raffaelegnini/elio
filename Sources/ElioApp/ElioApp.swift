@@ -140,6 +140,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 self?.showSettings(tab: tabs[tab.lowercased()] ?? (integration.isEmpty ? nil : .integrations),
                                    integration: integration.isEmpty ? nil : integration)
             case "archive": self?.showArchive()
+            case "squad":
+                self?.dashboardState.squadMode = true
+                self?.showDashboard(forceFront: true)
             default: self?.showDashboard()
             }
         }
@@ -291,6 +294,8 @@ final class DashboardState {
     var theater: String?
     /// Briefing / recap details shown inside the dashboard.
     var inlineCard: CardPayload?
+    /// Squad mode: the team of agents fills the dashboard.
+    var squadMode = false
 }
 
 extension Notification.Name {
