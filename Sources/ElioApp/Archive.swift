@@ -53,6 +53,7 @@ struct ArchiveView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 4) {
+            DNALogoView(height: 20).padding(.bottom, 14)
             Text(Brand.shared.dotted).font(.system(size: 13, weight: .bold, design: .monospaced)).tracking(4)
                 .foregroundStyle(Theme.text)
             Text("ARCHIVIO").font(Theme.mono).tracking(2).foregroundStyle(Theme.dim).padding(.bottom, 14)

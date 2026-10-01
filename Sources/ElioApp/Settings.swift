@@ -84,6 +84,7 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
+                DNALogoView(height: 20).padding(.bottom, 14)
                 Text(Brand.shared.dotted).font(.system(size: 13, weight: .bold, design: .monospaced)).tracking(4)
                     .foregroundStyle(Theme.text).padding(.bottom, 4)
                 Text("IMPOSTAZIONI").font(Theme.mono).tracking(2).foregroundStyle(Theme.dim).padding(.bottom, 18)

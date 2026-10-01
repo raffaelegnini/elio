@@ -65,8 +65,11 @@ public final class VoiceLoop {
     private let pipeline: InputPipeline
     private let speaker: Speaker
     private let client: DaemonClient
-    private var transcriber: UtteranceTranscriber?
-    private var beginTask: Task<Void, Never>?
+    /// Always-on on-device recognizer; the VAD decides where utterances end.
+    private var stt: ContinuousTranscriber?
+    private var inUtterance = false
+    /// When Elio last stopped talking (its voice may still echo in the room).
+    private var lastSpeechEnd = Date.distantPast
     private var utteranceArmed = false
     /// Utterance captured while Elio was speaking through the speakers.
     private var bargeCandidate = false
@@ -82,10 +85,17 @@ public final class VoiceLoop {
 
     /// Speaks the half-sentence still in the splitter (an acknowledgement without final punctuation).
     private func splitterFlushForAck() {
-        if let rest = splitter.flush() { speaker.enqueue(rest); speaker.endUtterance() }
+        guard let rest = splitter.flush() else { return }
+        replySentences += 1
+        if localAckSpoken, replySentences == 1, Acknowledgement.isAcknowledgement(rest) { return }
+        speaker.enqueue(rest)
+        speaker.endUtterance()
     }
 
     private func speakReply(_ sentence: String) {
+        replySentences += 1
+        // We already acknowledged locally: skip Claude's own "Certo, Signore, controllo…".
+        if localAckSpoken, replySentences == 1, Acknowledgement.isAcknowledgement(sentence) { return }
         guard sentenceBudget > 0 else { return }
         sentenceBudget -= 1
         if replyStreaming {
@@ -137,7 +147,14 @@ public final class VoiceLoop {
 
         pipeline.onEvent = { [weak self] event in Task { @MainActor in self?.handle(event) } }
         pipeline.onLevel = { [weak self] db in Task { @MainActor in self?.updateLevel(db) } }
-        audio.onInput = { [pipeline] buffer, db in pipeline.process(buffer, levelDb: db) }
+        let stt = ContinuousTranscriber(locale: Locale(identifier: "it_IT"),
+                                        contextWords: [config.assistantName] + config.wakeAliases + ["Slack", "Teamwork", "Bitbucket", "Meet"])
+        stt.onVolatile = { [weak self] text in Task { @MainActor in self?.heard(text) } }
+        self.stt = stt
+        audio.onInput = { [pipeline, stt] buffer, db in
+            stt.feed(buffer)
+            pipeline.process(buffer, levelDb: db)
+        }
 
         muted = UserDefaults.standard.bool(forKey: "elio.muted")
         voiceId = config.elevenLabsVoiceId
@@ -147,19 +164,21 @@ public final class VoiceLoop {
             try audio.start()
             if muted { try audio.setInputEnabled(false) }
             pipeline.inputFormat = audio.inputFormat
+            if !muted, let format = audio.inputFormat { try await stt.start(inputFormat: format) }
             inputDevice = audio.inputDeviceName
             VoiceLog.write("audio started: in '\(inputDevice)' out '\(audio.outputDeviceName)' bt-out \(AudioDevices.defaultOutputIsBluetooth()) builtin-mic \(AudioDevices.builtInMicrophone().map { AudioDevices.name(of: $0) } ?? "-"), format: \(String(describing: audio.inputFormat))")
             audio.onRouteChange = { [weak self] format in
                 guard let self else { return }
                 self.inputDevice = self.audio.inputDeviceName
                 VoiceLog.write("audio route changed → '\(self.inputDevice)', format: \(String(describing: format))")
-                // An utterance captured on the old device can't continue.
-                if self.transcriber != nil { self.abandonUtterance() }
+                // New device, new format: restart recognition on it.
+                self.inUtterance = false
                 self.pipeline.inputFormat = format
                 self.pipeline.resetVAD()
+                if let format, !self.muted { Task { try? await self.stt?.start(inputFormat: format) } }
             }
             state = muted ? .muted : .listening
-            speaker.warmCache(Self.acks + fillers)
+            speaker.warmCache(Self.acks + Acknowledgement.all(addressAs: addressAs))
         } catch {
             lastError = "Audio: \(error.localizedDescription)"
             state = .off
@@ -193,12 +212,14 @@ public final class VoiceLoop {
         muted = on
         UserDefaults.standard.set(on, forKey: "elio.muted")
         if on {
-            if transcriber != nil { abandonUtterance() }
+            inUtterance = false
             pipeline.resetVAD()
             partial = ""
             state = .muted
-        } else if state == .muted || state == .off {
-            state = .listening
+            Task { await stt?.stop() }
+        } else {
+            if state == .muted || state == .off { state = .listening }
+            if let format = audio.inputFormat { Task { try? await stt?.start(inputFormat: format) } }
         }
         VoiceLog.write("mic \(on ? "muted" : "unmuted")")
     }
@@ -218,7 +239,6 @@ public final class VoiceLoop {
         audio.preferBuiltInMicWithBluetooth = config.builtInMicWithBluetooth
         if config.elevenLabsVoiceId != voiceId {
             voiceId = config.elevenLabsVoiceId
-        applySettings(config)
             speaker.setVoice(voiceId)
         }
     }
@@ -266,62 +286,35 @@ public final class VoiceLoop {
     // MARK: - Mic events
 
     private func handle(_ event: InputPipeline.Event) {
-        VoiceLog.write("vad \(event) speaking=\(speaker.isSpeaking) armed=\(isArmed)")
         switch event {
         case .speechStart:
-            if speaker.isSpeaking {
-                if AudioDevices.defaultOutputIsHeadphones() {
-                    // No echo in headphones: any speech is the user talking over Elio.
-                    interrupt()
-                } else {
-                    // Speakers: listen while talking, interrupt only on a stop word (see partialChanged).
-                    bargeCandidate = true
-                    beginUtterance()
-                    return
-                }
+            if speaker.isSpeaking, AudioDevices.defaultOutputIsHeadphones() {
+                // No echo in headphones: any speech is the user talking over Elio.
+                interrupt()
             }
-            bargeCandidate = false
-            guard alwaysListening || isArmed else { return }
-            beginUtterance()
+            inUtterance = true
+            utteranceArmed = isArmed
+            wakeSeen = false
+            // Drop what the recognizer heard before (background, Elio's own voice).
+            stt?.resetSegment()
+            partial = ""
+            if utteranceArmed, state != .thinking { state = .hearing }
         case .speechEnd:
-            if abandoned { abandoned = false; return }
+            guard inUtterance else { return }
+            inUtterance = false
             Task { await endUtterance() }
         }
     }
 
     private var isArmed: Bool { armedUntil.map { $0 > Date() } ?? false }
 
-    private func beginUtterance() {
-        guard let format = audio.inputFormat else { return }
-        let t = UtteranceTranscriber(locale: Locale(identifier: "it_IT"))
-        let armed = isArmed
-        utteranceArmed = armed
-        wakeSeen = false
-        abandoned = false
-        t.onPartial = { [weak self] text in Task { @MainActor in self?.partialChanged(text, from: t) } }
-        transcriber = t
-        partial = ""
-        // Only light up when the user is clearly talking to Elio.
-        if armed, state != .thinking { state = .hearing }
-        beginTask = Task {
-            do {
-                try await t.begin(inputFormat: format)
-                pipeline.attach(t)  // flushes audio captured since speech start
-            } catch {
-                lastError = "STT: \(error)"
-            }
-        }
-    }
-
-    /// Unarmed speech is only for the wake word: show it once "Elio" is heard,
-    /// drop it as soon as it's clearly someone talking about something else.
-    private func partialChanged(_ text: String, from t: UtteranceTranscriber) {
-        guard transcriber === t, !abandoned else { return }
-        if bargeCandidate {
-            guard speaker.isSpeaking else { bargeCandidate = false; return }
+    /// Live text from the recognizer: wake word → show we're listening; while Elio talks
+    /// through the speakers, a stop word it isn't saying itself interrupts it.
+    private func heard(_ text: String) {
+        guard inUtterance else { return }
+        if speaker.isSpeaking {
             if BargeIn.detect(text, whileSaying: spokenText) {
                 VoiceLog.write("barge-in on '\(text)'")
-                bargeCandidate = false
                 interrupt()
                 utteranceArmed = true   // what follows "Elio, aspetta…" is a command
                 state = .hearing
@@ -331,47 +324,27 @@ public final class VoiceLoop {
         }
         if utteranceArmed || wakeSeen {
             partial = text
-            return
-        }
-        if WakeWord.strip(text) != nil {
+        } else if WakeWord.strip(text) != nil {
             wakeSeen = true
             partial = text
             if state != .thinking { state = .hearing }
-        } else if text.split(separator: " ").count >= 2 {
-            abandonUtterance()
         }
-    }
-
-    private func abandonUtterance() {
-        abandoned = true
-        pipeline.detach()
-        if let t = transcriber { Task { await t.cancel() } }
-        transcriber = nil
-        beginTask = nil
-        partial = ""
     }
 
     private func endUtterance() async {
-        guard let t = transcriber else { return }
-        transcriber = nil
-        await beginTask?.value  // short utterances can end before the analyzer is ready
-        beginTask = nil
-        pipeline.detach()
-        if bargeCandidate {
-            // Speech while Elio talked, no stop word: it was the echo. Drop it.
-            bargeCandidate = false
-            pipeline.detach()
-            await t.cancel()
-            return
-        }
-        let text = await t.finish()
-        VoiceLog.write("stt final: '\(text)' (fed \(t.fedBuffers) buffers)")
+        guard let stt else { return }
+        var text = await stt.finalizeSegment()
+        let spokeRecently = speaker.isSpeaking || Date().timeIntervalSince(lastSpeechEnd) < 2
+        VoiceLog.write("heard: '\(text)'\(spokeRecently ? " (Elio spoke recently)" : "")")
         partial = ""
+        // Elio's own voice picked up by the mic is never a command.
+        if spokeRecently { text = Echo.remove(from: text, spoken: spokenText) }
         if state == .hearing, !isArmed { state = .listening }
         guard !text.isEmpty else { return }
+        if speaker.isSpeaking { return }  // still talking and no stop word: ignore
 
         let command: String
-        if isArmed {
+        if isArmed || utteranceArmed {
             command = WakeWord.strip(text) ?? text
         } else if let afterWake = WakeWord.strip(text) {
             command = afterWake
@@ -410,7 +383,9 @@ public final class VoiceLoop {
         firstAudioLogged = false
         // Open the TTS socket while Claude is thinking: saves the ~0.4s handshake.
         replyStreaming = speaker.beginStream()
-        scheduleFiller(for: currentRequestId)
+        localAckSpoken = false
+        replySentences = 0
+        scheduleFiller(for: currentRequestId, request: text)
         state = .thinking
     }
 
@@ -581,15 +556,22 @@ public final class VoiceLoop {
     }
 
     /// If Claude is slow to start, say a short cached filler so the silence doesn't feel dead.
-    private func scheduleFiller(for id: String?) {
+    /// If Claude hasn't said anything after 0.9s, acknowledge right away with a cached,
+    /// request-specific phrase ("Certo, Signore, controllo l'agenda.").
+    private func scheduleFiller(for id: String?, request: String) {
         guard let id else { return }
+        let phrase = Acknowledgement.phrase(for: request, addressAs: addressAs)
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(2500))
+            try? await Task.sleep(for: .milliseconds(900))
             guard self.currentRequestId == id, !self.firstDeltaLogged, !self.speaker.isSpeaking else { return }
-            self.speaker.enqueue(self.fillers.randomElement()!)
+            self.localAckSpoken = true
+            self.speaker.enqueue(phrase)
             self.speaker.endUtterance()
         }
     }
+
+    private var localAckSpoken = false
+    private var replySentences = 0
 
     private func appendToReply(_ text: String) {
         spokenText += text
@@ -626,7 +608,7 @@ public final class VoiceLoop {
     }
 
     private func speakingChanged(_ speaking: Bool) {
-        if speaking { fadeOpening() }
+        if speaking { fadeOpening() } else { lastSpeechEnd = Date() }
         if speaking {
             state = .speaking
             pipeline.speaking = true

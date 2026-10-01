@@ -36,6 +36,42 @@ for path in CommandLine.arguments.dropFirst() {
     signal += noise(2.5)
 }
 
+// CONTINUOUS=1: one long-lived transcriber fed with everything (the app's new mode).
+if ProcessInfo.processInfo.environment["CONTINUOUS"] == "1" {
+    let start = Date()
+    WakeWord.configure(name: "Elio", aliases: ["helio"])
+    let ct = ContinuousTranscriber(locale: Locale(identifier: "it_IT"), contextWords: ["Elio"])
+    try await ct.start(inputFormat: mono)
+    let vad = InputPipeline()
+    var ends: [Task<Void, Never>] = []
+    vad.onEvent = { event in
+        if case .speechStart = event { ct.resetSegment() }
+        if case .speechEnd = event {
+            let t0 = Date()
+            ends.append(Task.detached {
+                let text = await ct.finalizeSegment()
+                let wake = WakeWord.strip(text)
+                print(String(format: "%5.1fs end→text %.2fs '%@' wake: %@", Date().timeIntervalSince(start),
+                             Date().timeIntervalSince(t0), text, wake.map { "YES → '\($0)'" } ?? "no"))
+            })
+        }
+    }
+    var j = 0
+    while j < signal.count {
+        let n = min(4410, signal.count - j)
+        let b = AVAudioPCMBuffer(pcmFormat: mono, frameCapacity: AVAudioFrameCount(n))!
+        signal.withUnsafeBufferPointer { b.floatChannelData![0].update(from: $0.baseAddress! + j, count: n) }
+        b.frameLength = AVAudioFrameCount(n)
+        ct.feed(b)
+        vad.process(b, levelDb: AudioIO.levelDb(b))
+        j += n
+        try await Task.sleep(for: .milliseconds(100))
+    }
+    for e in ends { await e.value }
+    await ct.stop()
+    exit(0)
+}
+
 let pipeline = InputPipeline()
 var transcriber: UtteranceTranscriber?
 var pendingEnds: [Task<Void, Never>] = []

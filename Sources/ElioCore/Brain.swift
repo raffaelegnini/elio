@@ -12,6 +12,7 @@ public actor Brain {
     public let scheduler: Scheduler
     public let tasks: TaskRunner
     public let routines: Routines
+    public let sync: SyncEngine
 
     public init(config: ElioConfig, memory: Memory, executablePath: String) async {
         self.config = config
@@ -21,6 +22,7 @@ public actor Brain {
         scheduler = Scheduler(memory: memory)
         tasks = TaskRunner(config: config, mcpConfig: mcp, memory: memory)
         routines = Routines(config: config, memory: memory)
+        sync = SyncEngine(memory: memory, config: config)
         var options = ClaudeBridge.Options(
             claudePath: config.claudePath,
             model: config.claudeModel,
@@ -43,6 +45,7 @@ public actor Brain {
         await scheduler.start(broadcast: send)
         do { try await claude.warmUp() } catch { log("claude warm-up failed: \(error)") }
         await routines.start(brain: self)
+        await sync.start()
     }
 
     /// Runs a proactive prompt through the conversation session and speaks the result.
@@ -74,6 +77,7 @@ public actor Brain {
         return ToolContext(config: config, memory: memory, broadcast: { hub.send($0) },
                            gate: gate, tasks: tasks, scheduler: scheduler,
                            restartSession: { [weak self] in await self?.refreshSession() },
+                           sync: sync,
                            runRoutine: { [weak self] which in
                                guard let routines = await self?.routines else { return }
                                // Detached: the routine waits for the current turn to end.
@@ -258,6 +262,11 @@ public actor Brain {
         in chat: l'utente la inserisce nelle Impostazioni che si aprono da sole.
         3. Quando è pronta, leggi la documentazione con WebFetch e salva note d'uso compatte con integration_notes \
         (endpoint utili, filtri, paginazione). Poi usala con api_request (o con i tool MCP).
+        4. Imposta con integration_sync gli elenchi che servono a risolvere nomi (progetti, persone, clienti…): \
+        verranno tenuti aggiornati in background e lookup li troverà all'istante.
+
+        Velocità: per persone, canali, progetti e dati delle integrazioni usa PRIMA lookup (rubrica locale, istantanea). \
+        Chiama le API solo per dati che cambiano spesso (messaggi, task di oggi) o se lookup non trova.
 
         Memoria:
         - Hai una memoria a lungo termine (sotto). Quando l'utente dice "ricordati che…" o emerge un'informazione \

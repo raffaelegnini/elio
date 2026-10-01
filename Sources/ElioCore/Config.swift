@@ -6,7 +6,7 @@ public struct ElioConfig: Codable, Sendable {
     /// Brand / identity (shared with colleagues: everything here is editable in Settings).
     public var assistantName: String = "Elio"
     public var addressAs: String = "Signore"          // how the assistant addresses the user
-    public var wakeAliases: [String] = []             // extra spellings the recognizer produces
+    public var wakeAliases: [String] = ["helio", "ellio"]             // extra spellings the recognizer produces
     public var accentColor: String = "#FFD360"        // DNA yellow
     public var claudePath: String = ElioConfig.defaultClaudePath()
     public var claudeModel: String = "sonnet"

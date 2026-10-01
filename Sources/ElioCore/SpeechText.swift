@@ -200,6 +200,57 @@ public enum BargeIn {
     }
 }
 
+/// The mic hears Elio through the speakers: drop the words that match what it just said,
+/// keeping anything the user added. Empty if it was all echo.
+public enum Echo {
+    public static func remove(from heard: String, spoken: String) -> String {
+        let norm = { (s: String) in s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init) }
+        let said = Set(norm(spoken))
+        let words = heard.split(separator: " ").map(String.init)
+        guard !said.isEmpty, !words.isEmpty else { return heard }
+        let isEcho = { (w: String) in norm(w).allSatisfy { said.contains($0) } }
+        guard Double(words.filter(isEcho).count) / Double(words.count) >= 0.6 else { return heard }
+        // Mostly echo: keep the trailing part that isn't ("…le faccio subito. Elio, aspetta").
+        var tail: [String] = []
+        for w in words.reversed() {
+            if isEcho(w) { break }
+            tail.insert(w, at: 0)
+        }
+        return tail.joined(separator: " ")
+    }
+}
+
+/// Instant, request-specific acknowledgement played while Claude works (cached audio, ~0 latency).
+public enum Acknowledgement {
+    static let rules: [(String, String)] = [
+        (#"agenda|calendari|meeting|riunion|impegn|appuntament|call\b"#, "controllo l'agenda."),
+        (#"slack|messagg|\bdm\b|scritto|menzion|risposto"#, "guardo Slack."),
+        (#"mail|email|posta"#, "controllo la posta."),
+        (#"progett|codice|bug|branch|\bpr\b|review|test|deploy|repo|commit"#, "me ne occupo subito."),
+        (#"meteo|che tempo|cerca|notizie|quanto costa|chi è|cos'è|news"#, "cerco subito."),
+        (#"teamwork|task|attivit"#, "controllo i task."),
+        (#"ricorda|promemoria|memoria|sai che"#, "un attimo."),
+    ]
+
+    public static func phrase(for request: String, addressAs: String) -> String {
+        let t = request.lowercased()
+        for (pattern, tail) in rules where t.range(of: pattern, options: .regularExpression) != nil {
+            return "Certo, \(addressAs), \(tail)"
+        }
+        return "Certo, \(addressAs), un attimo."
+    }
+
+    public static func all(addressAs: String) -> [String] {
+        Set(rules.map { "Certo, \(addressAs), \($0.1)" } + ["Certo, \(addressAs), un attimo."]).sorted()
+    }
+
+    /// Claude's own opening acknowledgement ("Certo, Signore, controllo subito…"), redundant after ours.
+    public static func isAcknowledgement(_ sentence: String) -> Bool {
+        let t = sentence.lowercased().trimmingCharacters(in: .whitespaces)
+        return t.count < 110 && t.range(of: #"^(certo|subito|va bene|perfetto|benissimo|senz'altro)\b"#, options: .regularExpression) != nil
+    }
+}
+
 /// Interprets a spoken reply to a confirmation request.
 public enum ConfirmationAnswer: Equatable {
     case approve, deny, needsExplicit, unrelated

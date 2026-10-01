@@ -77,10 +77,14 @@ struct DashboardView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 18) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(Brand.shared.dotted).font(.system(size: 15, weight: .bold, design: .monospaced)).tracking(5)
-                    .foregroundStyle(Theme.text)
-                Text("DNA Factory · assistente personale").font(Theme.mono).foregroundStyle(Theme.dim)
+            HStack(spacing: 14) {
+                DNALogoView(height: 26)
+                Rectangle().fill(Theme.line).frame(width: 1, height: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Brand.shared.dotted).font(.system(size: 15, weight: .bold, design: .monospaced)).tracking(5)
+                        .foregroundStyle(Theme.text)
+                    Text("assistente personale").font(Theme.mono).foregroundStyle(Theme.dim)
+                }
             }
             Spacer()
             TimelineView(.periodic(from: .now, by: 1)) { ctx in

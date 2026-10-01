@@ -146,8 +146,8 @@ final class Server: @unchecked Sendable {
                 if !quiet {
                     brain.publish(ServerMessage(type: .event, id: id, text: name, latencyMs: ms, kind: "tool",
                                                 payload: "{\"phase\":\"end\"}", isError: isError))
-                    // Tool results can contain anything (DMs, .env files): log only a redacted, short preview.
-                    log("tool \(name) → \(isError ? "ERROR " : "")\(SecretFilter.redact(String(result.prefix(160))))")
+                    // Tool results can contain anything (DMs, mail, .env files): never log their content.
+                    log("tool \(name) → \(isError ? "error" : "ok"), \(result.count) chars, \(ms) ms")
                     await brain.recordToolCall(name: name, ok: !isError, ms: ms)
                 }
                 self.send(ServerMessage(type: .toolResult, id: id, payload: result, isError: isError), on: conn)

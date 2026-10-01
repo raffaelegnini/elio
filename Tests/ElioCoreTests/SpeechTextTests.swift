@@ -116,6 +116,31 @@ struct BargeInTests {
     }
 }
 
+struct AcknowledgementTests {
+    @Test func picksBySubject() {
+        #expect(Acknowledgement.phrase(for: "cosa ho in agenda domani?", addressAs: "Signore") == "Certo, Signore, controllo l'agenda.")
+        #expect(Acknowledgement.phrase(for: "Rosario mi ha scritto su Slack?", addressAs: "Signora") == "Certo, Signora, guardo Slack.")
+        #expect(Acknowledgement.phrase(for: "come stai", addressAs: "Signore") == "Certo, Signore, un attimo.")
+        #expect(Acknowledgement.isAcknowledgement("Certo, Signore, controllo subito le previsioni."))
+        #expect(!Acknowledgement.isAcknowledgement("Domani sarà soleggiato con ventisette gradi."))
+    }
+}
+
+struct EchoTests {
+    let said = "Certo, Signore, le faccio subito il recap della giornata."
+
+    @Test func dropsPureEcho() {
+        #expect(Echo.remove(from: "Elio Certo, signore, le faccio subito il reca della giornata", spoken: said)
+                .split(separator: " ").count <= 2)
+        #expect(Echo.remove(from: "le faccio subito il recap", spoken: said) == "")
+    }
+
+    @Test func keepsWhatTheUserAdds() {
+        #expect(Echo.remove(from: "subito il recap della giornata Elio aspetta", spoken: said) == "Elio aspetta")
+        #expect(Echo.remove(from: "Elio che ore sono", spoken: said) == "Elio che ore sono")
+    }
+}
+
 struct ConfirmationAnswerTests {
     @Test func dangerousNeedsTheExplicitWord() {
         #expect(ConfirmationAnswer.parse("sì vai", risk: .dangerous) == .needsExplicit)

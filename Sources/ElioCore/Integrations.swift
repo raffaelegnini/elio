@@ -24,6 +24,40 @@ public struct Integration: Codable, Sendable, Identifiable, Equatable {
     /// How to use it: endpoints, parameters, gotchas — written by Elio after reading the docs.
     public var notes: String = ""
     public var enabled: Bool = true
+    /// Lists Elio keeps in its local directory (background GETs, no tokens).
+    public var syncs: [SyncSpec] = []
+
+    public struct SyncSpec: Codable, Sendable, Equatable {
+        public var name: String
+        public var path: String
+        public var query: [String: String]
+        public var everyMinutes: Int
+        public var itemsPath: String
+        public var keyField: String
+        public var titleField: String
+        public var kind: String
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, kind, baseURL, authType, authParam, basicUser, mcpCommand, mcpArgs, docsURL, notes, enabled, syncs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        authType = try c.decodeIfPresent(AuthType.self, forKey: .authType) ?? .none
+        authParam = try c.decodeIfPresent(String.self, forKey: .authParam) ?? ""
+        basicUser = try c.decodeIfPresent(String.self, forKey: .basicUser) ?? ""
+        mcpCommand = try c.decodeIfPresent(String.self, forKey: .mcpCommand) ?? ""
+        mcpArgs = try c.decodeIfPresent([String].self, forKey: .mcpArgs) ?? []
+        docsURL = try c.decodeIfPresent(String.self, forKey: .docsURL) ?? ""
+        notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        syncs = try c.decodeIfPresent([SyncSpec].self, forKey: .syncs) ?? []
+    }
 
     public init(id: String, name: String, kind: Kind) {
         self.id = id
@@ -224,6 +258,30 @@ public enum IntegrationTools {
             guard ok else { return "Operazione annullata dall'utente." }
         }
 
+        let (status, body) = try await IntegrationHTTP.send(item, method: method, path: path,
+                                                            query: (args["query"] as? [String: Any] ?? [:]).mapValues { "\($0)" },
+                                                            body: args["body"])
+        var text = body
+        if text.count > 8000 { text = String(text.prefix(8000)) + "\n…[troncato]" }
+        return "HTTP \(status)\n\(text)"
+    }
+}
+
+
+/// One place that talks HTTP to an integration (auth injected here, host pinned to its base URL).
+public enum IntegrationHTTP {
+    public static func send(_ item: Integration, method: String, path: String, query: [String: String], body: Any?) async throws -> (Int, String) {
+        guard var comps = URLComponents(string: item.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
+                                        + path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))) else {
+            throw ToolError("URL non valido")
+        }
+        var items = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+        let secret = KeychainItem.read(service: item.secretService)
+        if item.authType == .query, let secret { items.append(URLQueryItem(name: item.authParam.isEmpty ? "api_key" : item.authParam, value: secret)) }
+        if !items.isEmpty { comps.queryItems = (comps.queryItems ?? []) + items }
+        guard let url = comps.url, url.host == URL(string: item.baseURL)?.host else {
+            throw ToolError("Il percorso deve restare sull'host dell'integrazione")
+        }
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.timeoutInterval = 20
@@ -239,14 +297,11 @@ public enum IntegrationTools {
             default: break
             }
         }
-        if let body = args["body"], method != "GET" {
+        if let body, method != "GET" {
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         let (data, response) = try await URLSession.shared.data(for: req)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        var text = String(decoding: data, as: UTF8.self)
-        if text.count > 8000 { text = String(text.prefix(8000)) + "\n…[troncato]" }
-        return "HTTP \(status)\n\(text)"
+        return ((response as? HTTPURLResponse)?.statusCode ?? 0, String(decoding: data, as: UTF8.self))
     }
 }

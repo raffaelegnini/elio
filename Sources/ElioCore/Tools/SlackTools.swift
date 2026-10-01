@@ -165,20 +165,35 @@ public enum SlackTools {
         let to = (args["to"] as? String ?? "").trimmingCharacters(in: .whitespaces)
         let text = args["text"] as? String ?? ""
         guard !to.isEmpty, !text.isEmpty else { throw ToolError("Servono destinatario e testo") }
+        // Resolve the recipient first (directory, then Slack), so the confirmation names the
+        // exact person/channel the message will go to.
+        let kind = to.hasPrefix("#") ? "channel" : "person"
+        let name = to.trimmingCharacters(in: CharacterSet(charactersIn: "@# "))
+        var recipient = to
+        var target: (id: String, isPerson: Bool)?
+        if let hit = await Directory.find(name, kind: kind, memory: ctx.memory, limit: 1).first,
+           let data = try? JSONSerialization.jsonObject(with: Data(hit.data.utf8)) as? [String: Any],
+           let slackId = data["slack_id"] as? String {
+            target = (slackId, kind == "person")
+            recipient = hit.title
+        } else if kind == "person" {
+            target = (try await SlackAPI.shared.userId(named: name), true)
+        } else {
+            target = (try await SlackAPI.shared.channelId(name), false)
+        }
+        guard let target else { throw ToolError("Destinatario non trovato: \(to)") }
+
         let approved = await ctx.gate.request(ConfirmRequest(
-            id: UUID().uuidString, title: "Invio un messaggio Slack a \(to)", detail: "\(to): \(text)",
+            id: UUID().uuidString, title: "Invio un messaggio Slack a \(recipient)", detail: "\(recipient): \(text)",
             risk: .dangerous, taskId: nil), timeout: 120)
         guard approved else { return "Messaggio non inviato: l'utente non ha confermato." }
-        let channel: String
-        if to.hasPrefix("@") {
-            let user = try await SlackAPI.shared.userId(named: to)
-            let r = try await SlackAPI.shared.call("conversations.open", ["users": user], post: true)
+        var channel = target.id
+        if target.isPerson {
+            let r = try await SlackAPI.shared.call("conversations.open", ["users": target.id], post: true)
             channel = (r["channel"] as? [String: Any])?["id"] as? String ?? ""
-        } else {
-            channel = try await SlackAPI.shared.channelId(to)
         }
         try await SlackAPI.shared.post(channel: channel, text: text)
-        return "Messaggio inviato a \(to)."
+        return "Messaggio inviato a \(recipient)."
     }
 
     static let mentions = ElioTool(

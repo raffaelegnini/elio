@@ -65,6 +65,17 @@ public actor Memory {
                 ms INTEGER NOT NULL,
                 ts REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS cache (
+                source TEXT NOT NULL,
+                key TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                search TEXT NOT NULL,
+                data TEXT NOT NULL,
+                updated REAL NOT NULL,
+                PRIMARY KEY (source, key)
+            );
+            CREATE INDEX IF NOT EXISTS cache_kind ON cache(kind);
             CREATE TABLE IF NOT EXISTS facts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 text TEXT NOT NULL,
@@ -165,6 +176,63 @@ public actor Memory {
 
     public func markReminderDone(_ id: Int) {
         run("UPDATE reminders SET done = 1, fired = ? WHERE id = ?", [Date().timeIntervalSince1970, id])
+    }
+
+    // MARK: - Synced cache (directory of people, channels, projects, integration records)
+
+    public struct CachedRecord: Codable, Sendable {
+        public let source: String
+        public let key: String
+        public let kind: String
+        public let title: String
+        public let data: String
+        public let updated: Date
+    }
+
+    /// Replaces everything a source holds with a fresh snapshot (one transaction).
+    public func replaceCache(source: String, records: [(key: String, kind: String, title: String, search: String, data: String)]) {
+        sqlite3_exec(db, "BEGIN", nil, nil, nil)
+        run("DELETE FROM cache WHERE source = ?", [source])
+        let now = Date().timeIntervalSince1970
+        for r in records {
+            run("INSERT OR REPLACE INTO cache (source, key, kind, title, search, data, updated) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [source, r.key, r.kind, r.title, Self.fold(r.search), r.data, now])
+        }
+        sqlite3_exec(db, "COMMIT", nil, nil, nil)
+    }
+
+    /// Candidates whose searchable text contains every word of the query (accents/case folded);
+    /// ranking is done by the caller.
+    public func searchCache(_ text: String, kind: String? = nil, limit: Int = 200) -> [CachedRecord] {
+        let words = Self.fold(text).split(separator: " ").map(String.init).filter { $0.count >= 2 }
+        var sql = "SELECT source, key, kind, title, data, updated FROM cache WHERE 1=1"
+        var params: [Any?] = []
+        if let kind { sql += " AND kind = ?"; params.append(kind) }
+        for w in words { sql += " AND search LIKE ?"; params.append("%\(w)%") }
+        sql += " LIMIT ?"
+        params.append(limit)
+        var rows: [CachedRecord] = []
+        query(sql, params) { s in
+            rows.append(CachedRecord(source: String(cString: sqlite3_column_text(s, 0)), key: String(cString: sqlite3_column_text(s, 1)),
+                                     kind: String(cString: sqlite3_column_text(s, 2)), title: String(cString: sqlite3_column_text(s, 3)),
+                                     data: String(cString: sqlite3_column_text(s, 4)),
+                                     updated: Date(timeIntervalSince1970: sqlite3_column_double(s, 5))))
+        }
+        return rows
+    }
+
+    public func cacheStats() -> [(source: String, count: Int, updated: Date)] {
+        var rows: [(String, Int, Date)] = []
+        query("SELECT source, COUNT(*), MAX(updated) FROM cache GROUP BY source ORDER BY source", []) { s in
+            rows.append((String(cString: sqlite3_column_text(s, 0)), Int(sqlite3_column_int64(s, 1)),
+                         Date(timeIntervalSince1970: sqlite3_column_double(s, 2))))
+        }
+        return rows
+    }
+
+    public static func fold(_ s: String) -> String {
+        s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "it_IT"))
+            .replacingOccurrences(of: #"[^a-z0-9#@._ -]"#, with: " ", options: .regularExpression)
     }
 
     // MARK: - Archive
