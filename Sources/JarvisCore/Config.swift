@@ -2,7 +2,7 @@ import Foundation
 
 /// Runtime configuration, persisted at ~/Library/Application Support/Jarvis/config.json.
 public struct JarvisConfig: Codable, Sendable {
-    public var userName: String = "Vincenzo"
+    public var userName: String = "Raffaele"
     public var claudePath: String = JarvisConfig.defaultClaudePath()
     public var claudeModel: String = "sonnet"
     public var port: UInt16 = 8765

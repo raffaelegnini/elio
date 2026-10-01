@@ -23,7 +23,7 @@ print("using:", voice["name"], voice["voice_id"])
 
 out_dir = os.environ.get("OUT", ".")
 for model in ["eleven_flash_v2_5", "eleven_turbo_v2_5"]:
-    text = "Buongiorno Vincenzo. Oggi hai tre meeting, il primo alle dieci. Vuoi che prepari il riepilogo?"
+    text = "Buongiorno Raffaele. Oggi hai tre meeting, il primo alle dieci. Vuoi che prepari il riepilogo?"
     body = json.dumps({"text": text, "model_id": model}).encode()
     url = (f"https://api.elevenlabs.io/v1/text-to-speech/{voice['voice_id']}/stream"
            f"?output_format=mp3_44100_128")

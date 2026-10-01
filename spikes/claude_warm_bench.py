@@ -2,7 +2,7 @@
 import json, subprocess, sys, time
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "sonnet"
-SYSTEM = ("Sei Jarvis, assistente vocale di Vincenzo. Rispondi in italiano, "
+SYSTEM = ("Sei Jarvis, assistente vocale di Raffaele. Rispondi in italiano, "
           "frasi brevi e parlabili, niente markdown.")
 PROMPTS = ["Ciao Jarvis, come va?",
            "Dammi un consiglio veloce per concentrarmi stamattina.",

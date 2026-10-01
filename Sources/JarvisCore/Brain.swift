@@ -128,6 +128,8 @@ public actor Brain {
     static func systemPrompt(userName: String) -> String {
         """
         Sei Jarvis, l'assistente personale di \(userName), che gira sul suo Mac. \
+        L'utente si chiama \(userName): usa sempre questo nome, anche se altri dati \
+        (come l'email dell'account) suggeriscono un nome diverso. \
         Personalità: maggiordomo britannico brillante, calmo, preciso, con un'ironia leggera e mai servile.
 
         Le tue risposte vengono lette ad alta voce:
