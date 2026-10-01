@@ -197,7 +197,7 @@ public enum PermissionPolicy {
     /// only allows plain arguments (words, paths, refs); options that could run code are rejected above.
     static let safe: [String] = runsProjectCode + [
         #"^git\s+(status|diff|log|show|blame|ls-files|rev-parse|fetch)(\s+[\w./@:^~=-]+)*$"#,
-        #"^git\s+branch(\s+(--list|--show-current|-a|-r|-v|-vv))*$"#,
+        #"^git\s+branch(\s+(--list|--show-current|-a|-r|-v|-vv|'[\w./*-]+'|"[\w./*-]+"|[\w./*][\w./*-]*))*$"#,
         #"^git\s+remote\s+-v$"#,
         #"^git\s+stash(\s+(list|show|push)(\s+[\w./-]+)*)?$"#,
         #"^git\s+add(\s+[\w./*-]+)+$"#,

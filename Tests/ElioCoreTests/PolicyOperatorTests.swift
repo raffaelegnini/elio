@@ -6,6 +6,9 @@ import Testing
     @Test func groupedBranchCommandsAreSafe() {
         #expect(PermissionPolicy.decideBash("(git checkout elio/calc-sub 2>/dev/null || git checkout -b elio/calc-sub) && git branch") == .allow)
         #expect(PermissionPolicy.decideBash("git checkout calc.py") != .allow)
+        #expect(PermissionPolicy.decideBash("git branch --list 'elio/*' && git checkout -b elio/calc-sub 2>&1 || git checkout elio/calc-sub") == .allow)
+        #expect(PermissionPolicy.decideBash("git branch -D elio/x") != .allow)
+        #expect(PermissionPolicy.decideBash("git branch -m main other") != .allow)
         #expect(PermissionPolicy.decideBash(#"python3 -c "from calc import sub; print(sub(5,3))""#) == .allow)
     }
 
