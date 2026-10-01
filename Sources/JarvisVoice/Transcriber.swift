@@ -60,6 +60,7 @@ public final class UtteranceTranscriber: @unchecked Sendable {
             return final.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
+        VoiceLog.write("stt begin: \(inputFormat) → \(format)")
         lock.withLock {
             self.converter = converter
             self.input = continuation
@@ -71,9 +72,18 @@ public final class UtteranceTranscriber: @unchecked Sendable {
     /// Thread-safe; called from the audio thread.
     public func feed(_ buffer: AVAudioPCMBuffer) {
         let (converter, input) = lock.withLock { (self.converter, self.input) }
-        guard let converter, let input, let converted = converter.convert(buffer) else { return }
+        guard let converter, let input else { return }
+        guard let converted = converter.convert(buffer) else {
+            if convertFailures == 0 { VoiceLog.write("stt convert failed from \(buffer.format) to \(converter.output)") }
+            convertFailures += 1
+            return
+        }
+        fedBuffers += 1
         input.yield(AnalyzerInput(buffer: converted))
     }
+
+    public private(set) var fedBuffers = 0
+    private var convertFailures = 0
 
     public func finish() async -> String {
         let (input, analyzer, collector) = lock.withLock { () -> (AsyncStream<AnalyzerInput>.Continuation?, SpeechAnalyzer?, Task<String, Never>?) in

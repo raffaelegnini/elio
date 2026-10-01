@@ -35,6 +35,9 @@ public final class VoiceLoop {
     private let client: DaemonClient
     private var transcriber: UtteranceTranscriber?
     private var beginTask: Task<Void, Never>?
+    private var utteranceArmed = false
+    private var wakeSeen = false
+    private var abandoned = false
     private var armedUntil: Date?
     private var currentRequestId: String?
     private var splitter = SentenceSplitter()
@@ -66,6 +69,7 @@ public final class VoiceLoop {
             try await UtteranceTranscriber.ensureModel(locale: Locale(identifier: "it_IT"))
             try audio.start()
             pipeline.inputFormat = audio.inputFormat
+            VoiceLog.write("audio started, input format: \(String(describing: audio.inputFormat))")
             state = .listening
             speaker.warmCache(Self.acks)
         } catch {
@@ -102,6 +106,7 @@ public final class VoiceLoop {
     // MARK: - Mic events
 
     private func handle(_ event: InputPipeline.Event) {
+        VoiceLog.write("vad \(event) speaking=\(speaker.isSpeaking) armed=\(isArmed)")
         switch event {
         case .speechStart:
             if speaker.isSpeaking {
@@ -111,6 +116,7 @@ public final class VoiceLoop {
             guard alwaysListening || isArmed else { return }
             beginUtterance()
         case .speechEnd:
+            if abandoned { abandoned = false; return }
             Task { await endUtterance() }
         }
     }
@@ -120,10 +126,15 @@ public final class VoiceLoop {
     private func beginUtterance() {
         guard let format = audio.inputFormat else { return }
         let t = UtteranceTranscriber(locale: Locale(identifier: "it_IT"))
-        t.onPartial = { [weak self] text in Task { @MainActor in self?.partial = text } }
+        let armed = isArmed
+        utteranceArmed = armed
+        wakeSeen = false
+        abandoned = false
+        t.onPartial = { [weak self] text in Task { @MainActor in self?.partialChanged(text, from: t) } }
         transcriber = t
         partial = ""
-        if state != .thinking { state = .hearing }
+        // Only light up when the user is clearly talking to Jarvis.
+        if armed, state != .thinking { state = .hearing }
         beginTask = Task {
             do {
                 try await t.begin(inputFormat: format)
@@ -134,6 +145,32 @@ public final class VoiceLoop {
         }
     }
 
+    /// Unarmed speech is only for the wake word: show it once "Jarvis" is heard,
+    /// drop it as soon as it's clearly someone talking about something else.
+    private func partialChanged(_ text: String, from t: UtteranceTranscriber) {
+        guard transcriber === t, !abandoned else { return }
+        if utteranceArmed || wakeSeen {
+            partial = text
+            return
+        }
+        if WakeWord.strip(text) != nil {
+            wakeSeen = true
+            partial = text
+            if state != .thinking { state = .hearing }
+        } else if text.split(separator: " ").count >= 2 {
+            abandonUtterance()
+        }
+    }
+
+    private func abandonUtterance() {
+        abandoned = true
+        pipeline.detach()
+        if let t = transcriber { Task { await t.cancel() } }
+        transcriber = nil
+        beginTask = nil
+        partial = ""
+    }
+
     private func endUtterance() async {
         guard let t = transcriber else { return }
         transcriber = nil
@@ -141,6 +178,7 @@ public final class VoiceLoop {
         beginTask = nil
         pipeline.detach()
         let text = await t.finish()
+        VoiceLog.write("stt final: '\(text)' (fed \(t.fedBuffers) buffers)")
         partial = ""
         if state == .hearing { state = .listening }
         guard !text.isEmpty else { return }
@@ -170,6 +208,7 @@ public final class VoiceLoop {
         turns.append(Turn(role: "user", text: text))
         turns.append(Turn(role: "jarvis", text: ""))
         currentRequestId = client.say(text)
+        VoiceLog.write("→ daemon: '\(text)'")
         state = .thinking
     }
 
@@ -237,15 +276,15 @@ public final class VoiceLoop {
 }
 
 /// Runs on the audio thread: VAD, pre-roll ring buffer, routing buffers to the transcriber.
-final class InputPipeline: @unchecked Sendable {
-    enum Event { case speechStart, speechEnd }
+public final class InputPipeline: @unchecked Sendable {
+    public enum Event { case speechStart, speechEnd }
 
-    var onEvent: ((Event) -> Void)?
+    public var onEvent: ((Event) -> Void)?
     var onLevel: ((Float) -> Void)?
     var inputFormat: AVAudioFormat?
     var speaking: Bool {
         get { lock.withLock { vad.extraMarginDb > 0 } }
-        set { lock.withLock { vad.extraMarginDb = newValue ? 8 : 0 } }
+        set { lock.withLock { vad.extraMarginDb = newValue ? 20 : 0 } }
     }
 
     private let lock = NSLock()
@@ -257,7 +296,9 @@ final class InputPipeline: @unchecked Sendable {
     private var target: UtteranceTranscriber?
     private var levelTick = 0
 
-    func process(_ buffer: AVAudioPCMBuffer, levelDb: Float) {
+    public init() {}
+
+    public func process(_ buffer: AVAudioPCMBuffer, levelDb: Float) {
         let duration = Double(buffer.frameLength) / buffer.format.sampleRate
         let event = lock.withLock { () -> VoiceActivityDetector.Event? in
             let event = vad.process(levelDb: levelDb, duration: duration)
@@ -278,10 +319,16 @@ final class InputPipeline: @unchecked Sendable {
         }
         levelTick += 1
         if levelTick % 3 == 0 { onLevel?(levelDb) }
+        if levelTick % 50 == 0 {
+            let (floor, inSpeech) = lock.withLock { (vad.noiseFloorDb, vad.inSpeech) }
+            VoiceLog.write(String(format: "level %.1f dB floor %.1f inSpeech %@ frames %d @ %.0f Hz ch %d",
+                                  levelDb, floor, inSpeech ? "Y" : "N", buffer.frameLength,
+                                  buffer.format.sampleRate, buffer.format.channelCount))
+        }
         if let event { onEvent?(event == .speechStart ? .speechStart : .speechEnd) }
     }
 
-    func attach(_ transcriber: UtteranceTranscriber) {
+    public func attach(_ transcriber: UtteranceTranscriber) {
         lock.withLock {
             for b in pending { transcriber.feed(b) }
             pending = []
@@ -290,7 +337,7 @@ final class InputPipeline: @unchecked Sendable {
         }
     }
 
-    func detach() {
+    public func detach() {
         lock.withLock {
             target = nil
             capturing = false

@@ -8,19 +8,19 @@ public enum WakeWord {
     /// Returns the command after the wake word ("" if only the wake word was said),
     /// or nil if the utterance doesn't start with the wake word.
     public static func strip(_ utterance: String) -> String? {
-        var words = utterance
-            .split(whereSeparator: { $0 == " " })
-            .map(String.init)
-        // Skip a leading interjection: "ehi jarvis", "ok jarvis".
-        if let first = words.first, ["ehi", "hey", "ehy", "ok", "okay", "ei"].contains(clean(first)) {
-            words.removeFirst()
+        let words = utterance.split(whereSeparator: { $0 == " " }).map(String.init)
+        // The wake word may follow a short interjection the recognizer splits oddly
+        // ("ehi jarvis" → "e i jarvis"), so look at the first three words.
+        for (i, word) in words.prefix(3).enumerated() where matches(clean(word)) {
+            let before = words.prefix(i).map(clean)
+            guard before.allSatisfy({ interjections.contains($0) }) else { return nil }
+            let rest = words.dropFirst(i + 1).joined(separator: " ")
+            return rest.trimmingCharacters(in: CharacterSet(charactersIn: " ,.!?;:"))
         }
-        guard let first = words.first else { return nil }
-        let token = clean(first)
-        guard matches(token) else { return nil }
-        let rest = words.dropFirst().joined(separator: " ")
-        return rest.trimmingCharacters(in: CharacterSet(charactersIn: " ,.!?;:"))
+        return nil
     }
+
+    private static let interjections: Set<String> = ["ehi", "hey", "ehy", "ok", "okay", "ei", "e", "i", "hei", "ah", "oh", "allora"]
 
     static func matches(_ token: String) -> Bool {
         if variants.contains(token) { return true }
@@ -114,34 +114,44 @@ public enum Speakable {
 }
 
 /// Energy-based voice activity detection with an adaptive noise floor.
-/// Pure state machine: feed one RMS level (dBFS) per audio buffer.
+/// Pure state machine: feed one RMS level (dBFS) per audio buffer with its duration.
 public struct VoiceActivityDetector {
     public enum Event: Equatable { case speechStart, speechEnd }
 
-    public var startMarginDb: Float = 12      // above noise floor to count as speech
-    public var startFrames = 3                // consecutive loud buffers to start (~60ms)
-    public var endSilence: TimeInterval = 0.8 // silence that ends an utterance
-    public var maxUtterance: TimeInterval = 30
-    /// Extra margin while Jarvis is talking, so residual echo doesn't trigger barge-in.
+    public var startMarginDb: Float = 14       // above noise floor to start speech
+    public var endMarginDb: Float = 7          // below this (over the floor) counts as silence
+    public var startDuration: TimeInterval = 0.15
+    public var endSilence: TimeInterval = 0.7
+    public var maxUtterance: TimeInterval = 15
+    /// Extra start margin while Jarvis is talking, so its own voice doesn't trigger barge-in.
     public var extraMarginDb: Float = 0
 
-    public private(set) var noiseFloorDb: Float = -60
+    public private(set) var noiseFloorDb: Float = -50
     public private(set) var inSpeech = false
-    private var loudFrames = 0
+    private var loudTime: TimeInterval = 0
     private var silence: TimeInterval = 0
     private var speechDuration: TimeInterval = 0
+    private var calibrated: TimeInterval = 0
 
     public init() {}
 
     public mutating func process(levelDb: Float, duration: TimeInterval) -> Event? {
-        let threshold = noiseFloorDb + startMarginDb + extraMarginDb
-        let loud = levelDb > threshold
+        // The floor follows the room: drops fast to quieter levels, rises slowly with
+        // steady noise (also during speech, so a noisy room can't keep an utterance open).
+        let rise: Float = inSpeech ? 0.004 : 0.03
+        let rate: Float = levelDb < noiseFloorDb ? 0.25 : rise
+        noiseFloorDb = max(-90, min(-25, noiseFloorDb + (levelDb - noiseFloorDb) * rate))
+
+        // First second: only learn the room.
+        if calibrated < 1 {
+            calibrated += duration
+            noiseFloorDb = noiseFloorDb * 0.7 + levelDb * 0.3
+            return nil
+        }
+
         if !inSpeech {
-            // Track the floor only outside speech; rise slowly, fall fast.
-            let rate: Float = levelDb < noiseFloorDb ? 0.3 : 0.02
-            noiseFloorDb = max(-90, min(-20, noiseFloorDb + (levelDb - noiseFloorDb) * rate))
-            loudFrames = loud ? loudFrames + 1 : 0
-            if loudFrames >= startFrames {
+            loudTime = levelDb > noiseFloorDb + startMarginDb + extraMarginDb ? loudTime + duration : 0
+            if loudTime >= startDuration {
                 inSpeech = true
                 silence = 0
                 speechDuration = 0
@@ -150,10 +160,10 @@ public struct VoiceActivityDetector {
             return nil
         }
         speechDuration += duration
-        silence = loud ? 0 : silence + duration
+        silence = levelDb > noiseFloorDb + endMarginDb ? 0 : silence + duration
         if silence >= endSilence || speechDuration >= maxUtterance {
             inSpeech = false
-            loudFrames = 0
+            loudTime = 0
             return .speechEnd
         }
         return nil
@@ -161,7 +171,7 @@ public struct VoiceActivityDetector {
 
     public mutating func reset() {
         inSpeech = false
-        loudFrames = 0
+        loudTime = 0
         silence = 0
     }
 }

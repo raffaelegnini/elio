@@ -1,9 +1,10 @@
 import AVFoundation
 import Foundation
 
-/// One AVAudioEngine for both mic and speaker. Voice processing (echo cancellation)
-/// needs input and output on the same engine, otherwise Jarvis hears itself and
-/// barge-in triggers on its own voice.
+/// One AVAudioEngine for mic and speaker. Voice processing (AEC) is deliberately off:
+/// on macOS it delivers a 7-channel stream the recognizer can't use and it also
+/// cancels other system audio. Echo is handled by VoiceLoop (half-duplex + high
+/// barge-in margin) instead.
 public final class AudioIO: @unchecked Sendable {
     public let engine = AVAudioEngine()
     public let player = AVAudioPlayerNode()
@@ -17,18 +18,17 @@ public final class AudioIO: @unchecked Sendable {
 
     public func start() throws {
         let input = engine.inputNode
-        try input.setVoiceProcessingEnabled(true)
-        // Voice processing ducks all other Mac audio by default; Jarvis listens all day, so don't.
-        input.voiceProcessingOtherAudioDuckingConfiguration =
-            AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
 
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
 
         let format = input.outputFormat(forBus: 0)
-        inputFormat = format
+        guard let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate,
+                                       channels: 1, interleaved: false) else { throw VoiceError.audioFormat }
+        inputFormat = mono
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            self?.onInput?(buffer, Self.levelDb(buffer))
+            guard let m = Self.firstChannel(of: buffer, as: mono) else { return }
+            self?.onInput?(m, Self.levelDb(m))
         }
         engine.prepare()
         try engine.start()
@@ -41,7 +41,17 @@ public final class AudioIO: @unchecked Sendable {
         engine.stop()
     }
 
-    static func levelDb(_ buffer: AVAudioPCMBuffer) -> Float {
+    /// Mic arrays expose several channels; channel 0 is the usable voice signal.
+    static func firstChannel(of buffer: AVAudioPCMBuffer, as mono: AVAudioFormat) -> AVAudioPCMBuffer? {
+        guard let src = buffer.floatChannelData,
+              let out = AVAudioPCMBuffer(pcmFormat: mono, frameCapacity: buffer.frameLength),
+              let dst = out.floatChannelData else { return nil }
+        dst[0].update(from: src[0], count: Int(buffer.frameLength))
+        out.frameLength = buffer.frameLength
+        return out
+    }
+
+    public static func levelDb(_ buffer: AVAudioPCMBuffer) -> Float {
         guard let data = buffer.floatChannelData, buffer.frameLength > 0 else { return -100 }
         let samples = data[0]
         var sum: Float = 0

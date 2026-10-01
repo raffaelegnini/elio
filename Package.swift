@@ -16,6 +16,7 @@ let package = Package(
         .executableTarget(name: "jarvis", dependencies: ["JarvisCore"]),
         .target(name: "JarvisVoice", dependencies: ["JarvisCore"]),
         .executableTarget(name: "JarvisApp", dependencies: ["JarvisCore", "JarvisVoice"]),
+        .executableTarget(name: "voicesim", dependencies: ["JarvisCore", "JarvisVoice"]),
         .testTarget(name: "JarvisCoreTests", dependencies: ["JarvisCore"]),
     ],
     swiftLanguageModes: [.v5]
