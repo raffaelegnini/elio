@@ -74,7 +74,7 @@ struct DashboardView: View {
                 }
                 Section(title: "SISTEMA") {
                     StatRow(name: "Daemon", value: loop.connected ? "online" : "offline", ok: loop.connected)
-                    StatRow(name: "Microfono", value: loop.state == .off ? "spento" : "attivo", ok: loop.state != .off)
+                    StatRow(name: "Microfono", value: loop.state == .off ? "spento" : loop.inputDevice, ok: loop.state != .off)
                     StatRow(name: "Wake word", value: loop.alwaysListening ? "\"Jarvis\"" : "solo ⌥⌘J", ok: true)
                     StatRow(name: "Latenza media", value: averageLatency, ok: true)
                     StatRow(name: "Voce (sessione)", value: "\(loop.charactersThisSession) caratteri", ok: true)

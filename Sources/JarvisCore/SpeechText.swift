@@ -121,7 +121,7 @@ public struct VoiceActivityDetector {
     public var startMarginDb: Float = 14       // above noise floor to start speech
     public var endMarginDb: Float = 7          // below this (over the floor) counts as silence
     public var startDuration: TimeInterval = 0.15
-    public var endSilence: TimeInterval = 0.7
+    public var endSilence: TimeInterval = 0.9
     public var maxUtterance: TimeInterval = 15
     /// Extra start margin while Jarvis is talking, so its own voice doesn't trigger barge-in.
     public var extraMarginDb: Float = 0

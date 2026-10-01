@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import Foundation
 import JarvisCore
@@ -26,6 +27,7 @@ public final class VoiceLoop {
     public private(set) var connected = false
     public private(set) var charactersThisSession = 0
     public private(set) var lastError: String?
+    public private(set) var inputDevice = ""
     public var alwaysListening = true
     /// Background agents, newest last.
     public private(set) var tasks: [TaskInfo] = []
@@ -51,7 +53,8 @@ public final class VoiceLoop {
     private var splitter = SentenceSplitter()
     private var requestStart = Date()
 
-    static let followUpWindow: TimeInterval = 6
+    static let followUpWindow: TimeInterval = 8
+    static let wakeWindow: TimeInterval = 10
     static let acks = ["Sì?", "Dimmi."]
 
     public init(config: JarvisConfig, token: String) {
@@ -77,7 +80,17 @@ public final class VoiceLoop {
             try await UtteranceTranscriber.ensureModel(locale: Locale(identifier: "it_IT"))
             try audio.start()
             pipeline.inputFormat = audio.inputFormat
-            VoiceLog.write("audio started, input format: \(String(describing: audio.inputFormat))")
+            inputDevice = audio.inputDeviceName
+            VoiceLog.write("audio started on '\(inputDevice)', format: \(String(describing: audio.inputFormat))")
+            audio.onRouteChange = { [weak self] format in
+                guard let self else { return }
+                self.inputDevice = self.audio.inputDeviceName
+                VoiceLog.write("audio route changed → '\(self.inputDevice)', format: \(String(describing: format))")
+                // An utterance captured on the old device can't continue.
+                if self.transcriber != nil { self.abandonUtterance() }
+                self.pipeline.inputFormat = format
+                self.pipeline.resetVAD()
+            }
             state = .listening
             speaker.warmCache(Self.acks)
         } catch {
@@ -92,9 +105,11 @@ public final class VoiceLoop {
             interrupt()
             return
         }
-        armedUntil = Date().addingTimeInterval(8)
-        speaker.enqueue(Self.acks[0])
-        speaker.endUtterance()
+        // A short chime, not speech: speaking would raise the mic threshold
+        // right when the user starts the command.
+        armedUntil = Date().addingTimeInterval(Self.wakeWindow)
+        NSSound(named: "Tink")?.play()
+        if state != .thinking { state = .hearing }
     }
 
     public func interrupt() {
@@ -188,7 +203,7 @@ public final class VoiceLoop {
         let text = await t.finish()
         VoiceLog.write("stt final: '\(text)' (fed \(t.fedBuffers) buffers)")
         partial = ""
-        if state == .hearing { state = .listening }
+        if state == .hearing, !isArmed { state = .listening }
         guard !text.isEmpty else { return }
 
         let command: String
@@ -338,8 +353,9 @@ public final class VoiceLoop {
         } else {
             pipeline.speaking = false
             if state == .speaking { state = .listening }
-            // Follow-up window: answer without repeating the wake word.
-            armedUntil = Date().addingTimeInterval(Self.followUpWindow)
+            // Follow-up window: answer without repeating the wake word (never shorten a longer one).
+            let followUp = Date().addingTimeInterval(Self.followUpWindow)
+            armedUntil = max(armedUntil ?? followUp, followUp)
         }
     }
 
@@ -408,6 +424,15 @@ public final class InputPipeline: @unchecked Sendable {
             pending = []
             capturing = false
             target = transcriber
+        }
+    }
+
+    public func resetVAD() {
+        lock.withLock {
+            vad = VoiceActivityDetector()
+            pending = []
+            capturing = false
+            preRoll = []
         }
     }
 

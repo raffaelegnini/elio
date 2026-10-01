@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 
 /// One AVAudioEngine for mic and speaker. Voice processing (AEC) is deliberately off:
@@ -12,15 +13,48 @@ public final class AudioIO: @unchecked Sendable {
                                               channels: 1, interleaved: false)!
     /// Called on the audio thread with each mic buffer and its level in dBFS.
     public var onInput: ((AVAudioPCMBuffer, Float) -> Void)?
+    /// Called after the audio route changed (AirPods connected/removed) and the engine restarted.
+    public var onRouteChange: ((AVAudioFormat?) -> Void)?
     public private(set) var inputFormat: AVAudioFormat?
+    private var configObserver: NSObjectProtocol?
 
     public init() {}
 
     public func start() throws {
-        let input = engine.inputNode
-
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        try startInput()
+
+        // AirPods connecting makes them the default mic: the engine stops itself and
+        // must be rebuilt with the new device format, or Jarvis goes deaf.
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            self?.restart()
+        }
+    }
+
+    private func restart() {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        engine.reset()
+        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        do {
+            try startInput()
+            onRouteChange?(inputFormat)
+        } catch {
+            NSLog("Jarvis audio restart failed: \(error)")
+            // The new device may not be ready yet: retry once shortly after.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self, !self.engine.isRunning else { return }
+                try? self.startInput()
+                self.onRouteChange?(self.inputFormat)
+            }
+        }
+    }
+
+    private func startInput() throws {
+        let input = engine.inputNode
 
         let format = input.outputFormat(forBus: 0)
         guard let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate,
@@ -33,6 +67,10 @@ public final class AudioIO: @unchecked Sendable {
         engine.prepare()
         try engine.start()
         player.play()
+    }
+
+    public var inputDeviceName: String {
+        AVCaptureDeviceNameProvider.defaultInputName()
     }
 
     public func stop() {
@@ -88,5 +126,23 @@ final class BufferConverter {
             return buffer
         }
         return status == .error || out.frameLength == 0 ? nil : out
+    }
+}
+
+enum AVCaptureDeviceNameProvider {
+    static func defaultInputName() -> String {
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr
+        else { return "?" }
+        var name: Unmanaged<CFString>?
+        size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        address.mSelector = kAudioObjectPropertyName
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &name) == noErr, let name
+        else { return "?" }
+        return name.takeRetainedValue() as String
     }
 }
