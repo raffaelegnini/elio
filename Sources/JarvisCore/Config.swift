@@ -17,6 +17,8 @@ public struct JarvisConfig: Codable, Sendable {
     public var briefLatest: String = "09:30"
     /// Open the Meet pre-join this many minutes before a meeting (0 = off).
     public var meetingLeadMinutes: Int = 2
+    public var slackClockInChannel: String = "team-saluti"
+    public var slackClockInText: String = "buongiorno"
 
     public init() {}
 
@@ -35,6 +37,8 @@ public struct JarvisConfig: Codable, Sendable {
         briefEarliest = try c.decodeIfPresent(String.self, forKey: .briefEarliest) ?? d.briefEarliest
         briefLatest = try c.decodeIfPresent(String.self, forKey: .briefLatest) ?? d.briefLatest
         meetingLeadMinutes = try c.decodeIfPresent(Int.self, forKey: .meetingLeadMinutes) ?? d.meetingLeadMinutes
+        slackClockInChannel = try c.decodeIfPresent(String.self, forKey: .slackClockInChannel) ?? d.slackClockInChannel
+        slackClockInText = try c.decodeIfPresent(String.self, forKey: .slackClockInText) ?? d.slackClockInText
     }
 
     static func defaultClaudePath() -> String {

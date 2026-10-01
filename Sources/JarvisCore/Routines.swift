@@ -56,11 +56,13 @@ public actor Routines {
     public func runBrief() async {
         await brain?.runRoutine(kind: "brief", prompt: """
         [routine: briefing del mattino] Raffaele ha appena iniziato la giornata lavorativa. Prepara il briefing:
-        1. calendar_events per oggi; 2. list_reminders; 3. night_recap per i lavori fatti stanotte; 4. list_tasks.
+        1. calendar_events per oggi; 2. list_reminders; 3. night_recap per i lavori fatti stanotte; 4. list_tasks;
+        5. slack_mentions e slack_dms per le ultime 16 ore (se Slack non è collegato, ignoralo).
         Poi mostra il dettaglio con show_on_screen (titolo "Briefing di oggi": agenda completa con orari, promemoria, \
-        esito dei lavori notturni con i branch da revisionare).
-        A voce: saluto breve, quanti meeting e qual è il primo, cose da ricordare, esito dei lavori notturni. Massimo cinque frasi.
-        Ricordagli il clock in su Slack (scrivere "buongiorno" nel canale): non è ancora integrato, quindi suggeriscilo soltanto.
+        esito dei lavori notturni con i branch da revisionare, menzioni e DM Slack importanti).
+        A voce: saluto breve, quanti meeting e qual è il primo, cose da ricordare, esito dei lavori notturni, \
+        chi lo cerca su Slack. Massimo cinque frasi.
+        Infine chiama slack_clock_in: chiede lei la conferma all'utente (se Slack non è collegato, ricordagli di farlo a mano).
         """)
     }
 

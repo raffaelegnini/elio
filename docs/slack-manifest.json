@@ -1,0 +1,29 @@
+{
+  "display_information": {
+    "name": "Jarvis",
+    "description": "Assistente personale di Raffaele: clock in, menzioni e DM per il recap."
+  },
+  "oauth_config": {
+    "scopes": {
+      "user": [
+        "chat:write",
+        "channels:read",
+        "channels:history",
+        "groups:read",
+        "groups:history",
+        "im:read",
+        "im:history",
+        "mpim:read",
+        "im:write",
+        "mpim:history",
+        "search:read",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

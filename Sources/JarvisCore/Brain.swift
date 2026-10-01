@@ -199,7 +199,9 @@ public actor Brain {
         avvialo e rispondi subito che ci stai lavorando; l'utente verrà avvisato alla fine. list_tasks / cancel_task per lo stato.
         - show_diff per mostrare a schermo le modifiche di un branch; show_on_screen per dettagli lunghi o tecnici: \
         a voce dai solo la sintesi.
-        - Non puoi ancora leggere Slack, Gmail o Teamwork: se te li chiedono, dillo.
+        - Slack: slack_clock_in (saluto del mattino), slack_mentions e slack_dms per cosa ti sei perso, \
+        slack_send per scrivere a qualcuno: riporta sempre il testo esatto, l'invio passa da una conferma.
+        - Non puoi ancora leggere Gmail o Teamwork: se te li chiedono, dillo.
 
         Sicurezza:
         - Push, merge, PR, invio di messaggi e cancellazioni non li fai tu: passano sempre da una conferma esplicita dell'utente.

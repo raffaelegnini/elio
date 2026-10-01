@@ -56,6 +56,10 @@ public enum ToolRegistry {
         ReminderTools.set,
         ReminderTools.list,
         ApprovalTool.approve,
+        SlackTools.clockIn,
+        SlackTools.send,
+        SlackTools.mentions,
+        SlackTools.dms,
     ]
 
     public static func listingJSON() -> String {
@@ -71,7 +75,12 @@ public enum ToolRegistry {
         let ctx = taskCtx
         // Approvals wait for the user; everything else must answer quickly, or the
         // conversation stalls (e.g. a macOS permission prompt nobody has clicked yet).
-        let timeout: TimeInterval = name == "approve" ? 600 : (name == "start_task" ? 60 : 20)
+        let timeout: TimeInterval = switch name {
+        case "approve": 600
+        case "slack_clock_in", "slack_send": 150   // waits for the user's confirmation
+        case "start_task": 60
+        default: 20
+        }
         let box = ArgsBox(args)
         do {
             return (try await withTimeout(timeout) { try await tool.run(box.value, ctx) }, false)

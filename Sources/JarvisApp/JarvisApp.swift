@@ -13,13 +13,23 @@ struct JarvisApp: App {
         MenuBarExtra {
             MenuContent(delegate: delegate)
         } label: {
-            Image(systemName: delegate.menuIcon)
+            MenuIcon(delegate: delegate)
         }
     }
 }
 
+/// Both views observe the delegate: `loop` is created after the first render,
+/// and a plain `let` would leave the menu stuck on its initial (empty) state.
+struct MenuIcon: View {
+    @ObservedObject var delegate: AppDelegate
+
+    var body: some View {
+        Image(systemName: delegate.menuIcon)
+    }
+}
+
 struct MenuContent: View {
-    let delegate: AppDelegate
+    @ObservedObject var delegate: AppDelegate
 
     var body: some View {
         if let loop = delegate.loop {
@@ -28,7 +38,7 @@ struct MenuContent: View {
             Divider()
             Button("Parla con Jarvis  ⌥⌘J") { delegate.activate() }
             Button("Mostra HUD") { delegate.hud.show(pinned: true) }
-            Button("Dashboard") { delegate.showDashboard() }
+            Button("Dashboard  ⌥⌘D") { delegate.showDashboard() }
             if !loop.diffs.isEmpty {
                 Button("Revisione ultimo diff") { delegate.showDashboard(review: loop.diffs.first) }
             }
@@ -51,6 +61,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let dashboardState = DashboardState()
     private var dashboard: NSWindow?
     private var hotKey: HotKey?
+    private var dashboardKey: HotKey?
+
+    private static var launchedAtLogin: Bool {
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        return event?.eventID == kAEOpenApplication
+            && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+    }
     private var observer: Task<Void, Never>?
 
     var menuIcon: String {
@@ -75,6 +92,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         hotKey = HotKey(keyCode: 38 /* J */, modifiers: [.option, .command]) { [weak self] in
             self?.activate()
         }
+        // The menu bar icon can hide behind the notch: ⌥⌘D always opens the dashboard.
+        dashboardKey = HotKey(keyCode: 2 /* D */, modifiers: [.option, .command]) { [weak self] in
+            self?.showDashboard()
+        }
+        // Opened by hand (not at login): show the dashboard right away.
+        if !Self.launchedAtLogin { showDashboard() }
         Task { await loop.start() }
         observeState(loop)
     }
