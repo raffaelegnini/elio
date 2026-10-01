@@ -11,6 +11,7 @@ struct DashboardView: View {
     @State private var agenda: [AgendaItem] = []
     @State private var agendaNote: String?
     @State private var reminders: [String] = []
+    @State private var showNetwork = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -102,8 +103,23 @@ struct DashboardView: View {
 
     private var center: some View {
         VStack(spacing: 12) {
-            NeuralCore(loop: loop)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ZStack(alignment: .topTrailing) {
+                if showNetwork {
+                    NeuralGraphView(loop: loop)
+                        .background(RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.18)))
+                        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.line))
+                } else {
+                    NeuralCore(loop: loop)
+                }
+                Picker("", selection: $showNetwork) {
+                    Text("RETE").tag(true)
+                    Text("NUCLEO").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 150)
+                .padding(10)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             Text(loop.state.label.uppercased())
                 .font(.system(size: 13, weight: .semibold, design: .monospaced)).tracking(4)
                 .foregroundStyle(Theme.tint(loop.state))
