@@ -54,6 +54,8 @@ public actor Routines {
     }
 
     public func runBrief() async {
+        // The app plays the opening theme while Claude prepares the brief.
+        await brain?.publish(ServerMessage(type: .event, kind: "briefStart"))
         await brain?.runRoutine(kind: "brief", prompt: """
         [routine: briefing del mattino] Raffaele ha appena iniziato la giornata lavorativa. Prepara il briefing:
         1. calendar_events per oggi; 2. list_reminders; 3. night_recap per i lavori fatti stanotte; 4. list_tasks;

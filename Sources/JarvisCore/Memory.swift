@@ -47,6 +47,12 @@ public actor Memory {
                 summary TEXT,
                 ended REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS facts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'generale',
+                created REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 at REAL NOT NULL,
@@ -112,6 +118,42 @@ public actor Memory {
 
     public func markReminderDone(_ id: Int) {
         run("UPDATE reminders SET done = 1 WHERE id = ?", [id])
+    }
+
+    // MARK: - Long-term facts
+
+    public struct Fact: Sendable, Identifiable {
+        public let id: Int; public let text: String; public let category: String; public let created: Date
+    }
+
+    @discardableResult
+    public func addFact(_ text: String, category: String) -> Int {
+        run("INSERT INTO facts (text, category, created) VALUES (?, ?, ?)", [text, category, Date().timeIntervalSince1970])
+        return Int(sqlite3_last_insert_rowid(db))
+    }
+
+    public func facts(matching search: String? = nil, limit: Int = 200) -> [Fact] {
+        var rows: [Fact] = []
+        let words = (search ?? "").lowercased().split(separator: " ").filter { $0.count > 2 }.map(String.init)
+        var sql = "SELECT id, text, category, created FROM facts"
+        var params: [Any?] = []
+        if !words.isEmpty {
+            sql += " WHERE " + words.map { _ in "(lower(text) LIKE ? OR lower(category) LIKE ?)" }.joined(separator: " OR ")
+            for w in words { params += ["%\(w)%", "%\(w)%"] }
+        }
+        sql += " ORDER BY created DESC LIMIT ?"
+        params.append(limit)
+        query(sql, params) { stmt in
+            rows.append(Fact(id: Int(sqlite3_column_int64(stmt, 0)), text: String(cString: sqlite3_column_text(stmt, 1)),
+                             category: String(cString: sqlite3_column_text(stmt, 2)),
+                             created: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))))
+        }
+        return rows
+    }
+
+    public func deleteFact(_ id: Int) -> Bool {
+        run("DELETE FROM facts WHERE id = ?", [id])
+        return sqlite3_changes(db) > 0
     }
 
     // MARK: - Scheduled agent tasks

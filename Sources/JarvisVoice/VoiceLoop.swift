@@ -341,6 +341,8 @@ public final class VoiceLoop {
 
     private func handleEvent(_ msg: ServerMessage) {
         switch msg.kind {
+        case "briefStart":
+            playOpening()
         case "task", "taskDone":
             if let info = TaskInfo.fromJSON(msg.payload) {
                 if let i = tasks.firstIndex(where: { $0.id == info.id }) { tasks[i] = info } else { tasks.append(info) }
@@ -439,7 +441,33 @@ public final class VoiceLoop {
         if turns.count > 60 { turns.removeFirst(turns.count - 60) }
     }
 
+    // MARK: - Brief opening theme
+
+    private var opening: AVAudioPlayer?
+
+    /// ~/Library/Application Support/Jarvis/sounds/brief-opening.m4a, if present.
+    private func playOpening() {
+        let url = JarvisPaths.support.appendingPathComponent("sounds/brief-opening.m4a")
+        guard FileManager.default.fileExists(atPath: url.path),
+              let player = try? AVAudioPlayer(contentsOf: url) else { return }
+        player.volume = 0.8
+        player.play()
+        opening = player
+    }
+
+    /// Jarvis starts talking: the theme fades out under the voice.
+    private func fadeOpening() {
+        guard let player = opening, player.isPlaying else { return }
+        player.setVolume(0, fadeDuration: 2.0)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.1))
+            player.stop()
+            if self.opening === player { self.opening = nil }
+        }
+    }
+
     private func speakingChanged(_ speaking: Bool) {
+        if speaking { fadeOpening() }
         if speaking {
             state = .speaking
             pipeline.speaking = true
