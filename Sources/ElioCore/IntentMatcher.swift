@@ -11,6 +11,7 @@ public enum LocalIntent: Equatable, Sendable {
     case brief
     case recap
     case done
+    case thanks
 
     public enum VolumeChange: Equatable, Sendable {
         case set(Int), up, down, mute, unmute
@@ -36,6 +37,13 @@ public struct IntentMatcher: Sendable {
         if text.range(of: "^" + lead + #"(?:recap|riepilogo|resoconto)(?: della giornata| di oggi| di fine giornata| giornaliero)?(?: per favore)?$|^(?:com'è andata oggi|fine giornata|chiudiamo la giornata)$"#,
                       options: .regularExpression) != nil {
             return MatchedIntent(intent: .recap, lang: .it)
+        }
+        if text.range(of: #"^(?:ok |perfetto |bene |ottimo |sì )?(?:grazie|ti ringrazio|grazie mille|grazie tante|grazie ancora)(?: mille| tante| davvero)?$"#,
+                      options: .regularExpression) != nil {
+            return MatchedIntent(intent: .thanks, lang: .it)
+        }
+        if text.range(of: #"^(?:thanks|thank you)(?: very much| so much)?$"#, options: .regularExpression) != nil {
+            return MatchedIntent(intent: .thanks, lang: .en)
         }
         if text.range(of: #"^(?:ok |sì |si )?(?:fatto|l'ho fatto|fatta|ok fatto)$|^done$"#, options: .regularExpression) != nil {
             return MatchedIntent(intent: .done, lang: text == "done" ? .en : .it)

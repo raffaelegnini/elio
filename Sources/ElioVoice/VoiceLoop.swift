@@ -313,7 +313,10 @@ public final class VoiceLoop {
     private func heard(_ text: String) {
         guard inUtterance else { return }
         if speaker.isSpeaking {
-            if BargeIn.detect(text, whileSaying: spokenText) {
+            // Answering a confirmation/question while Elio is still asking it.
+            let answering = (confirmations.first.map { ConfirmationAnswer.parse(Echo.remove(from: text, spoken: spokenText), risk: $0.risk) != .unrelated } ?? false)
+                || (!questions.isEmpty && !Echo.remove(from: text, spoken: spokenText).isEmpty && !utteranceArmed)
+            if answering || BargeIn.detect(text, whileSaying: spokenText) {
                 VoiceLog.write("barge-in on '\(text)'")
                 interrupt()
                 utteranceArmed = true   // what follows "Elio, aspetta…" is a command
@@ -466,6 +469,7 @@ public final class VoiceLoop {
         case "confirm":
             if let req = ConfirmRequest.fromJSON(msg.payload), !confirmations.contains(where: { $0.id == req.id }) {
                 confirmations.append(req)
+                armedUntil = Date().addingTimeInterval(30)  // the answer needs no wake word
             }
         case "confirmResolved":
             confirmations.removeAll { $0.id == msg.id }
@@ -559,8 +563,7 @@ public final class VoiceLoop {
     /// If Claude hasn't said anything after 0.9s, acknowledge right away with a cached,
     /// request-specific phrase ("Certo, Signore, controllo l'agenda.").
     private func scheduleFiller(for id: String?, request: String) {
-        guard let id else { return }
-        let phrase = Acknowledgement.phrase(for: request, addressAs: addressAs)
+        guard let id, let phrase = Acknowledgement.phrase(for: request, addressAs: addressAs) else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(900))
             guard self.currentRequestId == id, !self.firstDeltaLogged, !self.speaker.isSpeaking else { return }

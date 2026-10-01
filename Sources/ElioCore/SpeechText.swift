@@ -232,12 +232,13 @@ public enum Acknowledgement {
         (#"ricorda|promemoria|memoria|sai che"#, "un attimo."),
     ]
 
-    public static func phrase(for request: String, addressAs: String) -> String {
+    /// Nil for chit-chat (thanks, greetings, opinions): a quick ack there would only double the reply.
+    public static func phrase(for request: String, addressAs: String) -> String? {
         let t = request.lowercased()
         for (pattern, tail) in rules where t.range(of: pattern, options: .regularExpression) != nil {
             return "Certo, \(addressAs), \(tail)"
         }
-        return "Certo, \(addressAs), un attimo."
+        return nil
     }
 
     public static func all(addressAs: String) -> [String] {
@@ -258,11 +259,16 @@ public enum ConfirmationAnswer: Equatable {
     public static func parse(_ text: String, risk: ConfirmRequest.Risk) -> ConfirmationAnswer {
         let t = " " + text.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .,!?")) + " "
         let has = { (words: [String]) in words.contains { t.contains(" \($0) ") } }
-        if has(["no", "annulla", "annullato", "stop", "aspetta", "fermo", "non farlo", "cancel", "don't"]) { return .deny }
+        if has(["no", "non", "annulla", "annullato", "stop", "aspetta", "fermo", "non farlo", "lascia stare", "cancel", "don't"]) { return .deny }
         if has(["confermo", "conferma", "confermato", "i confirm", "confirm"]) { return .approve }
-        if has(["sì", "si", "ok", "okay", "vai", "procedi", "certo", "va bene", "yes", "go ahead", "fallo"]) {
-            return risk == .dangerous ? .needsExplicit : .approve
-        }
+        let strong = ["vai", "procedi", "invia", "invialo", "inviala", "mandalo", "mandala", "manda", "fallo", "falla",
+                      "go ahead", "send it", "do it"]
+        let soft = ["sì", "si", "ok", "okay", "certo", "va bene", "yes", "esatto", "perfetto"]
+        let words = t.split(separator: " ").count
+        // A short, unambiguous yes ("sì sì vai", "procedi", "invialo") is an explicit confirmation;
+        // for delicate actions a lone "ok"/"sì" in a long sentence is not.
+        if has(strong) { return words <= 8 ? .approve : (risk == .dangerous ? .needsExplicit : .approve) }
+        if has(soft) { return risk == .dangerous && words > 4 ? .needsExplicit : .approve }
         return .unrelated
     }
 }

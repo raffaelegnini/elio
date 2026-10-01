@@ -35,8 +35,8 @@ public actor ConfirmationGate {
     public func request(_ req: ConfirmRequest, timeout: TimeInterval = 300) async -> Bool {
         pending[req.id] = req
         let spoken = req.risk == .dangerous
-            ? "\(req.title). È un'azione delicata: per procedere di' \"confermo\"."
-            : "\(req.title). Posso procedere?"
+            ? "\(req.title). È un'azione delicata: confermi?"
+            : "\(req.title). Procedo?"
         broadcast?(ServerMessage(type: .event, id: req.id, text: spoken, kind: "confirm",
                                  payload: req.jsonString(), speak: true))
         let id = req.id

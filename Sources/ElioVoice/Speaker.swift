@@ -27,10 +27,6 @@ public final class Speaker {
     private var stream: StreamingTTS?
     private var streamText = ""
     private var streamGotAudio = false
-    /// Jitter buffer: audio held until enough is queued to play without gaps.
-    private var held: [AVAudioPCMBuffer] = []
-    private var heldSeconds: Double = 0
-    private var holding = false
     public var onFirstAudio: (() -> Void)?
 
     private nonisolated static let cacheMaxChars = 80
@@ -65,6 +61,8 @@ public final class Speaker {
     // MARK: - Streaming reply (WebSocket)
 
     /// Opens a streaming session for a Claude reply. Returns false if unavailable (use `enqueue`).
+    /// The stream joins the single playback queue when its first audio arrives, so anything
+    /// queued before (an acknowledgement) plays first and nothing is ever interleaved.
     @discardableResult
     public func beginStream() -> Bool {
         guard let apiKey else { return false }
@@ -72,16 +70,17 @@ public final class Speaker {
         let gen = generation
         streamText = ""
         streamGotAudio = false
-        holding = true
-        held = []
-        heldSeconds = 0
+        let (buffers, sink) = AsyncThrowingStream<AVAudioPCMBuffer, Error>.makeStream()
+        streamSink = sink
+        let job = SentenceJob(text: "stream", buffers: buffers)
         stream = StreamingTTS(
             apiKey: apiKey, voiceId: voiceId, model: model, format: audio.playbackFormat,
             onAudio: { [weak self] buffer in
-                Task { @MainActor in self?.streamAudio(buffer, generation: gen) }
+                sink.yield(buffer)
+                Task { @MainActor in self?.streamAudioArrived(job, generation: gen) }
             },
             onFinish: { [weak self] error in
-                Task { @MainActor in self?.streamFinished(error, generation: gen) }
+                Task { @MainActor in self?.streamFinished(error, job: job, generation: gen) }
             })
         utteranceOpen = true
         return true
@@ -109,35 +108,31 @@ public final class Speaker {
     public func cancelStream() {
         stream?.cancel()
         stream = nil
-        held = []
-        holding = false
+        streamSink?.finish()
+        streamSink = nil
         utteranceOpen = false
         checkFinished()
     }
 
-    private func streamAudio(_ buffer: AVAudioPCMBuffer, generation gen: Int) {
+    private var streamSink: AsyncThrowingStream<AVAudioPCMBuffer, Error>.Continuation?
+    private var streamQueued = false
+
+    private func streamAudioArrived(_ job: SentenceJob, generation gen: Int) {
         guard generation == gen else { return }
         if !streamGotAudio { streamGotAudio = true; onFirstAudio?() }
         setSpeaking(true)
-        if holding {
-            held.append(buffer)
-            heldSeconds += Double(buffer.frameLength) / buffer.format.sampleRate
-            if heldSeconds >= 0.4 { releaseHeld(gen) }
-        } else {
-            schedule(buffer, generation: gen)
+        if !streamQueued {
+            streamQueued = true
+            jobs?.yield(job)
         }
     }
 
-    private func releaseHeld(_ gen: Int) {
-        holding = false
-        for b in held { schedule(b, generation: gen) }
-        held = []
-    }
-
-    private func streamFinished(_ error: Error?, generation gen: Int) {
+    private func streamFinished(_ error: Error?, job: SentenceJob, generation gen: Int) {
         guard generation == gen else { return }
         stream = nil
-        releaseHeld(gen)
+        streamSink?.finish()
+        streamSink = nil
+        streamQueued = false
         if let error {
             NSLog("Elio TTS stream failed: \(error)")
             VoiceLog.write("tts stream failed: \(error)")
@@ -157,8 +152,9 @@ public final class Speaker {
         generation += 1
         stream?.cancel()
         stream = nil
-        held = []
-        holding = false
+        streamSink?.finish()
+        streamSink = nil
+        streamQueued = false
         jobs?.finish()
         consumer?.cancel()
         audio.player.stop()
@@ -191,14 +187,30 @@ public final class Speaker {
         let gen = generation
         consumer = Task { [weak self] in
             for await job in stream {
+                // Jitter buffer: start each item only with ~0.3s ready, so a slow network
+                // never leaves gaps (clicks) between tiny chunks.
+                var pending: [AVAudioPCMBuffer] = []
+                var ready: Double = 0
+                var started = false
                 do {
                     for try await buffer in job.buffers {
                         guard let self, self.generation == gen else { return }
-                        self.schedule(buffer, generation: gen)
+                        if started {
+                            self.schedule(buffer, generation: gen)
+                        } else {
+                            pending.append(buffer)
+                            ready += Double(buffer.frameLength) / buffer.format.sampleRate
+                            if ready >= 0.3 {
+                                started = true
+                                for b in pending { self.schedule(b, generation: gen) }
+                                pending = []
+                            }
+                        }
                     }
                 } catch {
                     NSLog("Elio TTS job failed: \(error)")
                 }
+                if let self, self.generation == gen { for b in pending { self.schedule(b, generation: gen) } }
             }
         }
     }

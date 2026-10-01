@@ -120,7 +120,8 @@ struct AcknowledgementTests {
     @Test func picksBySubject() {
         #expect(Acknowledgement.phrase(for: "cosa ho in agenda domani?", addressAs: "Signore") == "Certo, Signore, controllo l'agenda.")
         #expect(Acknowledgement.phrase(for: "Rosario mi ha scritto su Slack?", addressAs: "Signora") == "Certo, Signora, guardo Slack.")
-        #expect(Acknowledgement.phrase(for: "come stai", addressAs: "Signore") == "Certo, Signore, un attimo.")
+        #expect(Acknowledgement.phrase(for: "come stai", addressAs: "Signore") == nil)
+        #expect(Acknowledgement.phrase(for: "grazie", addressAs: "Signore") == nil)
         #expect(Acknowledgement.isAcknowledgement("Certo, Signore, controllo subito le previsioni."))
         #expect(!Acknowledgement.isAcknowledgement("Domani sarà soleggiato con ventisette gradi."))
     }
@@ -143,7 +144,10 @@ struct EchoTests {
 
 struct ConfirmationAnswerTests {
     @Test func dangerousNeedsTheExplicitWord() {
-        #expect(ConfirmationAnswer.parse("sì vai", risk: .dangerous) == .needsExplicit)
+        #expect(ConfirmationAnswer.parse("sì sì vai", risk: .dangerous) == .approve)
+        #expect(ConfirmationAnswer.parse("invialo", risk: .dangerous) == .approve)
+        #expect(ConfirmationAnswer.parse("sì però prima dimmi bene a chi lo stai mandando", risk: .dangerous) == .needsExplicit)
+        #expect(ConfirmationAnswer.parse("no non mandarlo", risk: .dangerous) == .deny)
         #expect(ConfirmationAnswer.parse("Confermo.", risk: .dangerous) == .approve)
         #expect(ConfirmationAnswer.parse("no aspetta", risk: .dangerous) == .deny)
     }

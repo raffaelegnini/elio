@@ -199,6 +199,9 @@ public actor Brain {
         case .brief:
             Task { await routines.runBrief() }
             return m.lang == .it ? "Certo, \(config.addressAs), le preparo subito il briefing." : "Of course. Preparing your briefing."
+        case .thanks:
+            return m.lang == .it ? ["Prego, \(config.addressAs).", "Si figuri, \(config.addressAs).", "È un piacere, \(config.addressAs)."].randomElement()!
+                                 : "You're welcome."
         case .recap:
             Task { await routines.runRecap() }
             return "Certo, \(config.addressAs), le faccio subito il recap della giornata."
