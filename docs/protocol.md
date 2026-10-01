@@ -45,7 +45,7 @@ Unsolicited events: `{"type": "event", "kind": "<kind>", "id": "…", "text": "�
 | `confirmResolved` | `{"approved": bool}` | remove the card |
 | `question` | `QuestionRequest {id,question,from,taskId}` | ask the user, reply with `answer` |
 | `questionResolved` | — | remove the card |
-| `task` | `TaskInfo {id,title,project,status,steps[],summary,startedAt,endedAt}` | update workflow list |
+| `task` | `TaskInfo {id,title,project,status,steps[],summary,startedAt,endedAt,kind: code|mac|squad,squad,member,role,tokensIn,tokensOut,costUSD,lastMessage}` | update workflow list |
 | `taskLog` | `TaskLogEntry {taskId,kind: say|command|output|edit|write|read|search|ask|info,title,body,removed,added,date}` | live agent view |
 | `diff` | `DiffPayload {title,repo,base,head,diff}` | review screen (unified diff) |
 | `card` | `CardPayload {title,body (markdown)}` | detail card |
@@ -53,5 +53,11 @@ Unsolicited events: `{"type": "event", "kind": "<kind>", "id": "…", "text": "�
 | `briefStart`, `recapStart` | — | start the "neurons lighting up" animation |
 | `memory` | `{"category": …}`, `text` = fact | new memory node |
 | `integrationSetup` | `Integration` | open integration settings (Mac only) |
+| `routineDelta` / `routineDone` | — (`text` = chunk) | briefing/recap told live: speak chunks as they arrive |
+| `progress` | `{"task": "<id>"}` | spoken progress of a background agent ("Ho spostato la cartella, ora…") |
+| `squad`, `squadDone` | `SquadInfo {id,goal,project,startedAt,endedAt}` | squad view (team of agents) |
+| `squadMessage` | `SquadMessage {id,squad,from,to,text,at}` | squad board (`to` = member, "tutti" or "elio") |
+| `usage` | `UsageSnapshot {today,window5h,elioToday: {input,output,cacheRead,cacheWrite,messages}, windowStart, agentsCostUSD}` | token usage (every minute) |
+| `openView` | `{"view": "dashboard|settings|archive|squad", "tab", "integration"}` | navigate |
 
 Dates are ISO-8601. Payload types are defined in `Sources/ElioCore/Protocol.swift`.
