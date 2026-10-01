@@ -64,6 +64,8 @@ public enum PermissionPolicy {
             // Grouping parentheses/braces don't change what runs: `(git checkout x || git checkout -b x)`.
             .map { $0.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "(){}"))) }
             .filter { !$0.isEmpty }
+            // `git -C <repo> status` is the same command run in another folder.
+            .map { $0.replacingOccurrences(of: #"^git\s+-C\s+('[^']*'|"[^"]*"|[\w./~-]+)\s+"#, with: "git ", options: .regularExpression) }
         let allSafe = parts.allSatisfy { part in
             // A safe command can still be turned into code execution / file writes by its options
             // (`git fetch --upload-pack=…`, `find -exec`, `eslint --rulesdir`): check every token.

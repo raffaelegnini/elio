@@ -8,6 +8,9 @@ import Testing
         #expect(PermissionPolicy.decideBash("git checkout calc.py") != .allow)
         #expect(PermissionPolicy.decideBash("git branch --list 'elio/*' && git checkout -b elio/calc-sub 2>&1 || git checkout elio/calc-sub") == .allow)
         #expect(PermissionPolicy.decideBash("git branch -D elio/x") != .allow)
+        #expect(PermissionPolicy.decideBash("git -C /private/tmp/a-b/squad-demo checkout -b elio/calc-sub") == .allow)
+        #expect(PermissionPolicy.decideBash("cd /private/tmp/a-b/squad-demo && git add calc.py && git commit -m 'Add sub'") == .allow)
+        #expect(PermissionPolicy.decideBash("git -C /x push origin main") != .allow)
         #expect(PermissionPolicy.decideBash("git branch -m main other") != .allow)
         #expect(PermissionPolicy.decideBash(#"python3 -c "import os; os.remove('x')""#) != .allow)
     }
