@@ -69,7 +69,7 @@ public final class VoiceLoop {
     static func greeting(addressAs: String, brief: Bool) -> String {
         let hour = Calendar.current.component(.hour, from: Date())
         let hello = hour < 13 ? "Buongiorno" : hour < 18 ? "Buon pomeriggio" : "Buonasera"
-        return brief ? "\(hello), \(addressAs). Le preparo un riassunto della giornata."
+        return brief ? "\(hello), \(addressAs). Le faccio il briefing di oggi."
                      : "\(hello), \(addressAs). Le faccio il riassunto di oggi."
     }
     public var alwaysListening = true
@@ -124,7 +124,7 @@ public final class VoiceLoop {
     private func isOwner(minSeconds: Double = 0.6) -> Bool? {
         guard ownerGateActive, let sid = speakerID else { return true }
         let samples = voiceTap.samples(since: utteranceStart)
-        guard Double(samples.count) / SpeakerID.sampleRate >= minSeconds, let score = sid.score(samples) else { return nil }
+        guard Double(samples.count) / SpeakerID.sampleRate >= minSeconds, let score = sid.bestWindowScore(samples) else { return nil }
         lastOwnerScore = score
         VoiceLog.write(String(format: "speaker score %.2f (threshold %.2f)", score, ownerThreshold))
         return score >= ownerThreshold
@@ -272,7 +272,7 @@ public final class VoiceLoop {
             state = muted ? .muted : .listening
             speaker.warmCache(Self.acks + Acknowledgement.all(addressAs: addressAs)
                               + ["Buongiorno", "Buon pomeriggio", "Buonasera"].flatMap { h in
-                                  ["\(h), \(addressAs). Le preparo un riassunto della giornata.",
+                                  ["\(h), \(addressAs). Le faccio il briefing di oggi.",
                                    "\(h), \(addressAs). Le faccio il riassunto di oggi."] })
         } catch {
             lastError = "Audio: \(error.localizedDescription)"

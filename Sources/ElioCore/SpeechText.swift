@@ -266,7 +266,7 @@ public enum ConfirmationAnswer: Equatable {
         let has = { (words: [String]) in words.contains { t.contains(" \($0) ") } }
         let words = t.split(separator: " ").count
         // Refusals: explicit ones only. A leading "no" followed by an order ("no, allora invia") is a yes.
-        let refusal = t.range(of: #" non (inviare|inviarlo|inviarla|mandare|mandarlo|mandarla|farlo|farla|procedere|andare|scrivere|scriverlo) "#,
+        let refusal = t.range(of: #" non (lo |la |li |le |gli |ne )?(inviar|mandar|far|procedere|andare|scriver|pubblicar|toccar|cancellar)\w* "#,
                               options: .regularExpression) != nil
             || has(["annulla", "annullalo", "lascia stare", "lascia perdere", "stop", "fermo", "fermati", "aspetta", "cancel", "don't"])
             || t.range(of: #"^ (no )+$"#, options: .regularExpression) != nil

@@ -296,7 +296,7 @@ private struct RoutineSettings: View {
     @Bindable var model: SettingsModel
 
     var body: some View {
-        Group(title: "Briefing del mattino", note: "Parte al primo sblocco dopo l'orario minimo nei giorni feriali, o all'orario massimo.") {
+        Group(title: "Briefing di oggi", note: "Si adatta all'ora: al mattino la notte e la giornata, di giorno cosa è successo e cosa resta, la sera il riassunto e domani. Parte da solo al primo sblocco dopo l'orario minimo nei giorni feriali.") {
             Field(label: "Dalle", text: $model.config.briefEarliest, placeholder: "07:30")
             Field(label: "Al più tardi alle", text: $model.config.briefLatest, placeholder: "09:30")
             Toggle("Sigla d'apertura", isOn: $model.config.briefOpening).font(.system(size: 12.5))

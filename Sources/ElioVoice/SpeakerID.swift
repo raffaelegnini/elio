@@ -48,6 +48,25 @@ public final class SpeakerID: @unchecked Sendable {
         return vDSP.dot(e, print)
     }
 
+    /// Best score over 1.5 s windows: an utterance that is mostly Elio's echo with the owner's
+    /// answer at the end ("…posso procedere? — Non lo scrivere") still counts as the owner.
+    public func bestWindowScore(_ samples: [Float]) -> Float? {
+        let win = Int(Self.sampleRate * 1.5), hop = Int(Self.sampleRate * 0.5)
+        guard samples.count > win else { return score(samples) }
+        var best: Float?
+        var start = max(0, samples.count - win)
+        var windows = 0
+        // From the end backwards: the user's words usually come last; cap the work.
+        while start >= 0, windows < 16 {
+            if let s = score(Array(samples[start..<(start + win)])) { best = max(best ?? -1, s) }
+            if start == 0 { break }
+            start = max(0, start - hop)
+            windows += 1
+        }
+        if let whole = score(samples) { best = max(best ?? -1, whole) }
+        return best
+    }
+
     /// Enrollment: average of several clips of the owner speaking.
     @discardableResult
     public func enroll(_ clips: [[Float]]) -> Bool {

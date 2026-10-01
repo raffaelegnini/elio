@@ -155,6 +155,8 @@ struct ConfirmationAnswerTests {
         #expect(ConfirmationAnswer.parse("No, allora Elio invia il messaggio a Damiano", risk: .dangerous) == .approve)
         #expect(ConfirmationAnswer.parse("no", risk: .dangerous) == .deny)
         #expect(ConfirmationAnswer.parse("lascia stare", risk: .normal) == .deny)
+        #expect(ConfirmationAnswer.parse("non lo scrivere. Non lo scrivere.", risk: .normal) == .deny)
+        #expect(ConfirmationAnswer.parse("non mandarlo", risk: .dangerous) == .deny)
         #expect(ConfirmationAnswer.parse("sì sì sì vai", risk: .dangerous) == .approve)
         #expect(ConfirmationAnswer.parse("Confermo.", risk: .dangerous) == .approve)
         #expect(ConfirmationAnswer.parse("no aspetta", risk: .dangerous) == .deny)

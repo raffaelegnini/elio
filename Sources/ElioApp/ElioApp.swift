@@ -37,7 +37,7 @@ struct MenuContent: View {
             Text(loop.connected ? "Daemon connesso" : "Daemon non raggiungibile")
             Divider()
             Button("Parla con \(Brand.shared.name)  ⌥⌘J") { delegate.activate() }
-            Button("Briefing del mattino") { loop.submit(text: "briefing") }
+            Button("Briefing di oggi") { loop.submit(text: "briefing") }
             Button("Recap della giornata") { loop.submit(text: "recap della giornata") }
             Button(loop.muted ? "Riattiva microfono  ⌥⌘M" : "Silenzia microfono  ⌥⌘M") { loop.setMuted(!loop.muted) }
             Button("Mostra HUD") { delegate.hud.show(pinned: true) }

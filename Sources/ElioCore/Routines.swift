@@ -58,15 +58,32 @@ public actor Routines {
     public func runBrief() async {
         // The app plays the opening theme while Claude prepares the brief.
         await brain?.publish(ServerMessage(type: .event, kind: "briefStart"))
+        let hour = Calendar.current.component(.hour, from: Date())
+        let focus: String
+        if hour < 12 {
+            focus = """
+            È mattina: cosa è successo stanotte e cosa c'è oggi. Ordine: night_recap e list_tasks (lavori notturni, \
+            branch da revisionare) → calendar_events di oggi → list_reminders → slack_mentions e slack_dms delle ultime \
+            16 ore. Alla fine chiama slack_clock_in (chiede lei la conferma).
+            """
+        } else if hour < 18 {
+            focus = """
+            È giorno: cosa è successo finora e cosa resta da fare oggi. Ordine: day_summary → calendar_events di oggi \
+            (fatti e ancora da fare) → list_reminders → slack_mentions e slack_dms di oggi → list_tasks.
+            """
+        } else {
+            focus = """
+            È sera: riassunto della giornata e uno sguardo a domani. Ordine: day_summary → calendar_events di oggi e \
+            di domani → slack_mentions e slack_dms di oggi → list_tasks (cosa resta aperto).
+            """
+        }
         await brain?.runRoutine(kind: "brief", prompt: """
-        [routine: briefing] Raffaele ha appena iniziato la giornata. L'app lo ha GIÀ salutato e gli ha detto che gli fai \
-        un riassunto: non salutare, non dire "ecco il briefing", entra subito nel contenuto.
-        Racconta MENTRE raccogli, una sezione alla volta: chiama uno strumento e subito dopo dì in una frase cosa hai \
-        trovato, poi passa al successivo. Ordine: calendar_events di oggi → list_reminders → night_recap e list_tasks → \
-        slack_mentions e slack_dms delle ultime 16 ore (se Slack non è collegato, salta). Frasi brevi e parlate, \
-        niente elenchi né markdown nel testo. Al massimo sei frasi in tutto.
-        Alla fine mostra il dettaglio con show_on_screen (titolo "Briefing di oggi": agenda con orari, promemoria, \
-        lavori notturni e branch da revisionare, menzioni e DM importanti) e chiama slack_clock_in.
+        [routine: briefing di oggi] L'app ha GIÀ salutato Raffaele e gli ha detto che gli fai il briefing: non salutare, \
+        non dire "ecco il briefing", entra subito nel contenuto.
+        \(focus)
+        Racconta MENTRE raccogli: dopo ogni strumento dì subito in una frase cosa hai trovato, poi passa al successivo \
+        (se Slack non è collegato, saltalo). Frasi brevi e parlate, niente elenchi né markdown. Al massimo sei frasi.
+        Alla fine mostra il dettaglio con show_on_screen, titolo "Briefing di oggi".
         """)
     }
 
