@@ -56,7 +56,9 @@ public enum PermissionPolicy {
             return .confirm(.dangerous)
         }
         // Command substitution / redirection to files: can't reason about it safely.
-        if cmd.contains("$(") || cmd.contains("`") || cmd.range(of: #"(^|[^0-9&])>{1,2}\s*[^&\s]"#, options: .regularExpression) != nil {
+        // A ">" inside quotes ("<noreply@…>") is text, not a redirection; $( and ` expand even in double quotes.
+        let unquoted = cmd.replacingOccurrences(of: #"'[^']*'|"[^"]*""#, with: "''", options: .regularExpression)
+        if cmd.contains("$(") || cmd.contains("`") || unquoted.range(of: #"(^|[^0-9&])>{1,2}\s*[^&\s]"#, options: .regularExpression) != nil {
             return .confirm(.normal)
         }
         let parts = cmd.replacingOccurrences(of: #"\s+2>(/dev/null|&1)"#, with: "", options: .regularExpression)
@@ -88,7 +90,6 @@ public enum PermissionPolicy {
             #"\b(python[0-9.]*|node|perl|ruby|php|osascript|swift)\s+(-[a-zA-Z]*[ce]\b|-(\s|$))"#,
             #"\b(sh|bash|zsh|fish)\s+-[a-zA-Z]*c\b|\beval\b|\bxargs\b|\bsource\b|(^|[\s;&|])\.\s"#,
             // Overwrites: plain redirection, tee without -a, truncate, mv/cp without -n.
-            #"(^|[^0-9&>])>(?!>)\s*(?!/dev/null|&)\S"#,
             #"\btee\s+(?!-a)"#,
             #"\btruncate\b|\bdefaults\s+delete\b|\bsrm\b"#,
             #"(^|[\s;&|(])(mv|cp)\s+(?!(?:[^;&|]*\s)?-[a-zA-Z]*n\b)"#,
@@ -102,6 +103,11 @@ public enum PermissionPolicy {
             #"\bcsrutil\b|\bnvram\b|\bfdesetup\b|\bdiskutil\s+(erase|partition|unmount)"#,
         ]
         if outward.contains(where: { cmd.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }) {
+            return .confirm(.normal)
+        }
+        // Overwriting redirection (quoted text like "<noreply@…>" is not one).
+        let unquoted = cmd.replacingOccurrences(of: #"'[^']*'|"[^"]*""#, with: "''", options: .regularExpression)
+        if unquoted.range(of: #"(^|[^0-9&>])>(?!>)\s*(?!/dev/null|&)\S"#, options: .regularExpression) != nil {
             return .confirm(.normal)
         }
         return .allow
@@ -222,7 +228,7 @@ public enum PermissionPolicy {
         #"^git\s+remote\s+-v$"#,
         #"^git\s+stash(\s+(list|show|push)(\s+[\w./-]+)*)?$"#,
         #"^git\s+add(\s+[\w./*-]+)+$"#,
-        #"^git\s+commit(\s+(-m|-a|-am|--all|--message)?\s*('[^']*'|"[^"]*"|[\w.-]+))+$"#,
+        #"^git\s+commit(?!.*--amend)(\s+('[^']*'|"[^"]*"|[\w./@:=-]+))+$"#,
         #"^git\s+(checkout\s+-b|switch\s+-c)\s+[\w./-]+$"#,
         #"^git\s+switch\s+[\w./-]+$"#,
         #"^git\s+checkout\s+elio/[\w./-]+$"#,

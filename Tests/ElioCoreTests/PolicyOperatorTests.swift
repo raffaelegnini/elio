@@ -11,6 +11,9 @@ import Testing
         #expect(PermissionPolicy.decideBash("git -C /private/tmp/a-b/squad-demo checkout -b elio/calc-sub") == .allow)
         #expect(PermissionPolicy.decideBash("cd /private/tmp/a-b/squad-demo && git add calc.py && git commit -m 'Add sub'") == .allow)
         #expect(PermissionPolicy.decideBash("git -C /x push origin main") != .allow)
+        #expect(PermissionPolicy.decideBash("git commit -m \"Add tests\" -m \"Co-Authored-By: Claude <noreply@anthropic.com>\" -- test_calc.py") == .allow)
+        #expect(PermissionPolicy.decideBash("git commit -q -m \"Add sub\n\nbody\"") == .allow)
+        #expect(PermissionPolicy.decideBash("git commit --amend -m x") != .allow)
         #expect(PermissionPolicy.decideBash("git branch -m main other") != .allow)
         #expect(PermissionPolicy.decideBash(#"python3 -c "import os; os.remove('x')""#) != .allow)
     }
@@ -31,7 +34,7 @@ import Testing
         }
         for cmd in ["ls -la ~/Desktop 2>/dev/null", "mkdir -p ~/Documents/Y && mv -n ~/Desktop/X ~/Documents/Y/",
                     "cp -n a.txt ~/Documents/", "echo ok >> ~/Documents/Elio/log.txt", "defaults read com.apple.dock",
-                    "pmset -g", "log show --last 5m --predicate 'process == \"Finder\"' | tail -20", "python3 --version"] {
+                    "pmset -g", "git commit -m \"Fix\" -m \"Co-Authored-By: X <a@b.c>\"", "log show --last 5m --predicate 'process == \"Finder\"' | tail -20", "python3 --version"] {
             #expect(PermissionPolicy.decideOperatorBash(cmd) == .allow, "\(cmd)")
         }
         #expect(PermissionPolicy.decide(tool: "Write", input: ["file_path": NSHomeDirectory() + "/Desktop/note.txt"], cwd: "/tmp", onMac: true) == .allow)
