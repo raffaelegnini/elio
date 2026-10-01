@@ -289,6 +289,10 @@ private struct BrainSettings: View {
               note: "Con il browser Elio usa il tuo Chrome (dove sei già loggato) per fare le cose da solo, per esempio prendere le chiavi API delle integrazioni. Acquisti, invii e cancellazioni li chiede sempre.") {
             Toggle("Elio può usare il browser da solo", isOn: $model.config.browserAutonomy).font(.system(size: 12.5))
         }
+        Group(title: "Comandi rapidi",
+              note: "Musica, app, link, volume, blocco schermo e tema li capisce il modello Apple sul Mac in meno di un secondo, senza usare Claude. Tutto il resto va a Claude.") {
+            Toggle("Usa il modello Apple per i comandi semplici", isOn: $model.config.appleFastPath).font(.system(size: 12.5))
+        }
     }
 }
 
