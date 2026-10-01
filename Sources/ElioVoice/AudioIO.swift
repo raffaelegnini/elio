@@ -40,21 +40,46 @@ public final class AudioIO: @unchecked Sendable {
         // Device changes (AirPods in/out) stop the engines: rebuild them on the new devices.
         observers.append(NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: inputEngine, queue: .main
-        ) { [weak self] _ in self?.restartInput() })
+        ) { [weak self] _ in self?.routeChanged(output: false) })
         observers.append(NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] _ in self?.routeChanged(output: true) })
+    }
+
+    // Restarting an input with echo cancellation itself posts configuration-change notifications:
+    // reacting to those restarted the mic every 100 ms forever (Elio went deaf). Changes are
+    // coalesced, our own restart's echo is ignored, and bursts are slowed down.
+    private var lastRestart = Date.distantPast
+    private var pendingRestart: DispatchWorkItem?
+    private var outputChanged = false
+    private var restartsInWindow: [Date] = []
+
+    private func routeChanged(output: Bool) {
+        if Date().timeIntervalSince(lastRestart) < 1.5 { return }  // caused by our own restart
+        outputChanged = outputChanged || output
+        pendingRestart?.cancel()
+        restartsInWindow = restartsInWindow.filter { Date().timeIntervalSince($0) < 30 }
+        let delay = restartsInWindow.count >= 3 ? 5.0 : 0.5
+        let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.engine.stop()
-            self.engine.connect(self.player, to: self.engine.mainMixerNode, format: self.playbackFormat)
-            try? self.engine.start()
-            self.player.play()
+            self.restartsInWindow.append(Date())
+            if self.outputChanged {
+                self.outputChanged = false
+                self.engine.stop()
+                self.engine.connect(self.player, to: self.engine.mainMixerNode, format: self.playbackFormat)
+                try? self.engine.start()
+                self.player.play()
+            }
             // The output device decides which mic to use.
             self.restartInput()
-        })
+            self.lastRestart = Date()
+        }
+        pendingRestart = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func restartInput() {
+        lastRestart = Date()
         inputEngine.inputNode.removeTap(onBus: 0)
         inputEngine.stop()
         inputEngine.reset()

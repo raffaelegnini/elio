@@ -475,7 +475,8 @@ public final class VoiceLoop {
         let spokeRecently = speaker.isSpeaking || Date().timeIntervalSince(lastSpeechEnd) < 3
         VoiceLog.write("heard: '\(text)'\(spokeRecently ? " (Elio spoke recently)" : "")\(audio.aecActive ? " [aec]" : "")")
         // Safety net: if echo cancellation swallows the user's voice, turn it off by itself.
-        if audio.aecActive {
+        let mediaPlaying = (opening?.isPlaying ?? false) || speaker.isSpeaking || Date().timeIntervalSince(lastSpeechEnd) < 3
+        if audio.aecActive, !mediaPlaying {
             emptyWithAEC = text.isEmpty ? emptyWithAEC + 1 : 0
             if emptyWithAEC >= 6 {
                 emptyWithAEC = 0
@@ -626,17 +627,18 @@ public final class VoiceLoop {
         case "routineDelta":
             guard routineLive, let chunk = msg.text else { break }
             if routineText.isEmpty {
-                fadeOpening()
                 routineStreaming = speaker.beginStream()
+                // The theme fades when Elio's voice is actually there, not when Claude starts writing.
+                speaker.onStreamAudio = { [weak self] in self?.fadeOpening(); self?.speaker.onStreamAudio = nil }
             }
             routineText += chunk
             if let i = turns.lastIndex(where: { $0.role == "elio" }) { turns[i].text = routineText }
             for sentence in routineSplitter.push(chunk) {
-                if routineStreaming { speaker.streamSentence(sentence) } else { speaker.enqueue(sentence) }
+                if routineStreaming { speaker.streamSentence(sentence, flush: true) } else { speaker.enqueue(sentence) }
             }
         case "routineDone":
             if let rest = routineSplitter.flush() {
-                if routineStreaming { speaker.streamSentence(rest) } else { speaker.enqueue(rest) }
+                if routineStreaming { speaker.streamSentence(rest, flush: true) } else { speaker.enqueue(rest) }
             }
             if routineStreaming { speaker.endStream() } else { speaker.endUtterance() }
             routineStreaming = false
@@ -706,6 +708,7 @@ public final class VoiceLoop {
                     splitterFlushForAck()
                 }
                 if routineMode, litTools[name] == nil { litTools[name] = Date() }
+                if routineLive, routineStreaming, let rest = routineSplitter.flush() { speaker.streamSentence(rest, flush: true) }
                 activity.append(ToolActivity(id: id, name: name, running: true, ok: true))
                 if activity.count > 40 { activity.removeFirst(activity.count - 40) }
             } else {

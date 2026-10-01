@@ -130,15 +130,19 @@ public final class Speaker {
     }
 
     /// Text of the reply as it arrives (whole sentences work best).
-    public func streamSentence(_ sentence: String) {
+    /// `flush`: generate this sentence now. Off for continuous replies (better prosody),
+    /// on when text arrives in bursts between tool calls (briefing), or ElevenLabs waits for more.
+    public func streamSentence(_ sentence: String, flush: Bool = false) {
         let text = Speakable.clean(sentence)
         guard let stream, !text.isEmpty else { return }
         setSpeaking(true)
         remember(text)
         streamText += text + " "
-        // No per-sentence flush: forcing generation mid-reply produced pauses between sentences.
-        stream.push(text, flush: false)
+        stream.push(text, flush: flush)
     }
+
+    /// Called once when the current stream's first audio arrives.
+    public var onStreamAudio: (() -> Void)?
 
     public func endStream() {
         guard let stream else { return }
@@ -163,7 +167,7 @@ public final class Speaker {
 
     private func streamAudioArrived(_ job: SentenceJob, generation gen: Int) {
         guard generation == gen else { return }
-        if !streamGotAudio { streamGotAudio = true; onFirstAudio?() }
+        if !streamGotAudio { streamGotAudio = true; onFirstAudio?(); onStreamAudio?() }
         setSpeaking(true)
         if !streamQueued {
             streamQueued = true

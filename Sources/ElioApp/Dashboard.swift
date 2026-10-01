@@ -122,13 +122,10 @@ struct DashboardView: View {
             }
             Spacer()
             HStack(spacing: 8) {
-                Chip(label: "DAEMON", on: loop.connected)
-                Chip(label: loop.muted ? "MIC OFF" : "MIC", on: !loop.muted && loop.state != .off,
-                     warn: loop.muted, help: loop.inputDevice)
-                Chip(label: "CLAUDE", on: loop.connected)
-                Chip(label: "VOCE \(loop.charactersThisSession)", on: true, help: "Caratteri ElevenLabs in questa sessione")
-                RoutineButton(title: "BRIEFING", icon: "sunrise.fill") { loop.submit(text: "briefing") }
-                RoutineButton(title: "RECAP", icon: "moon.stars.fill") { loop.submit(text: "recap della giornata") }
+                StatusPill(loop: loop)
+                RoutineButton(title: "Briefing", icon: "sunrise") { loop.submit(text: "briefing") }
+                RoutineButton(title: "Recap", icon: "moon.stars") { loop.submit(text: "recap della giornata") }
+                Rectangle().fill(Theme.line).frame(width: 1, height: 22).padding(.horizontal, 4)
                 HeaderButton(icon: "rectangle.3.group", help: "Ripristina la disposizione dei pannelli") {
                     NotificationCenter.default.post(name: .resetDashboardLayout, object: nil)
                 }
@@ -530,16 +527,50 @@ private struct RoutineButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Image(systemName: icon)
-                Text(title).tracking(1.5)
+                Image(systemName: icon).font(.system(size: 11, weight: .medium))
+                Text(title).font(.system(size: 12, weight: .medium))
             }
-            .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .lineLimit(1)
+            .fixedSize()
             .foregroundStyle(hover ? Color.black : Theme.accent)
-            .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(Capsule().fill(hover ? Theme.accent : Theme.accent.opacity(0.12)))
-            .overlay(Capsule().strokeBorder(Theme.accent.opacity(0.6)))
+            .padding(.horizontal, 12).frame(height: 30)
+            .background(Capsule().fill(hover ? Theme.accent : Theme.accent.opacity(0.08)))
+            .overlay(Capsule().strokeBorder(Theme.accent.opacity(hover ? 0 : 0.35)))
+            .animation(.easeOut(duration: 0.15), value: hover)
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
+        .help(title == "Briefing" ? "Fai partire il briefing" : "Fai partire il recap della giornata")
+    }
+}
+
+/// Daemon, mic, Claude and voice status as one compact pill; details on hover.
+private struct StatusPill: View {
+    let loop: VoiceLoop
+
+    var body: some View {
+        HStack(spacing: 7) {
+            dot(loop.connected)
+            dot(!loop.muted && loop.state != .off, warn: loop.muted)
+            dot(loop.connected)
+            Text(loop.muted ? "MIC OFF" : "ONLINE")
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced)).tracking(1.2)
+                .foregroundStyle(Theme.dim)
+                .fixedSize()
+        }
+        .padding(.horizontal, 10).frame(height: 30)
+        .background(Capsule().fill(Color.white.opacity(0.04)))
+        .overlay(Capsule().strokeBorder(Theme.line))
+        .help("""
+        Daemon: \(loop.connected ? "connesso" : "non raggiungibile")
+        Microfono: \(loop.muted ? "spento" : loop.inputDevice)
+        Claude: \(loop.connected ? "pronto" : "—")
+        Voce: \(loop.charactersThisSession) caratteri in questa sessione
+        """)
+    }
+
+    private func dot(_ on: Bool, warn: Bool = false) -> some View {
+        let c: Color = warn ? Theme.tint(.muted) : (on ? .green : .red)
+        return Circle().fill(c).frame(width: 6, height: 6).shadow(color: c.opacity(0.8), radius: on ? 3 : 0)
     }
 }

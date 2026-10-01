@@ -22,7 +22,7 @@ final class StreamingTTS: @unchecked Sendable {
         comps.queryItems = [
             URLQueryItem(name: "model_id", value: model),
             URLQueryItem(name: "output_format", value: "pcm_22050"),
-            URLQueryItem(name: "inactivity_timeout", value: "30"),
+            URLQueryItem(name: "inactivity_timeout", value: "120"),
         ]
         var req = URLRequest(url: comps.url!)
         req.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
@@ -38,7 +38,18 @@ final class StreamingTTS: @unchecked Sendable {
             "generation_config": ["chunk_length_schedule": [120, 160, 250, 290]],
         ])
         receive()
+        // Long tool pauses (briefing) must not let ElevenLabs close the socket for missing input.
+        keepAlive = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(12))
+                guard let self, self.lock.withLock({ !self.finished }) else { return }
+                if Date().timeIntervalSince(self.lock.withLock { self.lastPush }) > 10 { self.send(["text": " "]) }
+            }
+        }
     }
+
+    private var keepAlive: Task<Void, Never>?
+    private var lastPush = Date()
 
     /// Attaches the consumer of a socket opened in advance.
     func attach(onAudio: @escaping @Sendable (AVAudioPCMBuffer) -> Void, onFinish: @escaping @Sendable (Error?) -> Void) {
@@ -53,7 +64,7 @@ final class StreamingTTS: @unchecked Sendable {
     /// Feed text; `flush` forces generation of what's buffered (end of a sentence).
     func push(_ text: String, flush: Bool) {
         let t = text.hasSuffix(" ") ? text : text + " "
-        lock.withLock { charactersSent += t.count }
+        lock.withLock { charactersSent += t.count; lastPush = Date() }
         send(flush ? ["text": t, "flush": true] : ["text": t])
     }
 
@@ -63,6 +74,7 @@ final class StreamingTTS: @unchecked Sendable {
     }
 
     func cancel() {
+        keepAlive?.cancel()
         lock.withLock { finished = true }
         task.cancel(with: .goingAway, reason: nil)
     }
@@ -123,6 +135,7 @@ final class StreamingTTS: @unchecked Sendable {
             return !finished
         }
         guard first else { return }
+        keepAlive?.cancel()
         task.cancel(with: .normalClosure, reason: nil)
         lock.withLock { onFinish }?(error)
     }
