@@ -239,8 +239,8 @@ public enum SquadTools {
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
         return """
-        Oggi: \(UsageMeter.format(u.today.total)) token (\(UsageMeter.format(u.today.output)) generati, \(u.today.messages) risposte); di cui Elio \(UsageMeter.format(u.elioToday.total)).
-        Finestra 5 ore: \(UsageMeter.format(u.window5h.total)) token, \(u.window5h.messages) risposte\(reset.map { ", si azzera verso le \(f.string(from: $0))" } ?? "").
+        Oggi: \(UsageMeter.format(u.today.fresh)) token nuovi (\(UsageMeter.format(u.today.output)) generati) più \(UsageMeter.format(u.today.cacheRead)) riletti dalla cache, \(u.today.messages) risposte; di cui Elio \(UsageMeter.format(u.elioToday.fresh)).
+        Finestra 5 ore: \(UsageMeter.format(u.window5h.fresh)) token nuovi, \(u.window5h.messages) risposte\(reset.map { ", si azzera verso le \(f.string(from: $0))" } ?? "").
         Costo equivalente API degli agenti in background: $\(String(format: "%.2f", u.agentsCostUSD)).
         """
     }

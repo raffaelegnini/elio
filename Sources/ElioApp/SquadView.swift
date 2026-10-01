@@ -231,7 +231,7 @@ struct UsagePill: View {
         let u = loop.usage
         HStack(spacing: 6) {
             Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundStyle(Theme.accent)
-            Text(u.map { UsageMeter.format($0.window5h.total) } ?? "—")
+            Text(u.map { UsageMeter.format($0.window5h.fresh) } ?? "—")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.text)
             Text("5H").font(.system(size: 8.5, weight: .bold, design: .monospaced)).foregroundStyle(Theme.dim)
         }
@@ -249,9 +249,9 @@ struct UsagePill: View {
         let reset = u.windowStart.map { "si azzera alle \(f.string(from: $0.addingTimeInterval(5 * 3600)))" } ?? "nessuna finestra attiva"
         return """
         Token Claude su questo Mac (tutte le sessioni)
-        Finestra 5 ore: \(UsageMeter.format(u.window5h.total)) · \(u.window5h.messages) risposte · \(reset)
-        Oggi: \(UsageMeter.format(u.today.total)) (generati \(UsageMeter.format(u.today.output)), cache \(UsageMeter.format(u.today.cacheRead)))
-        Di cui Elio (conversazione): \(UsageMeter.format(u.elioToday.total))
+        Finestra 5 ore: \(UsageMeter.format(u.window5h.fresh)) nuovi + \(UsageMeter.format(u.window5h.cacheRead)) letti dalla cache · \(u.window5h.messages) risposte · \(reset)
+        Oggi: \(UsageMeter.format(u.today.fresh)) nuovi (generati \(UsageMeter.format(u.today.output))) + \(UsageMeter.format(u.today.cacheRead)) dalla cache
+        Di cui Elio (conversazione): \(UsageMeter.format(u.elioToday.fresh)) nuovi
         Agenti in background: $\(String(format: "%.2f", u.agentsCostUSD)) equivalenti API
         """
     }

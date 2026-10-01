@@ -171,6 +171,8 @@ public struct UsageSnapshot: Codable, Sendable {
         public var input = 0, output = 0, cacheRead = 0, cacheWrite = 0, messages = 0
         public init() {}
         public var total: Int { input + output + cacheRead + cacheWrite }
+        /// Without cache reads (cheap re-reads of the same context): what actually weighs on limits.
+        public var fresh: Int { input + output + cacheWrite }
     }
     public var today = Bucket()
     public var window5h = Bucket()
