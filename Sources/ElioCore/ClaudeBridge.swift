@@ -2,6 +2,8 @@ import Foundation
 
 public enum ClaudeEvent: Sendable {
     case delta(String)
+    /// A tool Claude runs itself (browser, web search): start / end.
+    case tool(name: String, id: String, started: Bool)
     case done(text: String, durationMs: Int)
 }
 
@@ -37,6 +39,7 @@ public actor ClaudeBridge {
     private var stdin: FileHandle?
     private var readerTask: Task<Void, Never>?
     private var generation = 0
+    private var openTool: (name: String, id: String)?
     private var shuttingDown = false
     private var consecutiveExits = 0
     private var sessionId: String?
@@ -245,6 +248,16 @@ public actor ClaudeBridge {
                 onSessionId?(id)
             }
         case "stream_event":
+            if let inner = event["event"] as? [String: Any], inner["type"] as? String == "content_block_start",
+               let block = inner["content_block"] as? [String: Any] {
+                // Any new block means the previous external tool has finished.
+                if let open = openTool { current?.yield(.tool(name: open.name, id: open.id, started: false)); openTool = nil }
+                if block["type"] as? String == "tool_use", let name = block["name"] as? String, !name.hasPrefix("mcp__elio__") {
+                    let id = block["id"] as? String ?? UUID().uuidString
+                    openTool = (name, id)
+                    current?.yield(.tool(name: name, id: id, started: true))
+                }
+            }
             // A new text block after a tool call ("Certo, controllo…" → tool → answer): keep them apart.
             if let inner = event["event"] as? [String: Any], inner["type"] as? String == "content_block_start",
                (inner["content_block"] as? [String: Any])?["type"] as? String == "text", !currentText.isEmpty,
@@ -259,6 +272,7 @@ public actor ClaudeBridge {
             currentText += text
             current?.yield(.delta(text))
         case "result":
+            if let open = openTool { current?.yield(.tool(name: open.name, id: open.id, started: false)); openTool = nil }
             let final = (event["result"] as? String) ?? currentText
             let ms = Int(Date().timeIntervalSince(currentStart) * 1000)
             if event["is_error"] as? Bool == true {

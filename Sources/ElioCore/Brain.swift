@@ -40,6 +40,7 @@ public actor Brain {
         let hub = self.hub
         let send: @Sendable (ServerMessage) -> Void = { hub.send($0) }
         await gate.setBroadcast(send)
+        await gate.setAddressAs(config.addressAs)
         await tasks.setBroadcast(send)
         await scheduler.attach(tasks: tasks)
         await scheduler.setRepeatReminders(config.repeatReminders)
@@ -162,6 +163,10 @@ public actor Brain {
         do {
             for try await event in await claude.ask(Self.withContext(text)) {
                 switch event {
+                case .tool(let name, let toolId, let started):
+                    broadcast(ServerMessage(type: .event, id: toolId, text: name, kind: "tool",
+                                            payload: started ? "{\"phase\":\"start\"}" : "{\"phase\":\"end\"}"))
+                    if !started { await memory.recordToolCall(name: name, ok: true, ms: 0) }
                 case .delta(let chunk):
                     if firstDeltaMs == nil { firstDeltaMs = elapsed() }
                     out.yield(ServerMessage(type: .delta, id: id, text: chunk, route: .claude))
@@ -273,7 +278,8 @@ public actor Brain {
         verranno tenuti aggiornati in background e lookup li troverà all'istante.
 
         Browser: puoi navigare nel Chrome dell'utente per fare le cose da solo (cercare, leggere pagine riservate, \
-        compilare impostazioni). Non fare acquisti, pagamenti, invii di messaggi o cancellazioni dal browser senza chiedere.
+        compilare impostazioni). Non fare acquisti, pagamenti, invii di messaggi o cancellazioni dal browser senza chiedere. \
+        Quando inizi a usarlo, dillo in una frase ("Apro Teamwork nel suo browser, Signore."): Chrome viene portato in primo piano.
 
         Velocità: per persone, canali, progetti e dati delle integrazioni usa PRIMA lookup (rubrica locale, istantanea). \
         Chiama le API solo per dati che cambiano spesso (messaggi, task di oggi) o se lookup non trova.

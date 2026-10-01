@@ -10,7 +10,9 @@ public actor ConfirmationGate {
 
     /// Asks the user a free-form question (spoken, HUD, phone). Nil if unanswered in time.
     public func ask(_ q: QuestionRequest, timeout: TimeInterval) async -> String? {
-        broadcast?(ServerMessage(type: .event, id: q.id, text: "\(q.from) chiede: \(q.question)", kind: "question",
+        // Spoken as Elio would ask it: "Signore, Teamwork chiede di accettare i termini: posso procedere?"
+        let fromAgent = q.taskId != nil ? "\(q.from) chiede: " : ""
+        broadcast?(ServerMessage(type: .event, id: q.id, text: "\(addressAs), \(fromAgent)\(q.question)", kind: "question",
                                  payload: q.jsonString(), speak: true))
         let id = q.id
         Task {
@@ -32,11 +34,22 @@ public actor ConfirmationGate {
 
     public func setBroadcast(_ b: @escaping @Sendable (ServerMessage) -> Void) { broadcast = b }
 
+    private var addressAs = "Signore"
+    public func setAddressAs(_ s: String) { addressAs = s }
+
+    static func lowerFirst(_ s: String) -> String {
+        guard let f = s.first else { return s }
+        // Keep proper names/acronyms ("Teamwork", "PR") capitalised.
+        let firstWord = s.split(separator: " ").first.map(String.init) ?? ""
+        let verbs = ["Invio", "Scrivo", "Modifico", "Attivo", "Il", "Un", "L'", "La", "Lo"]
+        return verbs.contains(where: { firstWord.hasPrefix($0) }) ? f.lowercased() + s.dropFirst() : s
+    }
+
     public func request(_ req: ConfirmRequest, timeout: TimeInterval = 300) async -> Bool {
         pending[req.id] = req
         let spoken = req.risk == .dangerous
-            ? "\(req.title). È un'azione delicata: confermi?"
-            : "\(req.title). Procedo?"
+            ? "\(addressAs), \(Self.lowerFirst(req.title)). È un'azione delicata: posso procedere?"
+            : "\(addressAs), \(Self.lowerFirst(req.title)): posso procedere?"
         broadcast?(ServerMessage(type: .event, id: req.id, text: spoken, kind: "confirm",
                                  payload: req.jsonString(), speak: true))
         let id = req.id
@@ -424,7 +437,9 @@ public enum AskTools {
         name: "ask_user",
         description: """
         Fa una domanda all'utente e aspetta la risposta (a voce, nell'app o dal telefono). \
-        Usalo quando ti serve una decisione o un'informazione che non puoi ricavare: una domanda chiara, con le opzioni.
+        Usalo quando ti serve una decisione o un'informazione che non puoi ricavare. Scrivi la domanda completa e cortese, \
+        come la diresti a voce, spiegando la situazione e cosa farai: es. "Teamwork chiede di accettare i nuovi termini \
+        e condizioni per generare la chiave: posso procedere?". Non iniziare con "Signore": lo aggiunge Elio.
         """,
         properties: ["question": prop("La domanda, breve e chiara")],
         required: ["question"]

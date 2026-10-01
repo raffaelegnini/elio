@@ -71,6 +71,7 @@ public final class VoiceLoop {
     /// When Elio last stopped talking (its voice may still echo in the room).
     private var lastSpeechEnd = Date.distantPast
     private var emptyWithAEC = 0
+    private var browserShownFor: String?
     private var utteranceArmed = false
     /// Utterance captured while Elio was speaking through the speakers.
     private var bargeCandidate = false
@@ -293,11 +294,8 @@ public final class VoiceLoop {
     private func handle(_ event: InputPipeline.Event) {
         switch event {
         case .speechStart:
-            if speaker.isSpeaking, audio.aecActive || AudioDevices.defaultOutputIsHeadphones() {
-                // Echo cancelled (or headphones): whatever the mic hears now is the user → stop talking.
-                VoiceLog.write("barge-in: user spoke over Elio")
-                interrupt()
-            }
+            // With echo cancellation or headphones, interrupt as soon as real words are recognized
+            // (see heard()): a cough or a keystroke must not cut Elio off.
             inUtterance = true
             utteranceArmed = isArmed
             wakeSeen = false
@@ -318,6 +316,18 @@ public final class VoiceLoop {
     /// through the speakers, a stop word it isn't saying itself interrupts it.
     private func heard(_ text: String) {
         guard inUtterance else { return }
+        if speaker.isSpeaking, audio.aecActive || AudioDevices.defaultOutputIsHeadphones() {
+            let words = Echo.remove(from: text, spoken: speaker.recentlySpoken())
+                .split(separator: " ").filter { $0.count >= 2 }
+            if !words.isEmpty {
+                VoiceLog.write("barge-in on words: '\(text)'")
+                interrupt()
+                utteranceArmed = true
+                state = .hearing
+                partial = text
+            }
+            return
+        }
         if speaker.isSpeaking, !audio.aecActive {
             // No echo cancellation: tell the user's words from Elio's own by content.
             // Answering a confirmation/question while Elio is still asking it.
@@ -380,7 +390,13 @@ public final class VoiceLoop {
         if let q = questions.first {
             // A pending question takes the next thing the user says as its answer.
             answer(q, text: command)
-            speaker.enqueue("Ricevuto.")
+            let reply: String
+            switch ConfirmationAnswer.parse(command, risk: .normal) {
+            case .approve: reply = "Grazie, \(addressAs), procedo."
+            case .deny: reply = "Va bene, \(addressAs), mi fermo."
+            default: reply = "Grazie, \(addressAs), ne tengo conto."
+            }
+            speaker.enqueue(reply)
             speaker.endUtterance()
             return
         }
@@ -501,6 +517,13 @@ public final class VoiceLoop {
             guard let id = msg.id, let name = msg.text else { break }
             if msg.payload?.contains("start") == true {
                 activeTools.insert(name)
+                // Show the user where Elio is working: bring Chrome forward once per request.
+                if name.hasPrefix("mcp__claude-in-chrome__"), browserShownFor != currentRequestId {
+                    browserShownFor = currentRequestId
+                    if let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") {
+                        NSWorkspace.shared.openApplication(at: chrome, configuration: NSWorkspace.OpenConfiguration())
+                    }
+                }
                 if currentRequestId != nil, firstDeltaLogged {
                     // Text so far was the acknowledgement ("Certo, Signore, controllo…"): say it now,
                     // and give the real answer its own sentence budget.
@@ -562,15 +585,16 @@ public final class VoiceLoop {
         switch ConfirmationAnswer.parse(text, risk: req.risk) {
         case .approve:
             answer(req, approved: true)
-            speaker.enqueue("Procedo.")
+            speaker.enqueue("Grazie, \(addressAs), procedo.")
             speaker.endUtterance()
         case .deny:
             answer(req, approved: false)
-            speaker.enqueue("Annullato.")
+            speaker.enqueue("Va bene, \(addressAs), mi fermo.")
             speaker.endUtterance()
         case .needsExplicit:
-            speaker.enqueue("Per questa azione mi serve che tu dica esattamente: confermo.")
+            speaker.enqueue("Mi conferma che posso procedere, \(addressAs)? Mi basta un sì.")
             speaker.endUtterance()
+            armedUntil = Date().addingTimeInterval(20)
         case .unrelated:
             speaker.enqueue("Mi scusi, \(addressAs): procedo? Sì o no.")
             speaker.endUtterance()

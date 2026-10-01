@@ -3,7 +3,7 @@ import SwiftUI
 
 /// What Elio can do, as nodes around the core. A node lights up while one of its tools runs.
 enum Capability: String, CaseIterable, Identifiable {
-    case agenda, slack, agenti, codice, promemoria, mac, memoria
+    case agenda, slack, agenti, codice, browser, promemoria, mac, memoria
 
     var id: String { rawValue }
 
@@ -13,6 +13,7 @@ enum Capability: String, CaseIterable, Identifiable {
         case .slack: "SLACK"
         case .agenti: "AGENTI"
         case .codice: "CODICE"
+        case .browser: "BROWSER"
         case .promemoria: "PROMEMORIA"
         case .mac: "MAC"
         case .memoria: "MEMORIA"
@@ -25,6 +26,7 @@ enum Capability: String, CaseIterable, Identifiable {
         case .slack: "number"
         case .agenti: "cpu"
         case .codice: "chevron.left.forwardslash.chevron.right"
+        case .browser: "safari"
         case .promemoria: "bell"
         case .mac: "macbook"
         case .memoria: "brain"
@@ -37,6 +39,7 @@ enum Capability: String, CaseIterable, Identifiable {
         case let t where t.hasPrefix("slack_"): .slack
         case "start_task", "list_tasks", "cancel_task", "schedule_task", "approve": .agenti
         case "show_diff", "list_projects": .codice
+        case let t where t.hasPrefix("mcp__claude-in-chrome__") || t == "WebSearch" || t == "WebFetch": .browser
         case "set_reminder", "list_reminders": .promemoria
         case "open_app", "open_url": .mac
         default: .memoria
@@ -65,6 +68,10 @@ enum Capability: String, CaseIterable, Identifiable {
         case "open_url": "Apre un link"
         case "show_on_screen": "Mostra una scheda"
         case "night_recap": "Recap della notte"
+        case "WebSearch": "Cerca sul web"
+        case "WebFetch": "Legge una pagina web"
+        case let t where t.hasPrefix("mcp__claude-in-chrome__"):
+            "Browser · " + t.replacingOccurrences(of: "mcp__claude-in-chrome__", with: "").replacingOccurrences(of: "_", with: " ")
         default: tool
         }
     }

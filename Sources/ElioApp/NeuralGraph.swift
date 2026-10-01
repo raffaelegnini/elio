@@ -135,6 +135,7 @@ final class GraphModel {
         case .promemoria: "Promemoria a voce e notifiche"
         case .mac: "App, link, controllo del Mac"
         case .memoria: "Memoria a lungo termine"
+        case .browser: "Il tuo Chrome (già loggato) e il web"
         }
     }
 }
