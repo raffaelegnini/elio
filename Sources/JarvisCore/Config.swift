@@ -19,6 +19,10 @@ public struct JarvisConfig: Codable, Sendable {
     public var meetingLeadMinutes: Int = 2
     public var slackClockInChannel: String = "team-saluti"
     public var slackClockInText: String = "buongiorno"
+    /// Phone: ntfy topic for notifications when away (generated on first run), web/WS ports for the PWA.
+    public var ntfyTopic: String = ""
+    public var webPort: UInt16 = 8766
+    public var remotePort: UInt16 = 8767
 
     public init() {}
 
@@ -39,6 +43,9 @@ public struct JarvisConfig: Codable, Sendable {
         meetingLeadMinutes = try c.decodeIfPresent(Int.self, forKey: .meetingLeadMinutes) ?? d.meetingLeadMinutes
         slackClockInChannel = try c.decodeIfPresent(String.self, forKey: .slackClockInChannel) ?? d.slackClockInChannel
         slackClockInText = try c.decodeIfPresent(String.self, forKey: .slackClockInText) ?? d.slackClockInText
+        ntfyTopic = try c.decodeIfPresent(String.self, forKey: .ntfyTopic) ?? d.ntfyTopic
+        webPort = try c.decodeIfPresent(UInt16.self, forKey: .webPort) ?? d.webPort
+        remotePort = try c.decodeIfPresent(UInt16.self, forKey: .remotePort) ?? d.remotePort
     }
 
     static func defaultClaudePath() -> String {
@@ -88,8 +95,16 @@ extension JarvisConfig {
 /// Browsers cannot set custom WebSocket headers, so this also blocks web pages
 /// from driving Jarvis through ws://127.0.0.1.
 public enum AuthToken {
+    /// Separate secret for the phone, so it can be revoked without touching local clients.
+    public static func loadOrCreateRemote() throws -> String {
+        try loadOrCreate(at: JarvisPaths.support.appendingPathComponent("remote-token"))
+    }
+
     public static func loadOrCreate() throws -> String {
-        let url = JarvisPaths.token
+        try loadOrCreate(at: JarvisPaths.token)
+    }
+
+    static func loadOrCreate(at url: URL) throws -> String {
         if let existing = try? String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            !existing.isEmpty {
             return existing

@@ -67,5 +67,9 @@ cat > "$PLIST" <<PLIST
 </plist>
 PLIST
 
+# Phone PWA files, served by the daemon on 127.0.0.1:8766.
+rm -rf "$SUPPORT/web"
+cp -R "$ROOT/web" "$SUPPORT/web"
+
 launchctl bootstrap "gui/$UID" "$PLIST"
 echo "Jarvis installato. Log: $LOGS/jarvisd.log — prova: jarvis \"ciao\""

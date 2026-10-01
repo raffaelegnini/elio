@@ -74,6 +74,24 @@ do {
 
 let args = CommandLine.arguments.dropFirst()
 
+// jarvis phone [setup]     → phone (PWA over Tailscale) status, pairing link; `setup` publishes it
+if CommandLine.arguments.dropFirst().first == "phone" {
+    let cfg = JarvisConfig.load()
+    print(PhoneSetup.status(config: cfg))
+    if CommandLine.arguments.dropFirst(2).first == "setup" {
+        do {
+            try PhoneSetup.publish(config: cfg)
+            print("Pubblicato sulla tailnet.")
+        } catch {
+            print("Setup fallito: \(error)")
+        }
+    }
+    if let url = PhoneSetup.pairingURL() {
+        print("\nLink di accoppiamento (aprilo sul telefono, poi Condividi → Aggiungi alla schermata Home):\n\(url)")
+    }
+    exit(0)
+}
+
 // jarvis events            → print every event (tasks, confirmations, diffs…)
 // jarvis confirm <id> yes|no
 if args.first == "events" {

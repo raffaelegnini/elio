@@ -136,7 +136,7 @@ func prop(_ description: String, type: String = "string") -> [String: any Sendab
 }
 
 @discardableResult
-func shell(_ launchPath: String, _ args: [String], cwd: String? = nil) throws -> String {
+public func shell(_ launchPath: String, _ args: [String], cwd: String? = nil) throws -> String {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: launchPath)
     p.arguments = args

@@ -43,6 +43,17 @@ struct MenuContent: View {
             if !loop.diffs.isEmpty {
                 Button("Revisione ultimo diff") { delegate.showDashboard(review: loop.diffs.first) }
             }
+            Menu("Telefono") {
+                Text(PhoneSetup.status(config: JarvisConfig.load()))
+                Button("Pubblica su Tailscale e copia link di accoppiamento") {
+                    try? PhoneSetup.publish(config: JarvisConfig.load())
+                    if let url = PhoneSetup.pairingURL() {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(url, forType: .string)
+                    }
+                }
+                .disabled(PhoneSetup.tailscaleCLI == nil)
+            }
             Divider()
             Toggle("Ascolto sempre attivo (\"Jarvis…\")", isOn: Binding(
                 get: { loop.alwaysListening }, set: { loop.alwaysListening = $0 }))

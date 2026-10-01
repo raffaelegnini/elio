@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#05090f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Jarvis</title>
+<style>
+  :root {
+    --bg: #05090f; --panel: rgba(13, 23, 33, .72); --line: rgba(89, 217, 255, .16);
+    --text: #dbf2ff; --dim: #85a8bf; --cyan: #4fdbff; --warn: #ff8a5c; --danger: #ff6b61; --ok: #4ade80;
+    --tint: var(--cyan);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; overflow: hidden; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none;
+    background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 28px 28px; opacity: .22; }
+  #app { position: relative; height: 100%; display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+  header { display: flex; align-items: center; gap: 10px; padding: 12px 0 6px; }
+  .brand { font: 700 14px var(--mono); letter-spacing: .35em; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 8px currentColor; }
+  .dot.on { background: var(--ok); }
+  header .spacer { flex: 1; }
+  .icon-btn { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: transparent;
+    color: var(--cyan); display: grid; place-items: center; font-size: 15px; }
+  #orbWrap { position: relative; height: 34vh; min-height: 200px; display: grid; place-items: center; }
+  #orb { width: 100%; height: 100%; }
+  #state { position: absolute; bottom: 4px; font: 600 11px var(--mono); letter-spacing: .3em; color: var(--tint); text-transform: uppercase; }
+  #partial { min-height: 22px; text-align: center; color: var(--dim); font-size: 14px; padding: 0 8px; }
+  #feed { flex: 1; overflow-y: auto; padding: 8px 2px 12px; display: flex; flex-direction: column; gap: 12px;
+    mask-image: linear-gradient(transparent, #000 24px); -webkit-mask-image: linear-gradient(transparent, #000 24px); }
+  .msg .who { font: 600 10px var(--mono); letter-spacing: .18em; color: var(--dim); margin-bottom: 2px; }
+  .msg.jarvis .who { color: var(--cyan); }
+  .msg.event .who { color: var(--warn); }
+  .msg .text { white-space: pre-wrap; }
+  .msg.user .text { color: var(--dim); }
+  .meta { font: 10px var(--mono); color: var(--dim); opacity: .7; margin-left: 6px; letter-spacing: 0; }
+  .card { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 12px;
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+  .confirm { border-color: rgba(79, 219, 255, .5); }
+  .confirm.danger { border-color: rgba(255, 107, 97, .6); background: rgba(255, 107, 97, .08); }
+  .confirm .label { font: 600 10px var(--mono); letter-spacing: .2em; color: var(--cyan); }
+  .confirm.danger .label { color: var(--danger); }
+  .confirm pre { white-space: pre-wrap; word-break: break-word; font: 12px var(--mono); background: rgba(0,0,0,.35);
+    border-radius: 8px; padding: 8px; margin: 8px 0; max-height: 140px; overflow: auto; }
+  .row { display: flex; gap: 10px; justify-content: space-between; }
+  button.act { flex: 1; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: transparent;
+    color: var(--dim); font: 600 14px -apple-system, system-ui; }
+  button.act.go { background: var(--cyan); color: #000; border: 0; }
+  .confirm.danger button.act.go { background: var(--danger); }
+  #tasks { display: flex; flex-direction: column; gap: 6px; }
+  .task { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  .task .s { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); flex: none; }
+  .task .s.done { background: var(--ok); box-shadow: none; } .task .s.failed { background: var(--danger); box-shadow: none; }
+  .task .s.waitingConfirmation { background: var(--warn); }
+  .task .step { color: var(--dim); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  form { display: flex; gap: 8px; align-items: center; padding: 10px 0 12px; }
+  #input { flex: 1; min-width: 0; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line);
+    background: rgba(255,255,255,.05); color: var(--text); font-size: 16px; outline: none; }
+  #input:focus { border-color: rgba(79, 219, 255, .5); }
+  #mic { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--cyan); color: #000; font-size: 20px; flex: none;
+    box-shadow: 0 0 18px rgba(79,219,255,.45); touch-action: none; user-select: none; -webkit-user-select: none; }
+  #mic.rec { background: var(--danger); box-shadow: 0 0 24px rgba(255,107,97,.7); }
+  #pair { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 32px; background: var(--bg); z-index: 9; }
+  #pair.show { display: grid; }
+  #pair h1 { font: 700 18px var(--mono); letter-spacing: .3em; }
+  #pair p { color: var(--dim); }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span id="conn" class="dot"></span>
+    <span class="brand">J.A.R.V.I.S.</span>
+    <span class="spacer"></span>
+    <button id="voiceToggle" class="icon-btn" title="Voce">🔊</button>
+  </header>
+  <div id="orbWrap"><canvas id="orb"></canvas><div id="state">connessione…</div></div>
+  <div id="partial"></div>
+  <div id="feed"><div id="tasks"></div></div>
+  <form id="form" autocomplete="off">
+    <input id="input" placeholder="Scrivi a Jarvis…" enterkeyhint="send">
+    <button id="mic" type="button" aria-label="Tieni premuto per parlare">🎙</button>
+  </form>
+</div>
+<div id="pair"><div>
+  <h1>J.A.R.V.I.S.</h1>
+  <p>Questo dispositivo non è ancora associato.<br>Sul Mac apri il menu di Jarvis → <b>Telefono</b> e apri il link di accoppiamento su questo telefono.</p>
+</div></div>
+
+<script>
+"use strict";
+// ---------- Pairing ----------
+const params = new URLSearchParams(location.hash.slice(1));
+if (params.get("pair")) {
+  try { localStorage.setItem("jarvis.token", params.get("pair")); } catch {}
+  history.replaceState(null, "", location.pathname);
+}
+let token = null;
+try { token = localStorage.getItem("jarvis.token"); } catch {}
+if (!token) document.getElementById("pair").classList.add("show");
+
+// ---------- State ----------
+const $ = id => document.getElementById(id);
+const feed = $("feed"), tasksEl = $("tasks");
+let ws = null, state = "connessione…", level = 0, current = null;
+let voiceOn = true;
+try { voiceOn = localStorage.getItem("jarvis.voice") !== "off"; } catch {}
+$("voiceToggle").textContent = voiceOn ? "🔊" : "🔇";
+const tints = { listening: "#4fc7ff", thinking: "#9e85ff", speaking: "#40f2d9", hearing: "#8cf2ff", offline: "#6b7280" };
+function setState(s, label) {
+  state = s;
+  $("state").textContent = label || s;
+  document.documentElement.style.setProperty("--tint", tints[s] || "#4fdbff");
+}
+
+// ---------- Socket ----------
+function wsURL() {
+  // Local test: page on :8766, socket on :8767. Through `tailscale serve`: same origin, /ws.
+  if (location.port === "8766") return `ws://${location.hostname}:8767`;
+  return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+}
+function connect() {
+  if (!token) return;
+  ws = new WebSocket(wsURL(), ["jarvis", "t-" + token]);
+  ws.onopen = () => { $("conn").classList.add("on"); setState("listening", "pronto"); };
+  ws.onclose = () => { $("conn").classList.remove("on"); setState("offline", "offline"); setTimeout(connect, 2500); };
+  ws.onmessage = e => { try { handle(JSON.parse(e.data)); } catch (err) { console.error(err); } };
+}
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+// ---------- Messages ----------
+function addMsg(role, text, meta) {
+  const el = document.createElement("div");
+  el.className = "msg " + role;
+  const who = { user: "TU", jarvis: "JARVIS", event: "AVVISO" }[role] || role.toUpperCase();
+  el.innerHTML = `<div class="who">${who}<span class="meta"></span></div><div class="text"></div>`;
+  el.querySelector(".text").textContent = text;
+  if (meta) el.querySelector(".meta").textContent = meta;
+  feed.appendChild(el);
+  feed.scrollTop = feed.scrollHeight;
+  return el;
+}
+
+const confirms = new Map();
+const tasks = new Map();
+
+function handle(m) {
+  if (m.type === "event") return handleEvent(m);
+  if (!current || m.id !== current.id) return;
+  if (m.type === "delta") {
+    current.text += m.text || "";
+    current.el.querySelector(".text").textContent = current.text;
+    feed.scrollTop = feed.scrollHeight;
+  } else if (m.type === "done") {
+    const text = m.route === "local" ? (m.text || "") : (current.text || m.text || "");
+    current.el.querySelector(".text").textContent = text;
+    current.el.querySelector(".meta").textContent = ` ${m.route || ""} ${m.latencyMs ?? ""}ms`;
+    current = null;
+    speak(text);
+  } else if (m.type === "error") {
+    current.el.querySelector(".text").textContent = "⚠️ " + (m.text || "errore");
+    current = null;
+    setState("listening", "pronto");
+  }
+}
+
+function handleEvent(m) {
+  switch (m.kind) {
+    case "confirm": {
+      const req = JSON.parse(m.payload || "{}");
+      if (!req.id || confirms.has(req.id)) break;
+      const el = document.createElement("div");
+      const danger = req.risk === "dangerous";
+      el.className = "card confirm" + (danger ? " danger" : "");
+      el.innerHTML = `<div class="label">${danger ? "CONFERMA ESPLICITA" : "CONFERMA"}</div><div class="t"></div><pre></pre>
+        <div class="row"><button class="act no">Annulla</button><button class="act go">${danger ? "Confermo" : "Procedi"}</button></div>`;
+      el.querySelector(".t").textContent = req.title;
+      el.querySelector("pre").textContent = req.detail;
+      el.querySelector(".no").onclick = () => answer(req.id, false);
+      el.querySelector(".go").onclick = () => answer(req.id, true);
+      confirms.set(req.id, el);
+      feed.appendChild(el);
+      feed.scrollTop = feed.scrollHeight;
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      break;
+    }
+    case "confirmResolved": {
+      const el = confirms.get(m.id);
+      if (el) { el.remove(); confirms.delete(m.id); }
+      break;
+    }
+    case "task": case "taskDone": {
+      const t = JSON.parse(m.payload || "{}");
+      if (t.id) { tasks.set(t.id, t); renderTasks(); }
+      break;
+    }
+  }
+  if (m.speak && m.text) { addMsg("event", m.text); speak(m.text); }
+}
+
+function renderTasks() {
+  const list = [...tasks.values()].slice(-4).reverse();
+  tasksEl.innerHTML = "";
+  if (!list.length) return;
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `<div class="label" style="font:600 10px var(--mono);letter-spacing:.2em;color:var(--dim);margin-bottom:8px">WORKFLOW</div>`;
+  for (const t of list) {
+    const row = document.createElement("div");
+    row.className = "task";
+    row.innerHTML = `<span class="s ${t.status}"></span><div style="min-width:0"><div class="n"></div><div class="step"></div></div>`;
+    row.querySelector(".n").textContent = t.title + (t.project ? ` · ${t.project}` : "");
+    row.querySelector(".step").textContent = t.status === "running" ? (t.steps || []).slice(-1)[0] || "" : (t.summary || t.status).slice(0, 120);
+    card.appendChild(row);
+  }
+  tasksEl.appendChild(card);
+}
+
+function answer(id, approved) {
+  send({ type: "confirm", id, approved });
+  const el = confirms.get(id);
+  if (el) { el.remove(); confirms.delete(id); }
+  addMsg("user", approved ? "✓ Confermato" : "✕ Annullato");
+}
+
+function say(text) {
+  text = text.trim();
+  if (!text) return;
+  unlockAudio();
+  const id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
+  addMsg("user", text);
+  current = { id, text: "", el: addMsg("jarvis", "…") };
+  setState("thinking", "elaboro");
+  send({ type: "say", id, text });
+}
+
+// ---------- Voice out (ElevenLabs via the Mac) ----------
+const audio = new Audio();
+let audioUnlocked = false, speakQueue = Promise.resolve();
+function silentWav() {
+  // 0.05s of silence, 8 kHz mono 16-bit.
+  const n = 400, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, str) => [...str].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 8000, true); v.setUint32(28, 16000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, n * 2, true);
+  return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+}
+function unlockAudio() {
+  // iOS: audio can only start from a user gesture; play a silent clip once to unlock.
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  audio.src = silentWav();
+  audio.play().catch(() => {});
+}
+function speak(text) {
+  if (!voiceOn || !text) { setState("listening", "pronto"); return; }
+  speakQueue = speakQueue.then(async () => {
+    try {
+      const r = await fetch("tts", { method: "POST", headers: { "Content-Type": "application/json", "X-Jarvis-Token": token },
+                                      body: JSON.stringify({ text }) });
+      if (!r.ok) throw new Error(r.status);
+      const url = URL.createObjectURL(await r.blob());
+      setState("speaking", "parlo");
+      audio.src = url;
+      await audio.play();
+      await new Promise(res => { audio.onended = res; audio.onerror = res; });
+      URL.revokeObjectURL(url);
+    } catch (e) { console.warn("tts", e); }
+    setState("listening", "pronto");
+  });
+}
+$("voiceToggle").onclick = () => {
+  voiceOn = !voiceOn;
+  try { localStorage.setItem("jarvis.voice", voiceOn ? "on" : "off"); } catch {}
+  $("voiceToggle").textContent = voiceOn ? "🔊" : "🔇";
+  if (!voiceOn) audio.pause();
+};
+
+// ---------- Voice in (hold the mic) ----------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, heard = "";
+function startRec(e) {
+  e.preventDefault();
+  unlockAudio();
+  audio.pause();
+  if (!SR) { $("partial").textContent = "Dettatura non supportata: usa la tastiera."; return; }
+  heard = "";
+  rec = new SR();
+  rec.lang = "it-IT"; rec.interimResults = true; rec.continuous = true;
+  rec.onresult = ev => {
+    let text = "";
+    for (const r of ev.results) text += r[0].transcript;
+    heard = text;
+    $("partial").textContent = text;
+    level = Math.min(1, level + 0.3);
+  };
+  rec.onerror = () => {};
+  rec.start();
+  $("mic").classList.add("rec");
+  setState("hearing", "ti ascolto");
+}
+function stopRec(e) {
+  if (e) e.preventDefault();
+  if (!rec) return;
+  rec.stop();
+  rec = null;
+  $("mic").classList.remove("rec");
+  setTimeout(() => { $("partial").textContent = ""; if (heard) say(heard); else setState("listening", "pronto"); }, 350);
+}
+$("mic").addEventListener("pointerdown", startRec);
+$("mic").addEventListener("pointerup", stopRec);
+$("mic").addEventListener("pointercancel", stopRec);
+$("mic").addEventListener("pointerleave", e => { if (rec) stopRec(e); });
+
+$("form").onsubmit = e => { e.preventDefault(); say($("input").value); $("input").value = ""; $("input").blur(); };
+
+// ---------- Orb ----------
+const cv = $("orb"), cx = cv.getContext("2d");
+const neurons = Array.from({ length: 56 }, (_, i) => {
+  let s = i * 9301 + 49297; const r = () => ((s = (s * 233280 + 49297) % 233280) / 233280);
+  return { ph: r() * 6.28, sp: (0.4 + r() * 0.9) * (r() > .5 ? 1 : -1), rad: .3 + r() * .5, tilt: .55 + r() * .45, sz: 1.4 + r() * 2.2 };
+});
+function frame(t) {
+  const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.clearRect(0, 0, w, h);
+  const tint = getComputedStyle(document.documentElement).getPropertyValue("--tint").trim() || "#4fdbff";
+  const R = Math.min(w, h) / 2.1, c = { x: w / 2, y: h / 2 }, time = t / 1000;
+  const energy = { thinking: 1, speaking: .8, hearing: .75, offline: .15 }[state] ?? .35;
+  level *= 0.93;
+  const g = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R);
+  g.addColorStop(0, tint + "44"); g.addColorStop(1, "transparent");
+  cx.fillStyle = g; cx.beginPath(); cx.arc(c.x, c.y, R, 0, 7); cx.fill();
+  const pts = neurons.map((n, i) => {
+    const a = n.ph + time * (0.12 + energy * .5) * n.sp, rr = R * (n.rad + Math.sin(time * .8 + n.ph) * .05 + level * .08);
+    return [c.x + Math.cos(a) * rr, c.y + Math.sin(a) * rr * n.tilt, n.sz];
+  });
+  const maxD = R * (.38 + energy * .12);
+  cx.lineWidth = .7;
+  for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+    const d = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]);
+    if (d > maxD) continue;
+    const fire = state === "thinking" ? (Math.sin(time * 6 + i * 7 + j) + 1) / 2 : .3;
+    cx.strokeStyle = tint; cx.globalAlpha = (1 - d / maxD) * (.12 + .35 * energy * fire);
+    cx.beginPath(); cx.moveTo(pts[i][0], pts[i][1]); cx.lineTo(pts[j][0], pts[j][1]); cx.stroke();
+  }
+  cx.globalAlpha = .55 + .45 * energy; cx.fillStyle = tint;
+  for (const p of pts) { cx.beginPath(); cx.arc(p[0], p[1], p[2] / 2 * (1 + level), 0, 7); cx.fill(); }
+  cx.globalAlpha = 1;
+  for (const [k, ring] of [[0, [.92, 1]], [1, [.8, -1.6]]]) {
+    const n = k ? 5 : 3;
+    for (let s = 0; s < n; s++) {
+      const st = time * (0.12 + energy * .5) * ring[1] + s * 6.283 / n;
+      cx.strokeStyle = tint; cx.globalAlpha = .35 + .3 * energy; cx.lineWidth = k ? 2.2 : 1.2;
+      cx.beginPath(); cx.arc(c.x, c.y, R * ring[0], st, st + (k ? .5 : 1.4)); cx.stroke();
+    }
+  }
+  cx.globalAlpha = 1;
+  const core = R * (.16 + level * .07 + (state === "speaking" ? Math.sin(time * 9) * .015 : 0));
+  const cg = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, core);
+  cg.addColorStop(0, "#ffffff"); cg.addColorStop(.5, tint); cg.addColorStop(1, "transparent");
+  cx.fillStyle = cg; cx.beginPath(); cx.arc(c.x, c.y, core, 0, 7); cx.fill();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+connect();
+</script>
+</body>
+</html>

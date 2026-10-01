@@ -6,26 +6,42 @@ func log(_ message: String) {
     FileHandle.standardError.write(Data("[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n".utf8))
 }
 
-/// Local WebSocket server on 127.0.0.1. Clients must send `X-Jarvis-Token`;
-/// requests carrying an `Origin` header (i.e. from a browser page) are rejected.
+/// WebSocket server on 127.0.0.1.
+/// - `.local` (Mac app, CLI, MCP bridge): `X-Jarvis-Token` header; browser pages (Origin) rejected.
+/// - `.remote` (phone PWA, reached through `tailscale serve`): the pairing token travels as a
+///   WebSocket subprotocol (`t-<token>`), since browsers can't set headers. Remote clients may only
+///   talk, ping and answer confirmations — never call tools directly.
 final class Server: @unchecked Sendable {
+    enum Mode { case local, remote }
+
     private let brain: Brain
     private let token: String
+    private let mode: Mode
     private let listener: NWListener
     private let queue = DispatchQueue(label: "jarvis.server")
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    init(brain: Brain, token: String, port: UInt16) throws {
+    init(brain: Brain, token: String, port: UInt16, mode: Mode = .local) throws {
         self.brain = brain
         self.token = token
+        self.mode = mode
 
         let ws = NWProtocolWebSocket.Options()
         ws.autoReplyPing = true
-        ws.setClientRequestHandler(queue) { [token] _, headers in
-            let lower = Dictionary(headers.map { ($0.name.lowercased(), $0.value) }, uniquingKeysWith: { a, _ in a })
-            let authorized = lower["x-jarvis-token"] == token && lower["origin"] == nil
-            return NWProtocolWebSocket.Response(status: authorized ? .accept : .reject, subprotocol: nil)
+        ws.setClientRequestHandler(queue) { [token] subprotocols, headers in
+            switch mode {
+            case .local:
+                let lower = Dictionary(headers.map { ($0.name.lowercased(), $0.value) }, uniquingKeysWith: { a, _ in a })
+                let authorized = lower["x-jarvis-token"] == token && lower["origin"] == nil
+                return NWProtocolWebSocket.Response(status: authorized ? .accept : .reject, subprotocol: nil)
+            case .remote:
+                // Network.framework doesn't trim the comma-separated list.
+                let offered = subprotocols.map { $0.trimmingCharacters(in: .whitespaces) }
+                let authorized = offered.contains("t-\(token)")
+                return NWProtocolWebSocket.Response(status: authorized ? .accept : .reject,
+                                                    subprotocol: authorized ? "jarvis" : nil)
+            }
         }
         let params = NWParameters.tcp
         params.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
@@ -39,7 +55,9 @@ final class Server: @unchecked Sendable {
         listener.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
         listener.stateUpdateHandler = { state in
             if case .failed(let err) = state { fputs("listener failed: \(err)\n", stderr); exit(1) }
-            if case .ready = state, let port = self.listener.port { fputs("jarvisd listening on 127.0.0.1:\(port)\n", stderr) }
+            if case .ready = state, let port = self.listener.port {
+                fputs("jarvisd \(self.mode == .local ? "local" : "remote") ws on 127.0.0.1:\(port)\n", stderr)
+            }
         }
         listener.start(queue: queue)
     }
@@ -89,6 +107,19 @@ final class Server: @unchecked Sendable {
                     self.send(reply, on: conn)
                 }
             }
+        case .listTools, .tool:
+            guard mode == .local else {
+                send(ServerMessage(type: .error, text: "not allowed remotely"), on: conn)
+                return
+            }
+            dispatchTool(message, on: conn)
+        case .confirm(let id, let approved):
+            Task { await brain.gate.answer(id: id, approved: approved) }
+        }
+    }
+
+    private func dispatchTool(_ message: ClientMessage, on conn: NWConnection) {
+        switch message {
         case .listTools(let id):
             send(ServerMessage(type: .toolResult, id: id, payload: ToolRegistry.listingJSON()), on: conn)
         case .tool(let id, let name, let args):
@@ -104,8 +135,8 @@ final class Server: @unchecked Sendable {
                 log("tool \(name) → \(isError ? "ERROR " : "")\(result.prefix(160))")
                 self.send(ServerMessage(type: .toolResult, id: id, payload: result, isError: isError), on: conn)
             }
-        case .confirm(let id, let approved):
-            Task { await brain.gate.answer(id: id, approved: approved) }
+        default:
+            break
         }
     }
 
