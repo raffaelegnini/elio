@@ -41,7 +41,11 @@ func ask(_ text: String) async throws {
     var streamed = false
     while true {
         let msg = try await receive()
-        if msg.type == .event { print("\n🔔 \(msg.text ?? "")"); continue }
+        if msg.type == .event {
+            // Only spoken events (reminders, timers, task results); skip tool/task telemetry.
+            if msg.speak == true { print("\n🔔 \(msg.text ?? "")") }
+            continue
+        }
         guard msg.id == id else { continue }
         switch msg.type {
         case .delta:

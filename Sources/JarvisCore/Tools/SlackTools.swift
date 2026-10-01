@@ -106,6 +106,11 @@ public actor SlackAPI {
     func search(_ query: String, count: Int = 20) async throws -> [String] {
         let r = try await call("search.messages", ["query": query, "sort": "timestamp", "sort_dir": "desc", "count": "\(count)"])
         let matches = ((r["messages"] as? [String: Any])?["matches"] as? [[String: Any]]) ?? []
+        // Resolve every author once, in parallel (users.info per message was slow).
+        let ids = Set(matches.compactMap { $0["user"] as? String }).subtracting(users.keys)
+        await withTaskGroup(of: Void.self) { group in
+            for id in ids { group.addTask { _ = await self.userName(id) } }
+        }
         var lines: [String] = []
         for m in matches {
             let user = await userName(m["user"] as? String ?? "")

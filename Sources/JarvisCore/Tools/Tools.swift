@@ -78,6 +78,7 @@ public enum ToolRegistry {
         let timeout: TimeInterval = switch name {
         case "approve": 600
         case "slack_clock_in", "slack_send": 150   // waits for the user's confirmation
+        case "slack_mentions", "slack_dms": 45
         case "start_task": 60
         default: 20
         }
