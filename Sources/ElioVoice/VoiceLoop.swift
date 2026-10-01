@@ -51,6 +51,21 @@ public final class VoiceLoop {
     private var routineText = ""
     private var routineSplitter = SentenceSplitter()
 
+    /// Claude is now waiting for the user (confirmation/question): close the speech stream it was
+    /// feeding, or the question would queue behind a stream that never ends (and block answers).
+    private func closeOpenStreams() {
+        if routineStreaming {
+            if let rest = routineSplitter.flush() { speaker.streamSentence(rest, flush: true) }
+            speaker.endStream()
+            routineStreaming = false
+        }
+        if replyStreaming {
+            if let rest = splitter.flush() { speaker.streamSentence(rest, flush: true) }
+            speaker.endStream()
+            replyStreaming = false
+        }
+    }
+
     static func greeting(addressAs: String, brief: Bool) -> String {
         let hour = Calendar.current.component(.hour, from: Date())
         let hello = hour < 13 ? "Buongiorno" : hour < 18 ? "Buon pomeriggio" : "Buonasera"
@@ -491,10 +506,12 @@ public final class VoiceLoop {
         if spokeRecently { text = Echo.remove(from: text, spoken: speaker.recentlySpoken()) }
         if state == .hearing, !isArmed { state = .listening }
         guard !text.isEmpty else { return }
-        if speaker.isSpeaking { return }  // still talking and no stop word: ignore
+        // Answers to a pending confirmation/question always count, even while Elio is talking.
+        let awaitingAnswer = !confirmations.isEmpty || !questions.isEmpty
+        if speaker.isSpeaking, !awaitingAnswer { return }  // still talking and no stop word: ignore
 
         let command: String
-        if isArmed || utteranceArmed {
+        if isArmed || utteranceArmed || awaitingAnswer {
             command = WakeWord.strip(text) ?? text
         } else if let afterWake = WakeWord.strip(text) {
             command = afterWake
@@ -629,12 +646,16 @@ public final class VoiceLoop {
             if routineText.isEmpty {
                 routineStreaming = speaker.beginStream()
                 // The theme fades when Elio's voice is actually there, not when Claude starts writing.
-                speaker.onStreamAudio = { [weak self] in self?.fadeOpening(); self?.speaker.onStreamAudio = nil }
+                // The theme stays as a soft bed under Elio's voice until the clip ends.
+                speaker.onStreamAudio = { [weak self] in
+                    self?.opening?.setVolume(0.12, fadeDuration: 1.0)
+                    self?.speaker.onStreamAudio = nil
+                }
             }
             routineText += chunk
             if let i = turns.lastIndex(where: { $0.role == "elio" }) { turns[i].text = routineText }
             for sentence in routineSplitter.push(chunk) {
-                if routineStreaming { speaker.streamSentence(sentence, flush: true) } else { speaker.enqueue(sentence) }
+                if routineStreaming { speaker.streamSentence(sentence, flush: true) } else { speaker.enqueue(sentence); speaker.endUtterance() }
             }
         case "routineDone":
             if let rest = routineSplitter.flush() {
@@ -655,6 +676,7 @@ public final class VoiceLoop {
                 taskLogs[entry.taskId] = log
             }
         case "question":
+            closeOpenStreams()
             if let q = QuestionRequest.fromJSON(msg.payload), !questions.contains(where: { $0.id == q.id }) {
                 questions.append(q)
                 armedUntil = Date().addingTimeInterval(20)
@@ -677,6 +699,7 @@ public final class VoiceLoop {
                 if tasks.count > 30 { tasks.removeFirst(tasks.count - 30) }
             }
         case "confirm":
+            closeOpenStreams()
             if let req = ConfirmRequest.fromJSON(msg.payload), !confirmations.contains(where: { $0.id == req.id }) {
                 confirmations.append(req)
                 armedUntil = Date().addingTimeInterval(30)  // the answer needs no wake word
