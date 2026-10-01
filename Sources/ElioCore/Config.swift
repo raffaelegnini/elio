@@ -95,6 +95,12 @@ public enum ElioPaths {
         return url
     }
     public static var config: URL { support.appendingPathComponent("config.json") }
+    /// Where Elio puts the documents it creates (free to write here, elsewhere it asks).
+    public static var outputDir: URL {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/Elio", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
     public static var database: URL { support.appendingPathComponent("elio.sqlite") }
     public static var token: URL { support.appendingPathComponent("token") }
     /// Working directory of the Claude session; keeps its project settings isolated.

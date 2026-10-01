@@ -159,7 +159,7 @@ public enum PermissionPolicy {
         #"^git\s+commit(\s+(-m|-a|-am|--all|--message)?\s*('[^']*'|"[^"]*"|[\w.-]+))+$"#,
         #"^git\s+(checkout\s+-b|switch\s+-c)\s+[\w./-]+$"#,
         #"^git\s+switch\s+[\w./-]+$"#,
-        #"^(ls|pwd|cat|head|tail|wc|uniq|cut|diff|file|which|echo|printf|date|stat|du|basename|dirname|realpath)(\s+('[^']*'|"[^"]*"|[\w./@:=+,*~-]+))*$"#,
+        #"^(ls|pwd|cat|head|tail|wc|uniq|cut|diff|file|which|echo|printf|date|stat|du|basename|dirname|realpath|cal|mdls|pdfinfo|textutil\s+-info|lpstat)(\s+('[^']*'|"[^"]*"|[\w./@:=+,*~-]+))*$"#,
         #"^(grep|rg|ag|fd)(\s+('[^']*'|"[^"]*"|[^\s;&|<>`$]+))*$"#,
         #"^(jq|yq)(\s+('[^']*'|"[^"]*"|[\w./@:=,-]+))*$"#,
         #"^find(\s+('[^']*'|"[^"]*"|[^\s;&|<>`$]+))*$"#,

@@ -300,6 +300,10 @@ public actor Brain {
         4. Imposta con integration_sync gli elenchi che servono a risolvere nomi (progetti, persone, clienti…): \
         verranno tenuti aggiornati in background e lookup li troverà all'istante.
 
+        File e documenti: hai Read/Write/Edit/Bash (nella cartella ~/Documents/Elio sono liberi, altrove chiedono conferma), \
+        save_document (md, txt, csv, html, pdf impaginato), pdf_tool (testo, unione, estrazione, rotazione, cancellazione pagine), \
+        open_file, print_file. Per tenere qualcosa sott'occhio usa show_on_screen: apre una finestra che resta.
+
         Browser: puoi navigare nel Chrome dell'utente per fare le cose da solo (cercare, leggere pagine riservate, \
         compilare impostazioni). Non fare acquisti, pagamenti, invii di messaggi o cancellazioni dal browser senza chiedere. \
         Quando inizi a usarlo, dillo in una frase ("Apro Teamwork nel suo browser, Signore."): Chrome viene portato in primo piano.

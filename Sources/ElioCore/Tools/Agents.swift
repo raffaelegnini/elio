@@ -82,7 +82,8 @@ public enum ApprovalTool {
     ) { args, ctx in
         let tool = args["tool_name"] as? String ?? ""
         let input = args["input"] as? [String: Any] ?? [:]
-        let cwd = await ctx.tasks.cwd(for: ctx.taskId) ?? "/nonexistent"
+        // Agents work in their project; the conversation's free zone is the work folder.
+        let cwd = await ctx.tasks.cwd(for: ctx.taskId) ?? ElioPaths.outputDir.path
         let decision = PermissionPolicy.decide(tool: tool, input: input, cwd: cwd)
 
         let allow: Bool

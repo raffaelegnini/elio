@@ -117,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         objectWillChange.send()
         loop.onIntegrationSetup = { [weak self] id in self?.showSettings(tab: .integrations, integration: id) }
         loop.onRoutineStart = { [weak self] in self?.showDashboard() }
+        loop.onCard = { card in CardWindows.shared.show(title: card.title, markdown: card.body) }
         loop.onSettingsChanged = { [weak self] cfg in
             Brand.shared.apply(cfg)
             WakeWord.configure(name: cfg.assistantName, aliases: cfg.wakeAliases)

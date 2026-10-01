@@ -295,6 +295,8 @@ public final class VoiceLoop {
     /// Brief/recap started: the app shows the network lighting up.
     public var onRoutineStart: (() -> Void)?
     public var onSettingsChanged: ((ElioConfig) -> Void)?
+    /// A card to keep on screen (the app opens it in its own window).
+    public var onCard: ((CardPayload) -> Void)?
     public var onOpenView: ((String, String, String) -> Void)?
     private var spokenSentences = 3
     private var briefOpeningEnabled = true
@@ -665,6 +667,7 @@ public final class VoiceLoop {
             }
         case "card":
             if let c = CardPayload.fromJSON(msg.payload) {
+                onCard?(c)
                 cards.insert(c, at: 0)
                 if cards.count > 10 { cards.removeLast() }
                 turns.append(Turn(role: "card", text: "\(c.title)\n\(c.body)"))

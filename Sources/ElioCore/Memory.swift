@@ -76,6 +76,12 @@ public actor Memory {
                 PRIMARY KEY (source, key)
             );
             CREATE INDEX IF NOT EXISTS cache_kind ON cache(kind);
+            CREATE TABLE IF NOT EXISTS cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                ts REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS facts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 text TEXT NOT NULL,
@@ -233,6 +239,26 @@ public actor Memory {
     public static func fold(_ s: String) -> String {
         s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "it_IT"))
             .replacingOccurrences(of: #"[^a-z0-9#@._ -]"#, with: " ", options: .regularExpression)
+    }
+
+    // MARK: - Cards (what Elio showed on screen)
+
+    public struct SavedCard: Codable, Sendable { public let id: Int; public let title: String; public let body: String; public let ts: Date }
+
+    @discardableResult
+    public func addCard(title: String, body: String) -> Int {
+        run("INSERT INTO cards (title, body, ts) VALUES (?, ?, ?)", [title, SecretFilter.redact(body), Date().timeIntervalSince1970])
+        return Int(sqlite3_last_insert_rowid(db))
+    }
+
+    public func cards(limit: Int = 200) -> [SavedCard] {
+        var rows: [SavedCard] = []
+        query("SELECT id, title, body, ts FROM cards ORDER BY id DESC LIMIT ?", [limit]) { s in
+            rows.append(SavedCard(id: Int(sqlite3_column_int64(s, 0)), title: String(cString: sqlite3_column_text(s, 1)),
+                                  body: String(cString: sqlite3_column_text(s, 2)),
+                                  ts: Date(timeIntervalSince1970: sqlite3_column_double(s, 3))))
+        }
+        return rows
     }
 
     // MARK: - Archive

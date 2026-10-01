@@ -8,11 +8,12 @@ struct ArchiveView: View {
     let loop: VoiceLoop
 
     enum Section: String, CaseIterable, Identifiable {
-        case chats = "Conversazioni", operations = "Operazioni", agents = "Agenti", reminders = "Promemoria", memory = "Memoria"
+        case chats = "Conversazioni", cards = "Schede", operations = "Operazioni", agents = "Agenti", reminders = "Promemoria", memory = "Memoria"
         var id: String { rawValue }
         var icon: String {
             switch self {
             case .chats: "bubble.left.and.bubble.right"
+            case .cards: "rectangle.stack"
             case .operations: "bolt.horizontal"
             case .agents: "cpu"
             case .reminders: "bell"
@@ -32,6 +33,7 @@ struct ArchiveView: View {
     @State private var taskLog: [TaskLogEntry] = []
     @State private var reminders: [Memory.ArchivedReminder] = []
     @State private var facts: [FactRow] = []
+    @State private var cards: [Memory.SavedCard] = []
 
     struct FactRow: Codable, Identifiable { let id: Int; let text: String; let category: String; let created: Date }
 
@@ -102,6 +104,7 @@ struct ArchiveView: View {
     private var content: some View {
         switch section {
         case .chats: chats
+        case .cards: cardsView
         case .operations: operationsView
         case .agents: agents
         case .reminders: remindersView
@@ -136,6 +139,32 @@ struct ArchiveView: View {
                 }
                 .padding(20)
             }
+        }
+    }
+
+    private var cardsView: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 10) {
+                if cards.isEmpty { empty("Nessuna scheda mostrata finora") }
+                ForEach(cards, id: \.id) { c in
+                    Button { CardWindows.shared.show(title: c.title, markdown: c.body) } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Image(systemName: "rectangle.stack").foregroundStyle(Theme.accent)
+                                Text(c.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                                Spacer()
+                                Text(c.ts, format: .dateTime.day().month().hour().minute()).font(Theme.mono).foregroundStyle(Theme.dim)
+                            }
+                            Text(c.body.prefix(160)).font(.system(size: 12)).foregroundStyle(Theme.dim).lineLimit(2)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.03)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(20)
         }
     }
 
@@ -265,6 +294,8 @@ struct ArchiveView: View {
             tasks = await call(["section": "tasks"], as: [TaskInfo].self) ?? []
         case .reminders:
             reminders = await call(["section": "reminders"], as: [Memory.ArchivedReminder].self) ?? []
+        case .cards:
+            cards = await call(["section": "cards"], as: [Memory.SavedCard].self) ?? []
         case .memory:
             facts = await call(["section": "memory"], as: [FactRow].self) ?? []
         }

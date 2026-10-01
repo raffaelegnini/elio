@@ -106,13 +106,18 @@ public enum ProjectTools {
 public enum ScreenTools {
     static let show = ElioTool(
         name: "show_on_screen",
-        description: "Mostra nell'HUD una scheda con dettagli (liste, codice, link, tabelle in markdown). Usalo quando la risposta è troppo lunga o tecnica da dire a voce; a voce dai solo la sintesi.",
+        description: """
+        Apre sul Mac una finestra con una scheda (markdown: tabelle, liste, codice, link) che resta finché l'utente \
+        non la chiude, e la salva nell'archivio. Usalo per tutto ciò che è lungo, tabellare o da tenere sott'occhio; \
+        a voce dai solo la sintesi. Per un file vero usa save_document.
+        """,
         properties: ["title": prop("Titolo breve"), "body": prop("Contenuto in markdown")],
         required: ["title", "body"]
     ) { args, ctx in
         let card = CardPayload(title: args["title"] as? String ?? "", body: args["body"] as? String ?? "")
-        ctx.broadcast(ServerMessage(type: .event, text: card.title, kind: "card", payload: card.jsonString()))
-        return "Mostrato a schermo."
+        let id = await ctx.memory.addCard(title: card.title, body: card.body)
+        ctx.broadcast(ServerMessage(type: .event, id: "\(id)", text: card.title, kind: "card", payload: card.jsonString()))
+        return "Mostrato a schermo in una finestra (resta aperta) e salvato nell'archivio."
     }
 }
 
