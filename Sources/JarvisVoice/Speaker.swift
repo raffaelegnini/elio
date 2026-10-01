@@ -24,6 +24,14 @@ public final class Speaker {
     private var utteranceOpen = false
     private var generation = 0
     private let fallback = AVSpeechSynthesizer()
+    private var stream: StreamingTTS?
+    private var streamText = ""
+    private var streamGotAudio = false
+    /// Jitter buffer: audio held until enough is queued to play without gaps.
+    private var held: [AVAudioPCMBuffer] = []
+    private var heldSeconds: Double = 0
+    private var holding = false
+    public var onFirstAudio: (() -> Void)?
 
     private nonisolated static let cacheMaxChars = 80
 
@@ -52,9 +60,103 @@ public final class Speaker {
         checkFinished()
     }
 
+    // MARK: - Streaming reply (WebSocket)
+
+    /// Opens a streaming session for a Claude reply. Returns false if unavailable (use `enqueue`).
+    @discardableResult
+    public func beginStream() -> Bool {
+        guard let apiKey else { return false }
+        stream?.cancel()
+        let gen = generation
+        streamText = ""
+        streamGotAudio = false
+        holding = true
+        held = []
+        heldSeconds = 0
+        stream = StreamingTTS(
+            apiKey: apiKey, voiceId: voiceId, model: model, format: audio.playbackFormat,
+            onAudio: { [weak self] buffer in
+                Task { @MainActor in self?.streamAudio(buffer, generation: gen) }
+            },
+            onFinish: { [weak self] error in
+                Task { @MainActor in self?.streamFinished(error, generation: gen) }
+            })
+        utteranceOpen = true
+        return true
+    }
+
+    /// Text of the reply as it arrives (whole sentences work best).
+    public func streamSentence(_ sentence: String) {
+        let text = Speakable.clean(sentence)
+        guard let stream, !text.isEmpty else { return }
+        setSpeaking(true)
+        streamText += text + " "
+        // Flush the first sentence so speech starts right away; later ones flow with the schedule.
+        stream.push(text, flush: !streamGotAudio)
+    }
+
+    public func endStream() {
+        guard let stream else { return }
+        onCharactersSent?(stream.charactersSent)
+        stream.close()
+    }
+
+    public var isStreaming: Bool { stream != nil }
+
+    /// Drops a stream that turned out not to be needed (local reply, error).
+    public func cancelStream() {
+        stream?.cancel()
+        stream = nil
+        held = []
+        holding = false
+        utteranceOpen = false
+        checkFinished()
+    }
+
+    private func streamAudio(_ buffer: AVAudioPCMBuffer, generation gen: Int) {
+        guard generation == gen else { return }
+        if !streamGotAudio { streamGotAudio = true; onFirstAudio?() }
+        setSpeaking(true)
+        if holding {
+            held.append(buffer)
+            heldSeconds += Double(buffer.frameLength) / buffer.format.sampleRate
+            if heldSeconds >= 0.25 { releaseHeld(gen) }
+        } else {
+            schedule(buffer, generation: gen)
+        }
+    }
+
+    private func releaseHeld(_ gen: Int) {
+        holding = false
+        for b in held { schedule(b, generation: gen) }
+        held = []
+    }
+
+    private func streamFinished(_ error: Error?, generation gen: Int) {
+        guard generation == gen else { return }
+        stream = nil
+        releaseHeld(gen)
+        if let error {
+            NSLog("Jarvis TTS stream failed: \(error)")
+            VoiceLog.write("tts stream failed: \(error)")
+            // Nothing played yet: say it the old way (per-sentence HTTP, Apple voice as last resort).
+            if !streamGotAudio, !streamText.isEmpty {
+                var splitter = SentenceSplitter()
+                for s in splitter.push(streamText) { enqueue(s) }
+                if let rest = splitter.flush() { enqueue(rest) }
+            }
+        }
+        utteranceOpen = false
+        checkFinished()
+    }
+
     /// Barge-in: drop everything immediately.
     public func stop() {
         generation += 1
+        stream?.cancel()
+        stream = nil
+        held = []
+        holding = false
         jobs?.finish()
         consumer?.cancel()
         audio.player.stop()
@@ -177,7 +279,7 @@ public final class Speaker {
         var all = Data()
         var chunk = Data()
         // First chunk small (~50ms) to start playing fast, then ~200ms chunks.
-        var target = 2205
+        var target = 8820
         for try await byte in bytes {
             chunk.append(byte)
             if chunk.count >= target {

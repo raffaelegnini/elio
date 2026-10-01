@@ -52,6 +52,10 @@ public final class VoiceLoop {
     private var currentRequestId: String?
     private var splitter = SentenceSplitter()
     private var requestStart = Date()
+    private var replyStreaming = false
+    private var firstDeltaLogged = false
+    private var firstAudioLogged = false
+    static let fillers = ["Vediamo.", "Un attimo.", "Allora…"]
 
     static let followUpWindow: TimeInterval = 8
     static let wakeWindow: TimeInterval = 10
@@ -71,6 +75,11 @@ public final class VoiceLoop {
 
         speaker.onSpeakingChange = { [weak self] speaking in self?.speakingChanged(speaking) }
         speaker.onCharactersSent = { [weak self] n in self?.charactersThisSession += n }
+        speaker.onFirstAudio = { [weak self] in
+            guard let self, !self.firstAudioLogged else { return }
+            self.firstAudioLogged = true
+            VoiceLog.write(String(format: "timing: first audio %.2fs after request", Date().timeIntervalSince(self.requestStart)))
+        }
 
         pipeline.onEvent = { [weak self] event in Task { @MainActor in self?.handle(event) } }
         pipeline.onLevel = { [weak self] db in Task { @MainActor in self?.updateLevel(db) } }
@@ -81,7 +90,7 @@ public final class VoiceLoop {
             try audio.start()
             pipeline.inputFormat = audio.inputFormat
             inputDevice = audio.inputDeviceName
-            VoiceLog.write("audio started on '\(inputDevice)', format: \(String(describing: audio.inputFormat))")
+            VoiceLog.write("audio started: in '\(inputDevice)' out '\(audio.outputDeviceName)' bt-out \(AudioDevices.defaultOutputIsBluetooth()) builtin-mic \(AudioDevices.builtInMicrophone().map { AudioDevices.name(of: $0) } ?? "-"), format: \(String(describing: audio.inputFormat))")
             audio.onRouteChange = { [weak self] format in
                 guard let self else { return }
                 self.inputDevice = self.audio.inputDeviceName
@@ -92,7 +101,7 @@ public final class VoiceLoop {
                 self.pipeline.resetVAD()
             }
             state = .listening
-            speaker.warmCache(Self.acks)
+            speaker.warmCache(Self.acks + Self.fillers)
         } catch {
             lastError = "Audio: \(error.localizedDescription)"
             state = .off
@@ -233,6 +242,11 @@ public final class VoiceLoop {
         turns.append(Turn(role: "jarvis", text: ""))
         currentRequestId = client.say(text)
         VoiceLog.write("→ daemon: '\(text)'")
+        firstDeltaLogged = false
+        firstAudioLogged = false
+        // Open the TTS socket while Claude is thinking: saves the ~0.4s handshake.
+        replyStreaming = speaker.beginStream()
+        scheduleFiller(for: currentRequestId)
         state = .thinking
     }
 
@@ -245,14 +259,23 @@ public final class VoiceLoop {
         switch msg.type {
         case .delta:
             appendToReply(msg.text ?? "")
-            for sentence in splitter.push(msg.text ?? "") { speaker.enqueue(sentence) }
+            if !firstDeltaLogged {
+                firstDeltaLogged = true
+                VoiceLog.write(String(format: "timing: first claude text %.2fs", Date().timeIntervalSince(requestStart)))
+            }
+            for sentence in splitter.push(msg.text ?? "") {
+                if replyStreaming { speaker.streamSentence(sentence) } else { speaker.enqueue(sentence) }
+            }
         case .done:
             if msg.route == .local {
                 appendToReply(msg.text ?? "")
+                // Local replies are short and cached: drop the pre-opened stream.
+                if replyStreaming { speaker.cancelStream(); replyStreaming = false }
                 speaker.enqueue(msg.text ?? "", lang: msg.lang)
             } else if let rest = splitter.flush() {
-                speaker.enqueue(rest)
+                if replyStreaming { speaker.streamSentence(rest) } else { speaker.enqueue(rest) }
             }
+            if replyStreaming { speaker.endStream() }
             if let i = turns.lastIndex(where: { $0.role == "jarvis" }) {
                 turns[i].route = msg.route
                 turns[i].latencyMs = msg.latencyMs
@@ -261,6 +284,7 @@ public final class VoiceLoop {
             currentRequestId = nil
             if !speaker.isSpeaking { state = .listening }
         case .error:
+            if replyStreaming { speaker.cancelStream(); replyStreaming = false }
             appendToReply("⚠️ \(msg.text ?? "errore")")
             speaker.enqueue("Ho avuto un problema a rispondere.")
             speaker.endUtterance()
@@ -336,6 +360,17 @@ public final class VoiceLoop {
             return false
         }
         return true
+    }
+
+    /// If Claude is slow to start, say a short cached filler so the silence doesn't feel dead.
+    private func scheduleFiller(for id: String?) {
+        guard let id else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1200))
+            guard self.currentRequestId == id, !self.firstDeltaLogged, !self.speaker.isSpeaking else { return }
+            self.speaker.enqueue(Self.fillers.randomElement()!)
+            self.speaker.endUtterance()
+        }
     }
 
     private func appendToReply(_ text: String) {

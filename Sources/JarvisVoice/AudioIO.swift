@@ -2,51 +2,64 @@ import AVFoundation
 import CoreAudio
 import Foundation
 
-/// One AVAudioEngine for mic and speaker. Voice processing (AEC) is deliberately off:
-/// on macOS it delivers a 7-channel stream the recognizer can't use and it also
-/// cancels other system audio. Echo is handled by VoiceLoop (half-duplex + high
-/// barge-in margin) instead.
+/// Separate engines for mic and speaker, so each can follow its own device:
+/// with AirPods, Jarvis listens on the Mac's mic while the AirPods keep high-quality output.
+/// Voice processing (AEC) stays off: on macOS it delivers a 7-channel stream the recognizer
+/// can't use. Echo is handled by VoiceLoop (half-duplex + high barge-in margin) instead.
 public final class AudioIO: @unchecked Sendable {
-    public let engine = AVAudioEngine()
+    public let engine = AVAudioEngine()          // output
+    private let inputEngine = AVAudioEngine()    // mic
     public let player = AVAudioPlayerNode()
     public let playbackFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 22050,
                                               channels: 1, interleaved: false)!
     /// Called on the audio thread with each mic buffer and its level in dBFS.
     public var onInput: ((AVAudioPCMBuffer, Float) -> Void)?
-    /// Called after the audio route changed (AirPods connected/removed) and the engine restarted.
+    /// Called after the audio route changed (AirPods connected/removed) and the input restarted.
     public var onRouteChange: ((AVAudioFormat?) -> Void)?
     public private(set) var inputFormat: AVAudioFormat?
-    private var configObserver: NSObjectProtocol?
+    /// When output goes to Bluetooth (AirPods), capture from the Mac's built-in mic:
+    /// using the AirPods mic switches them to the hands-free profile (16–24 kHz, robotic sound).
+    public var preferBuiltInMicWithBluetooth = true
+    private var observers: [NSObjectProtocol] = []
 
     public init() {}
 
     public func start() throws {
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        engine.prepare()
+        try engine.start()
+        player.play()
         try startInput()
 
-        // AirPods connecting makes them the default mic: the engine stops itself and
-        // must be rebuilt with the new device format, or Jarvis goes deaf.
-        configObserver = NotificationCenter.default.addObserver(
+        // Device changes (AirPods in/out) stop the engines: rebuild them on the new devices.
+        observers.append(NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: inputEngine, queue: .main
+        ) { [weak self] _ in self?.restartInput() })
+        observers.append(NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in
-            self?.restart()
-        }
+            guard let self else { return }
+            self.engine.stop()
+            self.engine.connect(self.player, to: self.engine.mainMixerNode, format: self.playbackFormat)
+            try? self.engine.start()
+            self.player.play()
+            // The output device decides which mic to use.
+            self.restartInput()
+        })
     }
 
-    private func restart() {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        engine.reset()
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+    private func restartInput() {
+        inputEngine.inputNode.removeTap(onBus: 0)
+        inputEngine.stop()
+        inputEngine.reset()
         do {
             try startInput()
             onRouteChange?(inputFormat)
         } catch {
             NSLog("Jarvis audio restart failed: \(error)")
-            // The new device may not be ready yet: retry once shortly after.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                guard let self, !self.engine.isRunning else { return }
+                guard let self, !self.inputEngine.isRunning else { return }
                 try? self.startInput()
                 self.onRouteChange?(self.inputFormat)
             }
@@ -54,29 +67,45 @@ public final class AudioIO: @unchecked Sendable {
     }
 
     private func startInput() throws {
-        let input = engine.inputNode
-
+        let input = inputEngine.inputNode
+        if let unit = input.audioUnit {
+            let wanted: AudioDeviceID? = preferBuiltInMicWithBluetooth && AudioDevices.defaultOutputIsBluetooth()
+                ? AudioDevices.builtInMicrophone() : AudioDevices.defaultInput()
+            if var id = wanted {
+                let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                                  &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+                if status != noErr { NSLog("Jarvis: cannot select input device (\(status))") }
+            }
+        }
         let format = input.outputFormat(forBus: 0)
-        guard let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate,
+        guard format.channelCount > 0, format.sampleRate > 0,
+              let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate,
                                        channels: 1, interleaved: false) else { throw VoiceError.audioFormat }
         inputFormat = mono
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             guard let m = Self.firstChannel(of: buffer, as: mono) else { return }
             self?.onInput?(m, Self.levelDb(m))
         }
-        engine.prepare()
-        try engine.start()
-        player.play()
-    }
-
-    public var inputDeviceName: String {
-        AVCaptureDeviceNameProvider.defaultInputName()
+        inputEngine.prepare()
+        try inputEngine.start()
     }
 
     public func stop() {
-        engine.inputNode.removeTap(onBus: 0)
+        inputEngine.inputNode.removeTap(onBus: 0)
+        inputEngine.stop()
         player.stop()
         engine.stop()
+    }
+
+    public var outputDeviceName: String { AudioDevices.name(of: AudioDevices.defaultOutput() ?? 0) }
+
+    public var inputDeviceName: String {
+        guard let unit = inputEngine.inputNode.audioUnit else { return "?" }
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, &size) == noErr
+        else { return "?" }
+        return AudioDevices.name(of: id)
     }
 
     /// Mic arrays expose several channels; channel 0 is the usable voice signal.
@@ -129,20 +158,57 @@ final class BufferConverter {
     }
 }
 
-enum AVCaptureDeviceNameProvider {
-    static func defaultInputName() -> String {
-        var deviceID = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+enum AudioDevices {
+    private static func property<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+                                    scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal, _ value: inout T) -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(MemoryLayout<T>.size)
+        return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr
+    }
+
+    static func name(of id: AudioDeviceID) -> String {
+        var name: Unmanaged<CFString>?
+        guard property(id, kAudioObjectPropertyName, &name), let name else { return "?" }
+        return name.takeRetainedValue() as String
+    }
+
+    static func transport(of id: AudioDeviceID) -> UInt32 {
+        var t: UInt32 = 0
+        _ = property(id, kAudioDevicePropertyTransportType, &t)
+        return t
+    }
+
+    static func defaultOutput() -> AudioDeviceID? {
+        var id = AudioDeviceID(0)
+        return property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice, &id) ? id : nil
+    }
+
+    static func defaultInput() -> AudioDeviceID? {
+        var id = AudioDeviceID(0)
+        return property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, &id) ? id : nil
+    }
+
+    static func defaultOutputIsBluetooth() -> Bool {
+        guard let id = defaultOutput() else { return false }
+        let t = transport(of: id)
+        return t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE
+    }
+
+    static func builtInMicrophone() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
                                                  mScope: kAudioObjectPropertyScopeGlobal,
                                                  mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr
-        else { return "?" }
-        var name: Unmanaged<CFString>?
-        size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        address.mSelector = kAudioObjectPropertyName
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &name) == noErr, let name
-        else { return "?" }
-        return name.takeRetainedValue() as String
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else { return nil }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &ids) == noErr else { return nil }
+        return ids.first { id in
+            guard transport(of: id) == kAudioDeviceTransportTypeBuiltIn else { return false }
+            var streams = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
+                                                     mScope: kAudioDevicePropertyScopeInput,
+                                                     mElement: kAudioObjectPropertyElementMain)
+            var streamSize: UInt32 = 0
+            return AudioObjectGetPropertyDataSize(id, &streams, 0, nil, &streamSize) == noErr && streamSize > 0
+        }
     }
 }
