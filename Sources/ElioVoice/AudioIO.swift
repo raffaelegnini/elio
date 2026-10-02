@@ -61,7 +61,9 @@ public final class AudioIO: @unchecked Sendable {
     private var restartsInWindow: [Date] = []
 
     private func routeChanged(output: Bool) {
-        if Date().timeIntervalSince(lastRestart) < 1.5 { return }  // caused by our own restart
+        // Only the mic's own restart echoes back; an output change is always real (and if dropped,
+        // Elio goes silent: the playback engine stays stopped).
+        if !output, Date().timeIntervalSince(lastRestart) < 1.5 { return }
         outputChanged = outputChanged || output
         pendingRestart?.cancel()
         restartsInWindow = restartsInWindow.filter { Date().timeIntervalSince($0) < 30 }
@@ -82,6 +84,19 @@ public final class AudioIO: @unchecked Sendable {
         }
         pendingRestart = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// Before playing: make sure the output engine is running on the current device.
+    public func ensureOutput() {
+        guard !engine.isRunning else {
+            if !player.isPlaying { player.play() }
+            return
+        }
+        engine.stop()
+        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        do { try engine.start() } catch { VoiceLog.write("output restart failed: \(error)") }
+        player.play()
+        VoiceLog.write("output engine restarted on '\(outputDeviceName)'")
     }
 
     func restartInput() {

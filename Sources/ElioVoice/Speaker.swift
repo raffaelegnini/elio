@@ -264,6 +264,7 @@ public final class Speaker {
     }
 
     private func schedule(_ buffer: AVAudioPCMBuffer, generation gen: Int) {
+        audio.ensureOutput()
         pendingBuffers += 1
         audio.player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor in
