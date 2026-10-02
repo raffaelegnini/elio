@@ -119,7 +119,9 @@ struct SettingsView: View {
                     case .voice: VoiceSettings(model: model); if let loop { OwnerVoiceSettings(model: model, loop: loop) }
                     case .brain: BrainSettings(model: model)
                     case .routines: RoutineSettings(model: model)
-                    case .integrations: IntegrationSettings(model: model)
+                    case .integrations:
+                        if let loop { NativeIntegrationsSettings(loop: loop) }
+                        IntegrationSettings(model: model)
                     case .phone: PhoneSettings(model: model)
                     }
                 }
@@ -328,11 +330,122 @@ private struct RoutineSettings: View {
     }
 }
 
+/// Built-in integrations: status and "Collega" (the daemon does the work and keeps the secrets).
+private struct NativeIntegrationsSettings: View {
+    let loop: VoiceLoop
+    @State private var items: [NativeIntegrations.Status] = []
+    @State private var open: String?
+    @State private var busy: String?
+    @State private var message: [String: String] = [:]
+    @State private var token = ""
+    @State private var clientId = ""
+    @State private var clientSecret = ""
+
+    var body: some View {
+        Group(title: "Integrazioni native", note: "Pronte all'uso: premi Collega e segui il passaggio richiesto.") {
+            if items.isEmpty { Text("Controllo lo stato…").font(.system(size: 12.5)).foregroundStyle(Theme.dim) }
+            ForEach(items, id: \.id) { item in row(item) }
+        }
+        .task { await reload() }
+    }
+
+    private func row(_ item: NativeIntegrations.Status) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: icon(item.id)).frame(width: 18).foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                    Text(item.detail).font(.system(size: 11.5)).foregroundStyle(item.connected ? .green : Theme.dim)
+                }
+                Spacer()
+                if busy == item.id { ProgressView().controlSize(.small) }
+                if item.connected && item.id != "calendar" {
+                    Button(item.id == "gmail" ? "Aggiungi account" : "Ricollega") { start(item) }
+                    if item.id != "calendar" {
+                        Button("Scollega") { Task { _ = await loop.callTool("integration_disconnect", ["id": item.id]); await reload() } }
+                            .foregroundStyle(Theme.dim)
+                    }
+                } else if !item.connected {
+                    Button("Collega") { start(item) }.buttonStyle(.borderedProminent).tint(Theme.accent).foregroundStyle(.black)
+                }
+            }
+            if open == item.id {
+                Text(item.help).font(.system(size: 11.5)).foregroundStyle(Theme.dim).fixedSize(horizontal: false, vertical: true)
+                switch item.needs {
+                case "token":
+                    SecureField("Token (xoxp-…)", text: $token).textFieldStyle(.roundedBorder)
+                    Button("Salva e verifica") { connect(item, ["token": token]) }.disabled(token.isEmpty)
+                case "oauthClient":
+                    TextField("ID client", text: $clientId).textFieldStyle(.roundedBorder)
+                    SecureField("Client secret", text: $clientSecret).textFieldStyle(.roundedBorder)
+                    HStack {
+                        Button("Accedi con Google") { connect(item, ["client_id": clientId, "client_secret": clientSecret]) }
+                            .disabled(clientId.isEmpty || clientSecret.isEmpty)
+                        Button("Fallo fare a \(Brand.shared.name)") {
+                            loop.submit(text: "Configura tu l'integrazione Gmail: crea il client OAuth desktop su Google Cloud col browser, poi collegala con integration_connect.")
+                            open = nil
+                        }
+                    }
+                case "clientId":
+                    TextField("Client ID", text: $clientId).textFieldStyle(.roundedBorder)
+                    HStack {
+                        Button("Accedi a Spotify") { connect(item, ["client_id": clientId]) }.disabled(clientId.isEmpty)
+                        Button("Fallo fare a \(Brand.shared.name)") { loop.submit(text: "Collega tu Spotify: crea l'app sul sito sviluppatori col browser e fai il login."); open = nil }
+                    }
+                default:
+                    EmptyView()
+                }
+            }
+            if let m = message[item.id] {
+                Text(m).font(.system(size: 11.5)).foregroundStyle(m.hasPrefix("Errore") ? .orange : .green)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func icon(_ id: String) -> String {
+        switch id {
+        case "slack": "number"
+        case "gmail": "envelope.badge"
+        case "applemail": "envelope"
+        case "calendar": "calendar"
+        case "spotify": "music.note"
+        default: "puzzlepiece"
+        }
+    }
+
+    /// Steps that need input open the row; the others connect right away (browser login / macOS permission).
+    private func start(_ item: NativeIntegrations.Status) {
+        if item.needs == "none" { connect(item, [:]) } else { open = open == item.id ? nil : item.id }
+    }
+
+    private func connect(_ item: NativeIntegrations.Status, _ args: [String: Any]) {
+        busy = item.id
+        message[item.id] = item.id == "gmail" || item.id == "spotify" ? "Si apre il browser per l'accesso…" : nil
+        Task {
+            var a = args
+            a["id"] = item.id
+            let (text, err) = await loop.callTool("integration_connect", a)
+            message[item.id] = err ? "Errore: \(text.replacingOccurrences(of: "Errore: ", with: ""))" : text
+            busy = nil
+            token = ""; clientSecret = ""
+            if !err { open = nil }
+            await reload()
+        }
+    }
+
+    private func reload() async {
+        let (json, err) = await loop.callTool("integrations_native")
+        if !err, let list = [NativeIntegrations.Status].fromJSON(json) { items = list }
+    }
+}
+
 private struct IntegrationSettings: View {
     @Bindable var model: SettingsModel
 
     var body: some View {
-        Group(title: "Integrazioni",
+        Group(title: "Integrazioni personalizzate",
               note: "Di' \"integra Teamwork\" e l'assistente cerca MCP o API, prepara la configurazione e ti chiede qui solo la chiave.") {
             if model.integrations.isEmpty {
                 Text("Nessuna integrazione ancora.").font(.system(size: 12.5)).foregroundStyle(Theme.dim)

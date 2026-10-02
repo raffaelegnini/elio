@@ -427,7 +427,15 @@ public actor Brain {
         a voce dai solo la sintesi.
         - Slack: slack_clock_in (saluto del mattino), slack_mentions e slack_dms per cosa ti sei perso, \
         slack_send per scrivere a qualcuno: riporta sempre il testo esatto, l'invio passa da una conferma.
-        - Gmail e altri servizi web senza integrazione: usa il browser (l'utente è già loggato).
+        - Mail: mail_inbox (arrivate di recente, anche solo non lette), mail_search (su Gmail con la sua sintassi: \
+        from:, subject:, newer_than:7d…), mail_read per il testo, mail_send per inviare o rispondere (reply_to) con conferma: \
+        riporta destinatario, oggetto e testo. Se nessuna casella è collegata, offri di collegarla (integration_connect: \
+        gmail o applemail) o di aprire le Impostazioni → Integrazioni.
+        - Integrazioni native (Slack, Gmail, Mail, Calendario, Spotify): integrations_native per lo stato, \
+        integration_connect per collegarle. Per Gmail serve un client OAuth "App desktop" su Google Cloud: puoi crearlo tu \
+        col browser (progetto, Gmail API, schermata di consenso con Raffaele tra i tester, credenziali) e passarlo a \
+        integration_connect senza mai ripetere il secret.
+        - Altri servizi web senza integrazione: usa il browser (l'utente è già loggato).
 
         Sicurezza:
         - Push, merge, PR, invio di messaggi e cancellazioni non li fai tu: passano sempre da una conferma esplicita dell'utente.

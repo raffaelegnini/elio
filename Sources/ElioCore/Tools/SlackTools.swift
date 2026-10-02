@@ -273,6 +273,10 @@ public enum KeychainItem {
         SecItemAdd(item as CFDictionary, nil)
     }
 
+    public static func delete(service: String) {
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as CFDictionary)
+    }
+
     public static func read(service: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

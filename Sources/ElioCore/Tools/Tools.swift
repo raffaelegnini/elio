@@ -127,6 +127,14 @@ public enum ToolRegistry {
         DesktopTools.clipboard,
         DesktopTools.note,
         ProjectTreeTools.tree,
+        MailTools.inbox,
+        MailTools.search,
+        MailTools.read,
+        MailTools.send,
+        MailTools.accounts,
+        NativeIntegrations.status,
+        NativeIntegrations.connectTool,
+        NativeIntegrations.disconnectTool,
         ProjectTreeTools.info,
     ]
 
@@ -150,7 +158,9 @@ public enum ToolRegistry {
         case "slack_clock_in", "slack_send", "integration_activate": 150   // waits for the user's confirmation
         case "slack_mentions", "slack_dms": 45
         case "start_task", "mac_task", "squad_start", "squad_send": 60
-        case "spotify_login": 150
+        case "spotify_login", "integration_connect": 180
+        case "mail_send": 200
+        case "mail_inbox", "mail_search", "mail_read", "integrations_native": 45
         case "spotify_play": 30
         default: 20
         }

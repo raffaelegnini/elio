@@ -200,10 +200,11 @@ public enum Spotify {
         return "Spotify collegato."
     }
 
-    /// One-shot HTTP listener on 127.0.0.1:8739 that receives Spotify's redirect.
-    static func waitForCallback(state: String, open: @escaping @Sendable () -> Void) async throws -> String {
+    /// One-shot HTTP listener on 127.0.0.1:<port> that receives an OAuth redirect (Spotify, Google…).
+    static func waitForCallback(state: String, port: UInt16 = 8739, service: String = "Spotify",
+                                open: @escaping @Sendable () -> Void) async throws -> String {
         let params = NWParameters.tcp
-        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: 8739)
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!)
         params.allowLocalEndpointReuse = true
         let listener = try NWListener(using: params)
         defer { listener.cancel() }
@@ -218,12 +219,12 @@ public enum Spotify {
                         let items = URLComponents(string: "http://x\(path)")?.queryItems ?? []
                         let code = items.first { $0.name == "code" }?.value
                         let ok = code != nil && items.first { $0.name == "state" }?.value == state
-                        let html = ok ? "<h2 style='font-family:-apple-system'>Spotify collegato a Elio. Puoi chiudere questa scheda.</h2>"
+                        let html = ok ? "<h2 style='font-family:-apple-system'>\(service) collegato a Elio. Puoi chiudere questa scheda.</h2>"
                                       : "<h2 style='font-family:-apple-system'>Collegamento non riuscito.</h2>"
                         let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
                         conn.send(content: Data(resp.utf8), completion: .contentProcessed { _ in conn.cancel() })
                         guard path.hasPrefix("/callback"), done.claim() else { return }
-                        if ok, let code { cont.resume(returning: code) } else { cont.resume(throwing: ToolError("Accesso a Spotify negato")) }
+                        if ok, let code { cont.resume(returning: code) } else { cont.resume(throwing: ToolError("Accesso a \(service) negato")) }
                     }
                 }
                 listener.stateUpdateHandler = { s in
