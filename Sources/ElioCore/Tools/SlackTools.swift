@@ -103,6 +103,44 @@ public actor SlackAPI {
     }
 
     /// Messages matching a Slack search query, newest first.
+    /// Direct messages read straight from the conversations (real time: the search index lags by
+    /// minutes, so a message that just arrived was reported as "nothing new").
+    /// Needs im:history / mpim:history; returns nil if the token can't, so the caller falls back to search.
+    func recentDMs(since: Date, me: String) async -> [(ts: Double, line: String)]? {
+        guard let r = try? await call("users.conversations", ["types": "im,mpim", "exclude_archived": "true", "limit": "200"]),
+              r["ok"] as? Bool == true, let chans = r["channels"] as? [[String: Any]] else { return nil }
+        // Only conversations touched since then ("updated" is in ms); at most 25 in parallel.
+        let active = chans.filter { c in
+            guard let u = c["updated"] as? Double else { return true }
+            return u / 1000 >= since.timeIntervalSince1970
+        }.prefix(25)
+        var out: [(Double, String)] = []
+        var denied = false
+        await withTaskGroup(of: ([(Double, [String: Any])], Bool).self) { group in
+            for c in active {
+                guard let id = c["id"] as? String else { continue }
+                group.addTask {
+                    guard let h = try? await self.call("conversations.history", ["channel": id, "oldest": String(since.timeIntervalSince1970), "limit": "20"]) else { return ([], false) }
+                    if h["ok"] as? Bool != true { return ([], (h["error"] as? String) == "missing_scope") }
+                    let msgs = (h["messages"] as? [[String: Any]] ?? []).map { (Double($0["ts"] as? String ?? "0") ?? 0, $0) }
+                    return (msgs, false)
+                }
+            }
+            for await (msgs, missing) in group {
+                denied = denied || missing
+                for (ts, m) in msgs where (m["user"] as? String) != me && m["subtype"] == nil {
+                    let user = await userName(m["user"] as? String ?? "")
+                    let f = DateFormatter()
+                    f.dateFormat = "dd/MM HH:mm"
+                    let text = (m["text"] as? String ?? "").replacingOccurrences(of: "\n", with: " ")
+                    out.append((ts, "- \(f.string(from: Date(timeIntervalSince1970: ts))) DM \(user): \(text.prefix(300))"))
+                }
+            }
+        }
+        if denied && out.isEmpty { return nil }
+        return out.sorted { $0.0 > $1.0 }
+    }
+
     func search(_ query: String, count: Int = 20) async throws -> [String] {
         let r = try await call("search.messages", ["query": query, "sort": "timestamp", "sort_dir": "desc", "count": "\(count)"])
         let matches = ((r["messages"] as? [String: Any])?["matches"] as? [[String: Any]]) ?? []
@@ -204,7 +242,7 @@ public enum SlackTools {
         let hours = args["hours"] as? Int ?? 16
         let me = try await SlackAPI.shared.myId()
         let lines = try await SlackAPI.shared.search("<@\(me)> after:\(sinceDate(hours))")
-        return lines.isEmpty ? "Nessuna menzione." : lines.joined(separator: "\n")
+        return lines.isEmpty ? "Nessuna menzione (la ricerca di Slack può essere indietro di qualche minuto: per i DM usa slack_dms, che è in tempo reale)." : lines.joined(separator: "\n")
     }
 
     static let dms = ElioTool(
@@ -214,8 +252,12 @@ public enum SlackTools {
     ) { args, _ in
         let hours = args["hours"] as? Int ?? 16
         let me = try await SlackAPI.shared.myId()
+        // Real time first; the search (minutes behind) only as a fallback.
+        if let live = await SlackAPI.shared.recentDMs(since: Date().addingTimeInterval(-Double(hours) * 3600), me: me) {
+            return live.isEmpty ? "Nessun messaggio diretto (letto ora da Slack)." : live.prefix(30).map(\.line).joined(separator: "\n")
+        }
         let lines = try await SlackAPI.shared.search("is:dm -from:<@\(me)> after:\(sinceDate(hours))")
-        return lines.isEmpty ? "Nessun messaggio diretto." : lines.joined(separator: "\n")
+        return lines.isEmpty ? "Nessun messaggio diretto (la ricerca di Slack può essere indietro di qualche minuto)." : lines.joined(separator: "\n")
     }
 }
 

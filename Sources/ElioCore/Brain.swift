@@ -208,8 +208,10 @@ public actor Brain {
             let addressAs = config.addressAs
             Task {
                 let ack = await FastPath.acknowledgement(for: text, addressAs: addressAs)
-                if let ack { log("ack in \(elapsed()) ms: \(ack)") }
-                gate.resolve(ack)
+                // Past ~0.85 s the app has already said its own quick acknowledgement: don't double it.
+                let late = elapsed() > 850
+                if let ack { log("ack in \(elapsed()) ms\(late ? " (too late, dropped)" : ""): \(ack)") }
+                gate.resolve(late ? nil : ack)
             }
         } else {
             gate.resolve(nil)
@@ -299,7 +301,7 @@ public actor Brain {
         f.locale = Locale(identifier: "it_IT")
         f.dateFormat = "EEEE d MMMM yyyy, HH:mm"
         // A short reminder every turn keeps replies spoken-length (the system prompt alone wasn't enough).
-        let ack = ackGiven ? " La frase di riscontro l'ha già detta l'app: niente \"Certo, Signore…\", entra subito nel merito." : ""
+        let ack = ackGiven ? " La frase di riscontro l'ha già detta l'app: niente \"Certo, Signore…\", entra subito nel merito, ma rivolgiti comunque a lui con \"Signore\"." : ""
         return "[contesto: \(f.string(from: Date())). Rispondi in massimo due frasi, salvo richiesta di dettagli.\(ack)]\n\(text)"
     }
 
@@ -313,6 +315,7 @@ public actor Brain {
         ironia asciutta e leggera, devoto ma mai servile: se un'idea è discutibile lo dici con franchezza \
         e garbo, poi esegui. Parli un italiano naturale e scorrevole, come una persona colta di oggi: \
         niente formule tradotte dall'inglese, niente tono da maggiordomo inglese, niente frasi ingessate.
+        In OGNI risposta lo chiami "\(title)" almeno una volta (anche nelle risposte brevissime: "Fatto, \(title).").
         Ti rivolgi a lui chiamandolo "\(title)" ("Buongiorno, \(title)."), con il "lei"; \
         il nome \(userName) solo di rado.
 
@@ -386,6 +389,11 @@ public actor Brain {
         Browser: puoi navigare nel Chrome dell'utente per fare le cose da solo (cercare, leggere pagine riservate, \
         compilare impostazioni). Non fare acquisti, pagamenti, invii di messaggi o cancellazioni dal browser senza chiedere. \
         Quando inizi a usarlo, dillo in una frase ("Apro Teamwork nel suo browser, Signore."): Chrome viene portato in primo piano.
+
+        Dati che cambiano (messaggi Slack, DM, mail, task, agenda, stato dei repository): richiama SEMPRE lo strumento, \
+        anche se l'hai appena fatto; non riusare risultati di prima nella conversazione. Se Raffaele dice "ora", "adesso", \
+        "ricontrolla", "aggiorna" o insiste, è obbligatorio, e se lui dice che c'è qualcosa che non vedi, credigli e cerca meglio \
+        (slack_dms è in tempo reale, slack_mentions usa la ricerca di Slack che può essere indietro di qualche minuto).
 
         Velocità: per persone, canali, progetti e dati delle integrazioni usa PRIMA lookup (rubrica locale, istantanea). \
         Chiama le API solo per dati che cambiano spesso (messaggi, task di oggi) o se lookup non trova.

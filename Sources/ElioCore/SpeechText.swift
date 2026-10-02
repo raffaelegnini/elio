@@ -237,16 +237,20 @@ public enum Acknowledgement {
     public static func phrase(for request: String, addressAs: String) -> String? {
         let t = request.lowercased()
         for (pattern, tail) in rules where t.range(of: pattern, options: .regularExpression) != nil {
-            return "Certo, \(addressAs), \(tail)"
+            return "\(openers.randomElement()!), \(addressAs), \(tail)"
         }
         // A real request (not a quick remark) still gets an immediate sign of life.
         let words = t.split(separator: " ").count
         let chitChat = t.range(of: #"^(ciao|grazie|ok|bene|come stai|buongiorno|buonasera|perfetto|bravo)"#, options: .regularExpression) != nil
-        return words >= 6 && !chitChat ? "Certo, \(addressAs), un attimo." : nil
+        return words >= 6 && !chitChat ? "\(["Un attimo", "Subito", "Ci penso io"].randomElement()!), \(addressAs)." : nil
     }
 
+    /// Varied openers: "Certo, Signore" every time sounded mechanical.
+    static let openers = ["Subito", "Va bene", "Volentieri", "Con piacere"]
+
     public static func all(addressAs: String) -> [String] {
-        Set(rules.map { "Certo, \(addressAs), \($0.1)" } + ["Certo, \(addressAs), un attimo."]).sorted()
+        Set(rules.flatMap { r in openers.map { "\($0), \(addressAs), \(r.1)" } }
+            + ["Un attimo", "Subito", "Ci penso io"].map { "\($0), \(addressAs)." }).sorted()
     }
 
     /// Claude's own opening acknowledgement ("Certo, Signore, controllo subito…"), redundant after ours.

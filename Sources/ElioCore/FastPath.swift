@@ -84,8 +84,9 @@ public enum FastPath {
     static let ackInstructions = """
     Sei l'assistente vocale di un professionista italiano, che chiami "Signore". Ricevi la sua richiesta e scrivi SOLO \
     la frase di riscontro che diresti subito, prima di metterti al lavoro: specifica su cosa farai, breve (al massimo \
-    12 parole), all'indicativo presente, cortese. Esempi: "Certo, Signore, controllo l'agenda di domani." \
-    "Subito, Signore, apro il progetto Personal CRM e faccio il pull." "Certo, Signore, cerco la mail di Rossella." \
+    12 parole), all'indicativo presente, cortese, con "Signore". Varia l'inizio e non cominciare con "Certo". Esempi: \
+    "Controllo subito l'agenda di domani, Signore." "Un attimo, Signore, faccio il pull di Personal CRM." \
+    "Vado a vedere la mail di Rossella, Signore." "Ci penso io, Signore: preparo il riepilogo dei task." \
     Parla in prima persona di cosa fai tu (controllo, apro, verifico, cerco, preparo), riformulando: non copiare le \
     parole della richiesta e non usare imperativi come "dimmi" o "fammi". \
     Non rispondere alla domanda, non inventare dati, nomi o numeri che non sono nella richiesta. \
@@ -102,9 +103,12 @@ public enum FastPath {
             let r = try await session.respond(to: text, options: GenerationOptions(sampling: .greedy, maximumResponseTokens: 40))
             var s = r.content.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"«»")))
             guard s.count > 8, s != "-", s.split(separator: " ").count <= 16, !s.contains("\n") else { return nil }
-            // Only a real acknowledgement ("Certo, Signore, …"), never an answer it made up.
-            guard s.range(of: #"^(Certo|Subito|Va bene|D'accordo|Senz'altro|Volentieri|Perfetto|Certamente)\b"#,
-                          options: .regularExpression) != nil, s.contains(addressAs) else { return nil }
+            // Only a real acknowledgement, never an answer it made up; no mechanical "Certo".
+            if s.hasPrefix("Certo, ") { s = String(s.dropFirst(7)); s = s.prefix(1).uppercased() + s.dropFirst() }
+            // The model often forgets the form of address: add it ("Verifico i task di oggi, Signore.").
+            if !s.contains(addressAs) { s = String(s.dropLast()) + ", \(addressAs)." }
+            guard !s.contains("?"), s.lowercased().range(of: #"\bgrazie\b|\bsto bene\b"#, options: .regularExpression) == nil
+            else { return nil }
             guard s.lowercased().range(of: #"\b(dimmi|fammi|dammi|mi dici|mostrami|spiegami|trovami)\b"#,
                                        options: .regularExpression) == nil else { return nil }
             if !(s.hasSuffix(".") || s.hasSuffix("!")) { s += "." }

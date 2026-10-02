@@ -118,13 +118,14 @@ struct BargeInTests {
 
 struct AcknowledgementTests {
     @Test func picksBySubject() {
-        #expect(Acknowledgement.phrase(for: "cosa ho in agenda domani?", addressAs: "Signore") == "Certo, Signore, controllo l'agenda.")
-        #expect(Acknowledgement.phrase(for: "Rosario mi ha scritto su Slack?", addressAs: "Signora") == "Certo, Signora, guardo Slack.")
+        #expect(Acknowledgement.phrase(for: "cosa ho in agenda domani?", addressAs: "Signore")?.hasSuffix(", Signore, controllo l'agenda.") == true)
+        #expect(Acknowledgement.phrase(for: "Rosario mi ha scritto su Slack?", addressAs: "Signora")?.hasSuffix(", Signora, guardo Slack.") == true)
         #expect(Acknowledgement.phrase(for: "come stai", addressAs: "Signore") == nil)
         #expect(Acknowledgement.phrase(for: "grazie", addressAs: "Signore") == nil)
-        #expect(Acknowledgement.phrase(for: "puoi preparare una bozza della proposta per il nuovo cliente", addressAs: "Signore")
-                == "Certo, Signore, un attimo.")
-        #expect(Acknowledgement.phrase(for: "controlla la mail di Rosario", addressAs: "Signore") == "Certo, Signore, controllo la posta.")
+        #expect(Acknowledgement.phrase(for: "puoi preparare una bozza della proposta per il nuovo cliente", addressAs: "Signore")?
+                .hasSuffix(", Signore.") == true)
+        #expect(Acknowledgement.phrase(for: "controlla la mail di Rosario", addressAs: "Signore")?.hasSuffix(", Signore, controllo la posta.") == true)
+        for _ in 0..<20 { #expect(Acknowledgement.phrase(for: "cosa ho in agenda", addressAs: "Signore")?.hasPrefix("Certo") == false) }
         #expect(Acknowledgement.isAcknowledgement("Certo, Signore, controllo subito le previsioni."))
         #expect(!Acknowledgement.isAcknowledgement("Domani sarà soleggiato con ventisette gradi."))
     }
