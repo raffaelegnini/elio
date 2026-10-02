@@ -37,7 +37,7 @@ public struct ElioConfig: Codable, Sendable {
     public var browserAutonomy: Bool = true
     /// Only the enrolled owner's voice can command or interrupt Elio.
     public var speakerVerification: Bool = true
-    public var speakerThreshold: Double = 0.65
+    public var speakerThreshold: Double = 0.5
     public var webPort: UInt16 = 8766
     public var remotePort: UInt16 = 8767
     /// Simple device commands (music, apps, links, volume) handled by Apple's on-device model.

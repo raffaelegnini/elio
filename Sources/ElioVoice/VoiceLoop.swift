@@ -117,7 +117,7 @@ public final class VoiceLoop {
     private let voiceTap = VoiceTap()
     private var speakerID: SpeakerID?
     private var verifyOwner = true
-    private var ownerThreshold: Float = 0.65
+    private var ownerThreshold: Float = 0.5
     private var utteranceStart = 0
     private var bargeChecked = false
     /// Enrollment in progress: clips of the owner reading the sentences.
@@ -136,13 +136,16 @@ public final class VoiceLoop {
     private var ownerGateActive: Bool { verifyOwner && (speakerID?.isEnrolled ?? false) }
 
     /// True if the audio of the current utterance is the owner (or verification is off).
-    private func isOwner(minSeconds: Double = 0.6) -> Bool? {
+    /// `threshold` overrides the configured one (lower for short answers to Elio's own questions:
+    /// "Sì" lasts half a second and scores ~0.4 even for the owner; other people score < 0.3).
+    private func isOwner(minSeconds: Double = 0.6, threshold: Double? = nil) -> Bool? {
         guard ownerGateActive, let sid = speakerID else { return true }
         let samples = voiceTap.samples(since: utteranceStart)
         guard Double(samples.count) / SpeakerID.sampleRate >= minSeconds, let score = sid.bestWindowScore(samples) else { return nil }
         lastOwnerScore = score
-        VoiceLog.write(String(format: "speaker score %.2f (threshold %.2f)", score, ownerThreshold))
-        return score >= ownerThreshold
+        let limit = Float(threshold ?? Double(ownerThreshold))
+        VoiceLog.write(String(format: "speaker score %.2f (threshold %.2f)", score, limit))
+        return score >= limit
     }
 
     /// Starts recording the owner's voice: they read `enrollmentSentences` aloud.
@@ -223,6 +226,8 @@ public final class VoiceLoop {
     private var fillers: [String] { ["Un momento, \(addressAs).", "Subito, \(addressAs)."] }
 
     static let followUpWindow: TimeInterval = 8
+    /// Owner check for answers to a pending confirmation/question (dangerous ones still need "confermo").
+    static let answerThreshold = 0.35
     static let wakeWindow: TimeInterval = 10
     static let acks = ["Sì?", "Dimmi."]
 
@@ -534,7 +539,7 @@ public final class VoiceLoop {
             return  // background speech, not for Elio
         }
         // Only the owner can command Elio (when a voiceprint is enrolled).
-        if let owner = isOwner(), !owner {
+        if let owner = isOwner(threshold: awaitingAnswer ? Self.answerThreshold : nil), !owner {
             VoiceLog.write("ignored: not the owner's voice ('\(command)')")
             partial = ""
             if state == .hearing { state = .listening }
