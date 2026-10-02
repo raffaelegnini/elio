@@ -117,7 +117,7 @@ public final class VoiceLoop {
     private let voiceTap = VoiceTap()
     private var speakerID: SpeakerID?
     private var verifyOwner = true
-    private var ownerThreshold: Float = 0.5
+    private var ownerThreshold: Float = 0.4
     private var utteranceStart = 0
     private var bargeChecked = false
     /// Enrollment in progress: clips of the owner reading the sentences.
@@ -138,7 +138,8 @@ public final class VoiceLoop {
     /// True if the audio of the current utterance is the owner (or verification is off).
     /// `threshold` overrides the configured one (lower for short answers to Elio's own questions:
     /// "Sì" lasts half a second and scores ~0.4 even for the owner; other people score < 0.3).
-    private func isOwner(minSeconds: Double = 0.6, threshold: Double? = nil) -> Bool? {
+    /// Under ~1.2 s ("Elio", "sì") the voiceprint is unreliable: no verdict, the command passes.
+    private func isOwner(minSeconds: Double = 1.2, threshold: Double? = nil) -> Bool? {
         guard ownerGateActive, let sid = speakerID else { return true }
         let samples = voiceTap.samples(since: utteranceStart)
         guard Double(samples.count) / SpeakerID.sampleRate >= minSeconds, let score = sid.bestWindowScore(samples) else { return nil }
