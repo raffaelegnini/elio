@@ -10,6 +10,8 @@ import SwiftUI
 final class NotchIsland {
     private var panel: NSPanel?
     private var observer: Any?
+    private var popover: KeyablePanel?
+    private weak var loop: VoiceLoop?
     static let size: CGFloat = 26
     /// Transparent room around the orb so its glow isn't clipped into a square by the window edge.
     static let canvas: CGFloat = 44
@@ -33,10 +35,60 @@ final class NotchIsland {
         self.panel = panel
         position()
         panel.orderFrontRegardless()
+        self.loop = loop
+        watchRequests(loop)
         observer = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                           object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.position() }
         }
+    }
+
+    // MARK: Confirmation drop-down
+
+    /// A pending confirmation or question opens a small card right under the orb (the exact message,
+    /// Conferma / Annulla, or a reply field), wherever you are; it closes when answered.
+    private func watchRequests(_ loop: VoiceLoop) {
+        withObservationTracking {
+            _ = loop.confirmations.count
+            _ = loop.questions.count
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self, let loop = self.loop else { return }
+                self.updatePopover(loop)
+                self.watchRequests(loop)
+            }
+        }
+    }
+
+    private func updatePopover(_ loop: VoiceLoop) {
+        guard !loop.confirmations.isEmpty || !loop.questions.isEmpty else {
+            popover?.orderOut(nil)
+            return
+        }
+        if popover == nil {
+            let p = KeyablePanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 220),
+                                 styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            p.isOpaque = false
+            p.backgroundColor = .clear
+            p.hasShadow = true
+            p.level = .statusBar
+            p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            p.hidesOnDeactivate = false
+            let host = NSHostingView(rootView: RequestDropdown(loop: loop))
+            host.wantsLayer = true
+            host.layer?.backgroundColor = .clear
+            p.contentView = host
+            popover = p
+        }
+        guard let popover, let orb = panel else { return }
+        let size = popover.contentView?.fittingSize ?? NSSize(width: 380, height: 220)
+        popover.setContentSize(NSSize(width: 380, height: max(120, size.height)))
+        let screen = orb.screen ?? NSScreen.main
+        var x = orb.frame.midX - 190
+        if let s = screen { x = min(max(x, s.frame.minX + 8), s.frame.maxX - 388) }
+        popover.setFrameOrigin(NSPoint(x: x, y: orb.frame.minY - popover.frame.height - 2))
+        popover.orderFrontRegardless()
+        NSSound(named: "Tink")?.play()
     }
 
     /// Vertically centred in the menu bar, 10 pt right of the notch (or of the screen centre without one).
@@ -125,5 +177,38 @@ struct IslandView: View {
             Button("Dashboard") { openDashboard() }
             Button("Impostazioni") { openSettings() }
         }
+    }
+}
+
+/// Borderless panel that can take keyboard input (reply field) without activating the app.
+final class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
+/// The card under the orb: the oldest pending question or confirmation.
+private struct RequestDropdown: View {
+    let loop: VoiceLoop
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Circle().fill(Color(hex: "#FF9F43")).frame(width: 7, height: 7)
+                Text(loop.questions.isEmpty ? "SERVE LA TUA CONFERMA" : "DOMANDA")
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced)).tracking(1.5).foregroundStyle(Theme.dim)
+                Spacer()
+                let n = loop.confirmations.count + loop.questions.count
+                if n > 1 { Text("+\(n - 1)").font(Theme.mono).foregroundStyle(Theme.dim) }
+            }
+            if let q = loop.questions.first {
+                QuestionCard(question: q) { loop.answer(q, text: $0) }
+            } else if let req = loop.confirmations.first {
+                ConfirmCard(request: req) { loop.answer(req, approved: $0) }
+            }
+        }
+        .padding(12)
+        .frame(width: 380, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bg.opacity(0.96)))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.accent.opacity(0.35)))
+        .preferredColorScheme(.dark)
     }
 }

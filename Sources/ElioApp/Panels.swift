@@ -20,12 +20,20 @@ struct ConfirmCard: View {
             }
             .font(Theme.mono).foregroundStyle(accent)
 
-            Text(request.detail)
-                .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text)
-                .lineLimit(6).textSelection(.enabled)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.35)))
+            Text(request.title)
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ScrollView {
+                Text(request.detail)
+                    .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 160)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.35)))
 
             Text(danger ? "Di' \"confermo\" oppure premi il pulsante." : "Di' \"sì\" o \"no\", oppure usa i pulsanti.")
                 .font(.system(size: 11)).foregroundStyle(Theme.dim)

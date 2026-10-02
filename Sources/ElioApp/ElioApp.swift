@@ -269,8 +269,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     // Talking from the dashboard: it already shows everything.
                     self.hud.hide()
                 } else if !loop.confirmations.isEmpty || !loop.questions.isEmpty {
-                    // Never let a pending confirmation disappear from view.
-                    self.hud.show(pinned: true)
+                    // Shown in the drop-down under the menu bar orb.
+                    self.hud.hide()
                 } else {
                     // Listening/thinking/speaking show in the notch island; the HUD stays out of the way.
                     switch loop.state {
