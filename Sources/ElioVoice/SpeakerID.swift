@@ -195,8 +195,10 @@ public final class VoiceTap: @unchecked Sendable {
             guard let out = converter?.convert(buffer), let data = out.floatChannelData else { return }
             samples.append(contentsOf: UnsafeBufferPointer(start: data[0], count: Int(out.frameLength)))
             total += Int(out.frameLength)
+            // Trim in 5 s chunks: removing from the front of a 30 s array on every buffer
+            // (~40 times a second) moved megabytes of memory continuously.
             let keep = Int(SpeakerID.sampleRate * 30)
-            if samples.count > keep { samples.removeFirst(samples.count - keep) }
+            if samples.count > keep + Int(SpeakerID.sampleRate * 5) { samples.removeFirst(samples.count - keep) }
         }
     }
 

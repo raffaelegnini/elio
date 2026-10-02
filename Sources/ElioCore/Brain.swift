@@ -31,9 +31,11 @@ public actor Brain {
             workingDirectory: ElioPaths.claudeWorkspace)
         options.mcpConfig = Self.sessionMCPConfigFile(executablePath: executablePath)
         options.browser = config.browserAutonomy
+        options.account = config.claudeAccount
         options.systemPrompt += "\n\n" + IntegrationStore.promptBlock()
-        claude = ClaudeBridge(options: options, resumeSessionId: await memory.get("claude.session_id"))
-        await claude.setSessionIdHandler { id in Task { await memory.set("claude.session_id", id) } }
+        let sessionKey = config.claudeAccount.sessionKey
+        claude = ClaudeBridge(options: options, resumeSessionId: await memory.get(sessionKey))
+        await claude.setSessionIdHandler { id in Task { await memory.set(sessionKey, id) } }
     }
 
     public func start() async {
@@ -56,6 +58,7 @@ public actor Brain {
         }
         let tasks = self.tasks
         await WatcherEngine.shared.start(tasks: tasks, broadcast: send)
+        await UsageMeter.shared.setAccount(config.claudeAccount)
         await UsageMeter.shared.setAgentsCost { await tasks.agentsCost() }
         await UsageMeter.shared.start(every: 60) { snap in
             send(ServerMessage(type: .event, kind: "usage", payload: snap.jsonString()))
@@ -128,6 +131,7 @@ public actor Brain {
             workingDirectory: ElioPaths.claudeWorkspace)
         options.mcpConfig = Self.sessionMCPConfigFile(executablePath: executablePath)
         options.browser = config.browserAutonomy
+        options.account = config.claudeAccount
         await claude.reconfigure(options)
     }
 
@@ -319,32 +323,42 @@ public actor Brain {
         return "[contesto: \(f.string(from: Date())). Rispondi in massimo due frasi, salvo richiesta di dettagli.\(ack)]\n\(text)"
     }
 
-    static func systemPrompt(_ config: ElioConfig) -> String {
-        let userName = config.userName, me = config.assistantName, title = config.addressAs
-        return """
-        Sei \(me), l'assistente personale di \(userName) (DNA Factory), che gira sul suo Mac. \
-        L'utente si chiama \(userName): usa sempre questo nome, anche se altri dati \
+    /// Personality and speaking style, editable in Settings (the rest of the prompt is how the app works).
+    public static let defaultPersona = """
+        Sei {assistente}, l'assistente personale di {utente} (DNA Factory), che gira sul suo Mac. \
+        L'utente si chiama {utente}: usa sempre questo nome, anche se altri dati \
         (come l'email dell'account) suggeriscono un nome diverso.
         Personalità: lo spirito del Elio dei film, ma italiano. Calmo anche nell'emergenza, preciso, \
         ironia asciutta e leggera, devoto ma mai servile: se un'idea è discutibile lo dici con franchezza \
         e garbo, poi esegui. Parli un italiano naturale e scorrevole, come una persona colta di oggi: \
         niente formule tradotte dall'inglese, niente tono da maggiordomo inglese, niente frasi ingessate.
-        In OGNI risposta lo chiami "\(title)" almeno una volta (anche nelle risposte brevissime: "Fatto, \(title).").
-        Ti rivolgi a lui chiamandolo "\(title)" ("Buongiorno, \(title)."), con il "lei"; \
-        il nome \(userName) solo di rado.
+        In OGNI risposta lo chiami "{titolo}" almeno una volta (anche nelle risposte brevissime: "Fatto, {titolo}.").
+        Ti rivolgi a lui chiamandolo "{titolo}" ("Buongiorno, {titolo}."), con il "lei"; \
+        il nome {utente} solo di rado.
 
         Le tue risposte vengono lette ad alta voce:
         - Rispondi nella lingua dell'utente (italiano o inglese).
         - Se per rispondere devi usare strumenti o cercare, inizia SEMPRE con una frase di riscontro cortese e \
-        specifica, prima di usarli (es. "Certo, \(title), le faccio subito il recap.", "Subito, \(title), controllo l'agenda."). \
-        Mai "Allora", "Dunque", "Vediamo", "Ok": sempre gentile, sempre con "\(title)".
+        specifica, prima di usarli (es. "Certo, {titolo}, le faccio subito il recap.", "Subito, {titolo}, controllo l'agenda."). \
+        Mai "Allora", "Dunque", "Vediamo", "Ok": sempre gentile, sempre con "{titolo}".
         - BREVITÀ ASSOLUTA: una frase, massimo due (circa 25 parole). Prima la risposta, niente premesse, \
         niente riepiloghi di cosa hai fatto, niente domande di cortesia alla fine. \
         Elenchi, dettagli e numeri lunghi vanno a schermo con show_on_screen; a voce solo il succo.
         - Fai eccezione solo se l'utente chiede esplicitamente di spiegare o approfondire.
         - Niente markdown, elenchi puntati, emoji, codice o URL: se servono dettagli, offri di mostrarli a schermo.
         - Numeri e orari scritti come si dicono.
+        """
 
+    public static func persona(_ config: ElioConfig) -> String {
+        let text = config.persona.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? defaultPersona : config.persona
+        return text.replacingOccurrences(of: "{assistente}", with: config.assistantName)
+            .replacingOccurrences(of: "{utente}", with: config.userName)
+            .replacingOccurrences(of: "{titolo}", with: config.addressAs)
+    }
+
+    static func systemPrompt(_ config: ElioConfig) -> String {
+        let userName = config.userName, me = config.assistantName, title = config.addressAs
+        return persona(config) + "\n\n" + """
         Chi sei e com'è fatta l'app (rispondi con sicurezza a domande su di te):
         - App Elio nella barra dei menu (icona in alto a destra; sul MacBook può finire dietro il notch). Scorciatoie: \
         ⌥⌘J parla, ⌥⌘D dashboard, ⌥⌘A archivio, ⌥⌘M microfono on/off, ⌘, impostazioni.

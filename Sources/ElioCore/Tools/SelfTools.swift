@@ -22,6 +22,7 @@ public enum SelfTools {
         "slackClockInChannel": ("canale del clock in", false),
         "slackClockInText": ("messaggio del clock in", false),
         "accentColor": ("colore accento (#RRGGBB)", false),
+        "persona": ("personalità e modo di parlare (il tuo prompt; vuoto = predefinito; segnaposto {assistente} {utente} {titolo})", true),
         "projectRoots": ("cartelle dei progetti (separate da virgola)", false),
         "echoCancellation": ("cancellazione dell'eco", false),
         "speakerThreshold": ("severità del riconoscimento della voce (0.3–0.85)", false),

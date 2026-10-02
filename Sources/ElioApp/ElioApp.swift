@@ -58,6 +58,19 @@ struct MenuContent: View {
             Picker("Voce", selection: Binding(get: { loop.voiceId }, set: { loop.setVoice($0) })) {
                 ForEach(VoiceLoop.voices, id: \.id) { Text($0.name).tag($0.id) }
             }
+            Menu("Account Claude") {
+                let current = ElioConfig.load().claudeAccount
+                ForEach(ClaudeAccount.detect(including: current.dir)) { account in
+                    Toggle(account.label, isOn: Binding(
+                        get: { account == current },
+                        set: { if $0 { ClaudeAccounts.switchTo(account, loop: loop) } }))
+                }
+                Divider()
+                Button("Login account attuale…") { ClaudeAccounts.login(current) }
+                Button("Nuovo account…") {
+                    if let dir = ClaudeAccounts.create() { ClaudeAccounts.switchTo(ClaudeAccount(dir: dir), loop: loop) }
+                }
+            }
             Menu("Telefono") {
                 Text(PhoneSetup.status(config: ElioConfig.load()))
                 Button("Pubblica su Tailscale e copia link di accoppiamento") {
@@ -183,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             self?.hud.scheduleHide(after: 2.5)
         }
         // Opened by hand (not at login): show the dashboard right away.
-        if !Self.launchedAtLogin { showDashboard() }
+        if !Self.launchedAtLogin, !CommandLine.arguments.contains("--background") { showDashboard() }
         Task { await loop.start() }
         observeState(loop)
     }
@@ -244,12 +257,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             window.titleVisibility = .hidden
             window.isReleasedWhenClosed = false
             window.backgroundColor = NSColor(Theme.bg)
-            window.contentView = NSHostingView(rootView: DashboardView(loop: loop, state: dashboardState))
+            window.contentView = NSHostingView(rootView: DashboardView(loop: loop, state: dashboardState)
+                .environment(\.animationsLive, true))
             window.center()
             window.setFrameAutosaveName("ElioDashboard")
             dashboard = window
+            let state = dashboardState
+            for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification,
+                         NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { note in
+                    MainActor.assumeIsolated {
+                        state.visible = note.name != NSWindow.willCloseNotification && window.isVisible
+                            && !window.isMiniaturized && window.occlusionState.contains(.visible)
+                    }
+                }
+            }
         }
         dashboard?.makeKeyAndOrderFront(nil)
+        dashboardState.visible = true
         NSApp.activate()
         // macOS won't let a background app take focus; for briefing/recap show it on top anyway.
         if forceFront { dashboard?.orderFrontRegardless() }
@@ -308,6 +333,8 @@ final class DashboardState {
     var inlineCard: CardPayload?
     /// Squad mode: the team of agents fills the dashboard.
     var squadMode = false
+    /// The dashboard window is actually on screen (not closed, minimised or fully covered).
+    var visible = false
 }
 
 extension Notification.Name {

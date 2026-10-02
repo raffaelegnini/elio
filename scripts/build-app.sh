@@ -14,6 +14,7 @@ pkill -x ElioApp 2>/dev/null || true
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/.build/release/ElioApp" "$APP/Contents/MacOS/ElioApp"
+swift "$ROOT/scripts/make-app-icon.swift" "$APP/Contents/Resources/AppIcon.icns"
 
 # Speaker verification: ship the official, self-contained ONNX Runtime inside the app
 # (Homebrew's build depends on other Homebrew libraries macOS refuses to load in a signed app).
@@ -36,6 +37,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key><string>Elio</string>
     <key>CFBundleDisplayName</key><string>Elio</string>
     <key>CFBundleExecutable</key><string>ElioApp</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.2.0</string>
     <key>CFBundleVersion</key><string>$(date +%Y%m%d%H%M)</string>

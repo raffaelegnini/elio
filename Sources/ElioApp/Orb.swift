@@ -26,6 +26,12 @@ enum Theme {
     }
 }
 
+/// Off when the window showing an animation is hidden, minimised or covered: no frames are drawn.
+/// (A dashboard animating at 60 fps in the background used ~75% CPU and slowed the whole Mac.)
+extension EnvironmentValues {
+    @Entry var animationsLive = true
+}
+
 /// Name and accent of the assistant, editable at runtime from Settings.
 @MainActor
 @Observable
@@ -58,11 +64,13 @@ extension Color {
 struct OrbView: View {
     var state: VoiceLoop.State
     var level: Float
+    @Environment(\.animationsLive) private var animationsLive
 
     private static let neurons: [Neuron] = (0..<64).map { Neuron(seed: $0) }
 
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(minimumInterval: [.thinking, .speaking, .hearing].contains(state) ? 1.0 / 30 : 1.0 / 8,
+                                paused: !animationsLive)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             Canvas { ctx, size in
                 draw(&ctx, size: size, t: t)

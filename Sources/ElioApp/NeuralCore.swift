@@ -79,6 +79,7 @@ enum Capability: String, CaseIterable, Identifiable {
 
 /// The orb plus a ring of capability nodes wired to the core.
 struct NeuralCore: View {
+    @Environment(\.animationsLive) private var animationsLive
     let loop: VoiceLoop
 
     private var active: Set<Capability> { Set(loop.activeTools.map(Capability.of)) }
@@ -92,7 +93,7 @@ struct NeuralCore: View {
 
             ZStack {
                 // Synapses core → node, with a travelling pulse on active ones.
-                TimelineView(.animation) { timeline in
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animationsLive)) { timeline in
                     let t = timeline.date.timeIntervalSinceReferenceDate
                     Canvas { ctx, _ in
                         for (i, cap) in Capability.allCases.enumerated() {

@@ -267,6 +267,14 @@ struct NeuralGraphView: View {
     var preset: GraphModel?
     var presetZoom: (scale: CGFloat, offset: CGSize)?
     @State private var model = GraphModel()
+    @Environment(\.animationsLive) private var animationsLive
+
+    /// Calm network: 12 fps is plenty for slow drifting; 30 fps while Elio works or you interact.
+    private var frameInterval: Double {
+        let busy = loop.state == .thinking || loop.state == .speaking || loop.state == .hearing
+            || !loop.activeTools.isEmpty || hovered != nil || dragging != nil || loop.routineMode
+        return busy ? 1.0 / 30 : 1.0 / 8
+    }
     @State private var offset: CGSize = .zero
     @State private var dragStartOffset: CGSize = .zero
     @State private var scale: CGFloat = 1
@@ -293,7 +301,7 @@ struct NeuralGraphView: View {
         GeometryReader { geo in
             let center = CGPoint(x: geo.size.width / 2 + offset.width, y: geo.size.height / 2 + offset.height)
             ZStack(alignment: .topLeading) {
-                TimelineView(.animation) { timeline in
+                TimelineView(.animation(minimumInterval: frameInterval, paused: !animationsLive)) { timeline in
                     let t = timeline.date.timeIntervalSinceReferenceDate
                     Canvas { ctx, _ in
                         let dt = CGFloat(min(timeline.date.timeIntervalSince(model.lastTick), 1.0 / 30))
@@ -502,6 +510,7 @@ struct NeuralGraphView: View {
         for label in labels.sorted(by: { $0.priority < $1.priority }) {
             let resolved = ctx.resolve(label.text)
             let size = resolved.measure(in: CGSize(width: 400, height: 40))
+            if label.priority > 0, taken.count > 60 { break }   // enough labels on screen
             let rect = CGRect(x: label.at.x - size.width * label.anchor.x, y: label.at.y - size.height * label.anchor.y,
                               width: size.width, height: size.height).insetBy(dx: -3, dy: -1)
             if label.priority > 0, taken.contains(where: { $0.intersects(rect) }) { continue }

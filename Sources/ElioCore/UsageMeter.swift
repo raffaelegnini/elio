@@ -13,12 +13,21 @@ public actor UsageMeter {
     private var agentsCost: () async -> Double = { 0 }
     private var last = UsageSnapshot()
 
-    private let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
+    private var root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
     private let iso: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
+
+    /// Limits are per account: only the active account's transcripts count.
+    public func setAccount(_ account: ClaudeAccount) {
+        let next = URL(fileURLWithPath: account.path).appendingPathComponent("projects")
+        guard next != root else { return }
+        root = next
+        offsets = [:]
+        calls = [:]
+    }
 
     public func setAgentsCost(_ f: @escaping @Sendable () async -> Double) { agentsCost = f }
 

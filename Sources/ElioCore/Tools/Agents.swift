@@ -321,10 +321,8 @@ public actor TaskRunner {
             "mcp__elio__report_progress", "mcp__elio__squad_post", "mcp__elio__squad_inbox",
         ] + (kind == .mac ? ["--add-dir", FileManager.default.homeDirectoryForCurrentUser.path] : [])
           + (config.browserAutonomy ? ["--chrome"] : []) + ["--disallowedTools"] + forbidden
-        var env = ProcessInfo.processInfo.environment
+        var env = config.claudeAccount.environment()
         env["ELIO_TASK_ID"] = id
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
         p.environment = env
 
         let out = Pipe()

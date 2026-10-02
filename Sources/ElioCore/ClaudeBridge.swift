@@ -24,6 +24,8 @@ public actor ClaudeBridge {
         public var mcpConfig: String?
         /// Claude in Chrome: the user's real browser (already logged in everywhere).
         public var browser = false
+        /// Claude account (config dir) the process runs as.
+        public var account = ClaudeAccount(dir: "")
 
         public init(claudePath: String, model: String, systemPrompt: String, workingDirectory: URL) {
             self.claudePath = claudePath
@@ -187,10 +189,7 @@ public actor ClaudeBridge {
         p.arguments = args
         p.currentDirectoryURL = options.workingDirectory
 
-        var env = ProcessInfo.processInfo.environment
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
-        p.environment = env
+        p.environment = options.account.environment()
 
         let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
         p.standardInput = inPipe

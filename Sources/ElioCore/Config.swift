@@ -6,10 +6,15 @@ public struct ElioConfig: Codable, Sendable {
     /// Brand / identity (shared with colleagues: everything here is editable in Settings).
     public var assistantName: String = "Elio"
     public var addressAs: String = "Signore"          // how the assistant addresses the user
+    /// Who the assistant is and how it talks (start of the system prompt); empty = built-in default.
+    /// Placeholders: {assistente}, {utente}, {titolo}.
+    public var persona: String = ""
     public var wakeAliases: [String] = ["helio", "ellio"]             // extra spellings the recognizer produces
     public var accentColor: String = "#FFD360"        // DNA yellow
     public var claudePath: String = ElioConfig.defaultClaudePath()
     public var claudeModel: String = "sonnet"
+    /// Claude Code config dir of the account in use (CLAUDE_CONFIG_DIR); empty = ~/.claude.
+    public var claudeConfigDir: String = ""
     public var port: UInt16 = 8765
     public var elevenLabsVoiceId: String = "W71zT1VwIFFx3mMGH2uZ" // MarcoTrox (Italian)
     public var elevenLabsModel: String = "eleven_flash_v2_5"
@@ -54,10 +59,12 @@ public struct ElioConfig: Codable, Sendable {
         userName = try c.decodeIfPresent(String.self, forKey: .userName) ?? d.userName
         assistantName = try c.decodeIfPresent(String.self, forKey: .assistantName) ?? d.assistantName
         addressAs = try c.decodeIfPresent(String.self, forKey: .addressAs) ?? d.addressAs
+        persona = try c.decodeIfPresent(String.self, forKey: .persona) ?? d.persona
         wakeAliases = try c.decodeIfPresent([String].self, forKey: .wakeAliases) ?? d.wakeAliases
         accentColor = try c.decodeIfPresent(String.self, forKey: .accentColor) ?? d.accentColor
         claudePath = try c.decodeIfPresent(String.self, forKey: .claudePath) ?? d.claudePath
         claudeModel = try c.decodeIfPresent(String.self, forKey: .claudeModel) ?? d.claudeModel
+        claudeConfigDir = try c.decodeIfPresent(String.self, forKey: .claudeConfigDir) ?? d.claudeConfigDir
         port = try c.decodeIfPresent(UInt16.self, forKey: .port) ?? d.port
         elevenLabsVoiceId = try c.decodeIfPresent(String.self, forKey: .elevenLabsVoiceId) ?? d.elevenLabsVoiceId
         elevenLabsModel = try c.decodeIfPresent(String.self, forKey: .elevenLabsModel) ?? d.elevenLabsModel
@@ -91,6 +98,78 @@ public struct ElioConfig: Codable, Sendable {
         let candidates = ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "claude"
     }
+}
+
+/// A Claude Code login: each account lives in its own config dir (`~/.claude`, `~/.claude-personale`…),
+/// selected with CLAUDE_CONFIG_DIR, so switching account is just pointing claude at another dir.
+public struct ClaudeAccount: Sendable, Hashable, Identifiable {
+    /// Empty for the default ~/.claude.
+    public let dir: String
+    public var id: String { dir }
+
+    public init(dir: String) { self.dir = ClaudeAccount.normalize(dir) }
+
+    static func normalize(_ dir: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let expanded = (dir.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        return expanded.isEmpty || expanded == "\(home)/.claude" ? "" : expanded
+    }
+
+    public var path: String {
+        dir.isEmpty ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude").path : dir
+    }
+
+    /// "principale" for ~/.claude, otherwise the suffix of ~/.claude-<name> (or the folder name).
+    public var name: String {
+        if dir.isEmpty { return "principale" }
+        let last = (dir as NSString).lastPathComponent
+        return last.hasPrefix(".claude-") ? String(last.dropFirst(8)) : last
+    }
+
+    /// Email of the logged-in account, from Claude Code's own state file.
+    public var email: String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let file = dir.isEmpty ? home.appendingPathComponent(".claude.json") : URL(fileURLWithPath: dir).appendingPathComponent(".claude.json")
+        guard let data = try? Data(contentsOf: file),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let account = json["oauthAccount"] as? [String: Any] else { return nil }
+        return account["emailAddress"] as? String
+    }
+
+    public var label: String { email.map { "\(name) · \($0)" } ?? "\(name) (non collegato)" }
+
+    /// ~/.claude plus every ~/.claude-* folder, and `current` if it lives elsewhere.
+    public static func detect(including current: String = "") -> [ClaudeAccount] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: home.path)) ?? []
+        var found = [ClaudeAccount(dir: "")]
+        for n in names.sorted() where n.hasPrefix(".claude-") {
+            var isDir: ObjCBool = false
+            let path = home.appendingPathComponent(n).path
+            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+                found.append(ClaudeAccount(dir: path))
+            }
+        }
+        let cur = ClaudeAccount(dir: current)
+        if !found.contains(cur) { found.append(cur) }
+        return found
+    }
+
+    /// Environment for a claude process running as this account.
+    public func environment(_ base: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        var env = base
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        env["PATH"] = "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (env["PATH"] ?? "")
+        if dir.isEmpty { env.removeValue(forKey: "CLAUDE_CONFIG_DIR") } else { env["CLAUDE_CONFIG_DIR"] = dir }
+        return env
+    }
+
+    /// Sessions belong to one account: each keeps its own conversation to resume.
+    public var sessionKey: String { dir.isEmpty ? "claude.session_id" : "claude.session_id@\(dir)" }
+}
+
+extension ElioConfig {
+    public var claudeAccount: ClaudeAccount { ClaudeAccount(dir: claudeConfigDir) }
 }
 
 public enum ElioPaths {

@@ -33,6 +33,49 @@ final class SettingsModel {
     }
 }
 
+/// Switching account restarts the daemon with CLAUDE_CONFIG_DIR pointing at another login.
+@MainActor
+enum ClaudeAccounts {
+    static func switchTo(_ account: ClaudeAccount, loop: VoiceLoop?) {
+        var config = ElioConfig.load()
+        guard config.claudeConfigDir != account.dir else { return }
+        config.claudeConfigDir = account.dir
+        config.save()
+        loop?.requestDaemonReload()
+    }
+
+    /// Opens Terminal on `claude` running as that account: /login there, then come back.
+    static func login(_ account: ClaudeAccount) {
+        let claude = ElioConfig.load().claudePath
+        let env = account.dir.isEmpty ? "unset CLAUDE_CONFIG_DIR" : "export CLAUDE_CONFIG_DIR=\(shellQuote(account.dir))"
+        let cmd = "\(env); \(shellQuote(claude)) /login"
+        let script = "tell application \"Terminal\" to do script \"\(cmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\"\nactivate application \"Terminal\""
+        NSAppleScript(source: script)?.executeAndReturnError(nil)
+    }
+
+    /// Asks for a name, creates ~/.claude-<name> and opens the login for it.
+    static func create() -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Nuovo account Claude"
+        alert.informativeText = "Nome dell'account (es. personale). Si apre il Terminale per il login."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Crea")
+        alert.addButton(withTitle: "Annulla")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.lowercased().filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+        guard !name.isEmpty else { return nil }
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude-\(name)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let account = ClaudeAccount(dir: dir.path)
+        login(account)
+        return account.dir
+    }
+
+    private static func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+}
+
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "Generale", voice = "Voce", brain = "Cervello", routines = "Routine",
          integrations = "Integrazioni", monitors = "Monitor", phone = "Telefono"
@@ -212,6 +255,22 @@ private struct GeneralSettings: View {
             Field(label: "Il tuo nome", text: $model.config.userName)
             Field(label: "Come ti chiama", text: $model.config.addressAs, placeholder: "Signore")
         }
+        Group(title: "Personalità",
+              note: "Chi è e come parla: è l'inizio del suo prompt. {assistente}, {utente} e {titolo} diventano i valori qui sopra. Strumenti, sicurezza e regole dell'app restano fissi. Si applica dal messaggio successivo al salvataggio.") {
+            TextEditor(text: Binding(
+                get: { model.config.persona.isEmpty ? Brain.defaultPersona : model.config.persona },
+                set: { model.config.persona = $0 == Brain.defaultPersona ? "" : $0 }))
+                .font(.system(size: 12, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.25)))
+                .frame(minHeight: 260)
+            HStack {
+                Spacer()
+                Button("Ripristina predefinita") { model.config.persona = "" }
+                    .disabled(model.config.persona.isEmpty)
+            }
+        }
         Group(title: "Aspetto") {
             HStack {
                 Text("Colore accento").font(.system(size: 12.5)).foregroundStyle(Theme.text).frame(width: 190, alignment: .leading)
@@ -273,7 +332,15 @@ private struct BrainSettings: View {
     @Bindable var model: SettingsModel
 
     var body: some View {
-        Group(title: "Claude", note: "Usa l'account Claude Code con cui hai fatto login nel terminale.") {
+        Group(title: "Claude", note: "Ogni account vive in una cartella ~/.claude-<nome>. Cambialo al volo anche dal menu nella barra (Account Claude).") {
+            HStack {
+                Text("Account").font(.system(size: 12.5)).foregroundStyle(Theme.text).frame(width: 190, alignment: .leading)
+                Picker("", selection: $model.config.claudeConfigDir) {
+                    ForEach(ClaudeAccount.detect(including: model.config.claudeConfigDir)) { Text($0.label).tag($0.dir) }
+                }.labelsHidden()
+                Button("Login…") { ClaudeAccounts.login(model.config.claudeAccount) }
+                Button("Nuovo…") { if let dir = ClaudeAccounts.create() { model.config.claudeConfigDir = dir } }
+            }
             HStack {
                 Text("Modello conversazione").font(.system(size: 12.5)).foregroundStyle(Theme.text).frame(width: 190, alignment: .leading)
                 Picker("", selection: $model.config.claudeModel) {

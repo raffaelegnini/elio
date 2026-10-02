@@ -106,6 +106,7 @@ struct DashboardView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .environment(\.animationsLive, state.visible)
         .task { await refreshLoop() }
     }
 

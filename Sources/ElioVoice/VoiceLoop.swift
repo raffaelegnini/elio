@@ -924,9 +924,18 @@ public final class VoiceLoop {
         }
     }
 
+    private var levelSmoothed: Float = 0
+    private var lastLevelPublish = Date.distantPast
+
+    /// The mic level drives the orbs; publishing it on every audio buffer (~40/s) re-rendered views
+    /// constantly. Published at most ~12 times a second, and only when it visibly changes.
     private func updateLevel(_ db: Float) {
         let normalized = max(0, min(1, (db + 60) / 50))
-        level = level * 0.6 + normalized * 0.4
+        levelSmoothed = levelSmoothed * 0.6 + normalized * 0.4
+        let now = Date()
+        guard now.timeIntervalSince(lastLevelPublish) > 0.08, abs(levelSmoothed - level) > 0.03 else { return }
+        lastLevelPublish = now
+        level = levelSmoothed
     }
 }
 
