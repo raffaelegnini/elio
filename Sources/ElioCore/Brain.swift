@@ -55,6 +55,7 @@ public actor Brain {
             await self?.refreshSession()
         }
         let tasks = self.tasks
+        await WatcherEngine.shared.start(tasks: tasks, broadcast: send)
         await UsageMeter.shared.setAgentsCost { await tasks.agentsCost() }
         await UsageMeter.shared.start(every: 60) { snap in
             send(ServerMessage(type: .event, kind: "usage", payload: snap.jsonString()))
@@ -391,6 +392,10 @@ public actor Brain {
         collegata e l'utente vuole far partire brani precisi: crea tu l'app su developer.spotify.com/dashboard col browser \
         (Web API, redirect URI http://127.0.0.1:8739/callback), salva il client id con spotify_setup e poi spotify_login.
         - usage_report per i token Claude usati (oggi e finestra di 5 ore).
+        - Monitor (watch_create / watch_list / watch_control): controlli automatici configurabili. Se Raffaele vuole \
+        sapere quando succede qualcosa ("avvisami se…", "ogni mattina controlla…", "quando Kuma segnala un down analizza…", \
+        "tieni d'occhio questo sito/API"), crea un monitor: trigger schedule/slack/http/command/webhook, action notify o \
+        agent (con le istruzioni dell'analisi). Spiega in una frase cosa hai impostato.
 
         Skill: hai le skill di Raffaele (strumento Skill: documenti Word/Excel/PowerPoint/PDF, Google Workspace e quelle \
         che aggiunge lui). Usale quando il compito corrisponde; le nuove compaiono da sole entro un minuto.

@@ -133,6 +133,10 @@ public enum ToolRegistry {
         MailTools.send,
         MailTools.accounts,
         NativeIntegrations.status,
+        WatcherTools.create,
+        WatcherTools.list,
+        WatcherTools.control,
+        WatcherTools.listJSON,
         NativeIntegrations.connectTool,
         NativeIntegrations.disconnectTool,
         ProjectTreeTools.info,
@@ -160,6 +164,8 @@ public enum ToolRegistry {
         case "start_task", "mac_task", "squad_start", "squad_send": 60
         case "spotify_login", "integration_connect": 180
         case "mail_send": 200
+        case "watch_create": 200
+        case "watch_control": 60
         case "mail_inbox", "mail_search", "mail_read", "integrations_native": 45
         case "spotify_play": 30
         default: 20

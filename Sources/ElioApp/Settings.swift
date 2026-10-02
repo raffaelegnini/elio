@@ -35,7 +35,7 @@ final class SettingsModel {
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "Generale", voice = "Voce", brain = "Cervello", routines = "Routine",
-         integrations = "Integrazioni", phone = "Telefono"
+         integrations = "Integrazioni", monitors = "Monitor", phone = "Telefono"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -44,6 +44,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .brain: "brain"
         case .routines: "sunrise"
         case .integrations: "puzzlepiece.extension"
+        case .monitors: "waveform.path.ecg"
         case .phone: "iphone"
         }
     }
@@ -119,6 +120,7 @@ struct SettingsView: View {
                     case .voice: VoiceSettings(model: model); if let loop { OwnerVoiceSettings(model: model, loop: loop) }
                     case .brain: BrainSettings(model: model)
                     case .routines: RoutineSettings(model: model)
+                    case .monitors: if let loop { MonitorSettings(loop: loop) }
                     case .integrations:
                         if let loop { NativeIntegrationsSettings(loop: loop) }
                         IntegrationSettings(model: model)
@@ -327,6 +329,80 @@ private struct RoutineSettings: View {
             Field(label: "Canale clock in", text: $model.config.slackClockInChannel)
             Field(label: "Messaggio clock in", text: $model.config.slackClockInText)
         }
+    }
+}
+
+/// Monitors: what Elio keeps an eye on by itself. Created by voice; paused, run or deleted here.
+private struct MonitorSettings: View {
+    let loop: VoiceLoop
+    @State private var items: [Watcher] = []
+    @State private var result: [String: String] = [:]
+    @State private var request = ""
+
+    var body: some View {
+        Group(title: "Monitor",
+              note: "Controlli automatici: a orario, su un canale Slack, su un sito o un'API, su un comando o tramite webhook. Quando scattano, Elio ti avvisa o fa partire un'analisi e ti manda il report.") {
+            HStack {
+                TextField("Es. quando in #kuma-ops arriva un down, analizza su Cloudflare e fammi un report", text: $request)
+                    .textFieldStyle(.roundedBorder)
+                Button("Crea") {
+                    loop.submit(text: "Crea un monitor: \(request)")
+                    request = ""
+                    Task { try? await Task.sleep(for: .seconds(12)); await reload() }
+                }
+                .disabled(request.isEmpty)
+            }
+            if items.isEmpty { Text("Nessun monitor ancora.").font(.system(size: 12.5)).foregroundStyle(Theme.dim) }
+            ForEach(items) { w in row(w) }
+        }
+        .task { await reload() }
+    }
+
+    private func row(_ w: Watcher) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Circle().fill(!w.enabled ? Theme.dim : w.state == "down" ? Color(hex: "#FF6B61") : .green).frame(width: 8, height: 8)
+                Text(w.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                Text(summary(w)).font(Theme.mono).foregroundStyle(Theme.accent).lineLimit(1)
+                Spacer()
+                Button("Esegui ora") { control(w, "run") }
+                Button(w.enabled ? "Pausa" : "Riattiva") { control(w, w.enabled ? "pause" : "resume") }
+                Button(role: .destructive) { control(w, "delete") } label: { Image(systemName: "trash") }
+            }
+            Text(detail(w)).font(.system(size: 11.5)).foregroundStyle(Theme.dim).lineLimit(2)
+            if let r = result[w.id] { Text(r).font(.system(size: 11.5)).foregroundStyle(.green) }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func summary(_ w: Watcher) -> String {
+        let trigger: String = switch w.trigger {
+        case .schedule: w.at?.isEmpty == false ? "alle \(w.at!.joined(separator: ", "))" : "ogni \(w.everyMinutes ?? 60) min"
+        case .slack: "Slack \(w.channel ?? "")\(w.match.map { " /\($0)/" } ?? "")"
+        case .http: "\(w.url ?? "") ogni \(w.everyMinutes ?? 5) min"
+        case .command: "comando ogni \(w.everyMinutes ?? 5) min"
+        case .webhook: "webhook"
+        }
+        return trigger + (w.action == .agent ? " → analisi" : " → avviso")
+    }
+
+    private func detail(_ w: Watcher) -> String {
+        let f = DateFormatter(); f.dateFormat = "dd/MM HH:mm"
+        return "Ultimo controllo \(w.lastCheck.map(f.string) ?? "mai") · ultimo allarme \(w.lastFired.map(f.string) ?? "mai")"
+            + (w.lastResult.map { " · \($0)" } ?? "")
+    }
+
+    private func control(_ w: Watcher, _ action: String) {
+        Task {
+            let (text, _) = await loop.callTool("watch_control", ["id": w.id, "action": action])
+            result[w.id] = text
+            await reload()
+        }
+    }
+
+    private func reload() async {
+        let (json, err) = await loop.callTool("watch_list_json")
+        if !err, let list = [Watcher].fromJSON(json) { items = list }
     }
 }
 

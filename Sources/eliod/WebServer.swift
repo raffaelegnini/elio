@@ -74,6 +74,13 @@ final class WebServer: @unchecked Sendable {
             WebPush.shared.add(.init(endpoint: endpoint, p256dh: p, auth: a))
             WebPush.shared.send(title: "Elio", body: "Notifiche attive su questo telefono.", tag: "welcome")
             send(conn, 200, "application/json", Data("{\"ok\":true}".utf8))
+        case ("POST", let path) where path.hasPrefix("/hook/"):
+            // Monitor webhooks: /hook/<id>?key=<secret> (each monitor has its own secret).
+            let comps = URLComponents(string: "http://x\(path)")
+            let id = String(comps?.path.dropFirst("/hook/".count) ?? "")
+            let key = comps?.queryItems?.first { $0.name == "key" }?.value ?? req.headers["x-elio-key"] ?? ""
+            let ok = await WatcherEngine.shared.webhook(id: id, key: key, body: String(decoding: req.body, as: UTF8.self))
+            send(conn, ok ? 200 : 404, "application/json", Data(ok ? "{\"ok\":true}".utf8 : "{\"ok\":false}".utf8))
         case ("POST", "/stt"):
             guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
             do {

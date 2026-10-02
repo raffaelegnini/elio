@@ -8,7 +8,7 @@ public final class PhoneNotifier: @unchecked Sendable {
     private let lock = NSLock()
     private var screenLocked = false
     private var observers: [NSObjectProtocol] = []
-    static let kinds: Set<String> = ["reminder", "taskDone", "confirm", "question", "meeting", "brief", "timer", "nudge"]
+    static let kinds: Set<String> = ["reminder", "taskDone", "confirm", "question", "meeting", "brief", "timer", "nudge", "watch"]
 
     public init(topic: String) {
         self.topic = topic
@@ -39,6 +39,7 @@ public final class PhoneNotifier: @unchecked Sendable {
         case "reminder": "Promemoria"
         case "meeting": "Meeting"
         case "brief": "Briefing"
+        case "watch": "Monitor"
         default: "Elio"
         }
         // The phone app itself (Web Push); ntfy stays as a fallback channel.
