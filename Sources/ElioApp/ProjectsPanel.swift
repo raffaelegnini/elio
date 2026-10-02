@@ -173,7 +173,13 @@ private struct RepoCard: View {
 struct StackBadge: View {
     let stack: String
 
+    /// Technology colour, or the accent when the user turned stack colours off.
     static func color(_ stack: String?) -> Color {
+        guard Brand.shared.stackColors else { return Theme.accent }
+        return rawColor(stack)
+    }
+
+    static func rawColor(_ stack: String?) -> Color {
         switch stack {
         case "magento": Color(hex: "#F26322")
         case "hyva": Color(hex: "#7B5CFF")

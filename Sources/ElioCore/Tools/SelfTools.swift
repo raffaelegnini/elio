@@ -28,6 +28,7 @@ public enum SelfTools {
         "speakerVerification": ("solo la voce dell'utente può comandare", true),
         "browserAutonomy": ("usare il browser da solo", true),
         "confirmCodeExecution": ("chiedere conferma anche per build e test", true),
+        "stackColors": ("progetti colorati per tecnologia in dashboard", false),
         "appleFastPath": ("comandi semplici (musica, app, link, volume) col modello Apple sul Mac", true),
     ]
 

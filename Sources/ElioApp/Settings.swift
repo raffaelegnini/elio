@@ -218,6 +218,10 @@ private struct GeneralSettings: View {
                 TextField("#FFD360", text: $model.config.accentColor).textFieldStyle(.roundedBorder).frame(width: 110)
                 Button("Giallo DNA") { model.config.accentColor = "#FFD360"; Brand.shared.accent = Color(hex: "#FFD360") }
             }
+            Toggle("Progetti colorati per tecnologia (Magento, Laravel, React…)", isOn: Binding(
+                get: { model.config.stackColors },
+                set: { model.config.stackColors = $0; Brand.shared.stackColors = $0 }))
+                .font(.system(size: 12.5))
         }
     }
 }

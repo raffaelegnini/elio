@@ -42,6 +42,8 @@ public struct ElioConfig: Codable, Sendable {
     public var remotePort: UInt16 = 8767
     /// Simple device commands (music, apps, links, volume) handled by Apple's on-device model.
     public var appleFastPath: Bool = true
+    /// Projects coloured by technology (Magento, Laravel…) in the dashboard; off = accent colour.
+    public var stackColors: Bool = false
 
     public init() {}
 
@@ -81,6 +83,7 @@ public struct ElioConfig: Codable, Sendable {
         speakerVerification = try c.decodeIfPresent(Bool.self, forKey: .speakerVerification) ?? d.speakerVerification
         speakerThreshold = try c.decodeIfPresent(Double.self, forKey: .speakerThreshold) ?? d.speakerThreshold
         appleFastPath = try c.decodeIfPresent(Bool.self, forKey: .appleFastPath) ?? d.appleFastPath
+        stackColors = try c.decodeIfPresent(Bool.self, forKey: .stackColors) ?? d.stackColors
     }
 
     static func defaultClaudePath() -> String {

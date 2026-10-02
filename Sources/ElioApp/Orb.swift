@@ -33,6 +33,7 @@ final class Brand {
     static let shared = Brand()
     var name = "Elio"
     var accent = Color(hex: "#FFD360")
+    var stackColors = false
 
     /// "ELIO" → "E.L.I.O."
     var dotted: String { name.uppercased().map(String.init).joined(separator: ".") + "." }
@@ -40,6 +41,7 @@ final class Brand {
     func apply(_ config: ElioConfig) {
         name = config.assistantName
         accent = Color(hex: config.accentColor)
+        stackColors = config.stackColors
     }
 }
 

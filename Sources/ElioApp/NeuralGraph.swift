@@ -17,8 +17,10 @@ final class GraphModel {
         var vel: CGVector = .zero
         var pinned = false
         var born = Date()
-        /// Leaf colour (e.g. the project's stack); nil = state tint.
-        var color: Color?
+        /// Project technology (coloured only if the user wants it).
+        var stack: String?
+        /// Fixed place in a laid-out tree: the node glides there and stays (no physics).
+        var target: CGPoint?
 
         /// group: a folder of projects (dev → DNA → magento…), between a capability and its leaves.
         enum Kind { case core, capability, group, leaf }
@@ -68,36 +70,100 @@ final class GraphModel {
         }
     }
 
-    /// Replaces a capability's subtree with a folder hierarchy: capability → dev → DNA → magento → repos.
+    /// Replaces a capability's subtree with a folder hierarchy: capability → dev → DNA → magento → repos,
+    /// laid out as an ordered fan pointing away from the core in the capability's direction (no overlaps:
+    /// each branch gets an angular slice proportional to its projects, each level its own ring).
     func setTree(_ cap: Capability, _ roots: [ProjectNode]) {
         let prefix = "\(cap.rawValue):"
-        var wanted: [(node: ProjectNode, parent: String)] = []
-        func walk(_ n: ProjectNode, parent: String) {
-            wanted.append((n, parent))
-            for c in n.children { walk(c, parent: prefix + n.path) }
+        guard let capNode = nodes[cap.rawValue] else { return }
+        // The capability stays where it was, pinned: the tree hangs from it.
+        let home = Self.homePosition(cap)
+        nodes[cap.rawValue]?.pos = home
+        nodes[cap.rawValue]?.pinned = true
+        _ = capNode
+        let direction = atan2(home.y, home.x)
+        let base = hypot(home.x, home.y)
+
+        // Weight = room a branch needs on the arc: each folder 1, plus one per row of its projects.
+        let perRow = 7
+        func weight(_ n: ProjectNode) -> Double {
+            if n.isRepo { return 0 }
+            let repos = n.children.filter(\.isRepo).count
+            return 1 + Double((repos + perRow - 1) / perRow) * 0.8 + n.children.filter { !$0.isRepo }.reduce(0) { $0 + weight($1) }
         }
-        roots.forEach { walk($0, parent: cap.rawValue) }
-        let keep = Set(wanted.map { prefix + $0.node.path })
+        let total = roots.reduce(0) { $0 + weight($1) }
+        let wedge = min(Double.pi * 0.95, max(Double.pi / 4, total * 0.11))
+        let ring: CGFloat = 92
+
+        var placed: [(node: ProjectNode, parent: String, pos: CGPoint)] = []
+        func layout(_ n: ProjectNode, parent: String, depth: Int, from a0: Double, to a1: Double) {
+            let angle = (a0 + a1) / 2
+            let r = base + ring * CGFloat(depth + 1)
+            placed.append((n, parent, CGPoint(x: cos(angle) * r, y: sin(angle) * r)))
+            let id = prefix + n.path
+            // Sub-folders share the slice; projects cluster just beyond their folder in short rows.
+            let folders = n.children.filter { !$0.isRepo }
+            let repos = n.children.filter(\.isRepo)
+            let folderWeight = folders.reduce(0) { $0 + weight($1) }
+            var a = a0
+            let span = a1 - a0
+            let mine = weight(n) - folderWeight   // room for this folder's own projects
+            let repoSpan = span * mine / max(weight(n), 0.001)
+            // Projects in the middle of the slice, sub-folders around them.
+            let left = folders.prefix(folders.count / 2), right = folders.dropFirst(folders.count / 2)
+            for c in left {
+                let share = span * weight(c) / max(weight(n), 0.001)
+                layout(c, parent: id, depth: depth + 1, from: a, to: a + share)
+                a += share
+            }
+            let center = a + repoSpan / 2
+            for (i, c) in repos.enumerated() {
+                let row = i / perRow, col = i % perRow
+                let inRow = min(perRow, repos.count - row * perRow)
+                let rr = r + 30 + CGFloat(row) * 16
+                let step = Double(14 / rr)
+                let ang = center + (Double(col) - Double(inRow - 1) / 2) * step
+                placed.append((c, id, CGPoint(x: cos(ang) * rr, y: sin(ang) * rr)))
+            }
+            a += repoSpan
+            for c in right {
+                let share = span * weight(c) / max(weight(n), 0.001)
+                layout(c, parent: id, depth: depth + 1, from: a, to: a + share)
+                a += share
+            }
+        }
+        var a = direction - wedge / 2
+        for root in roots {
+            let share = wedge * weight(root) / max(total, 0.001)
+            layout(root, parent: cap.rawValue, depth: 0, from: a, to: a + share)
+            a += share
+        }
+
+        let keep = Set(placed.map { prefix + $0.node.path })
         for id in nodes.keys where id.hasPrefix(prefix) && !keep.contains(id) { nodes[id] = nil }
-        edges = edges.filter { e in !(e.b.hasPrefix(prefix)) }
-        for (n, parent) in wanted {
+        edges = edges.filter { !$0.b.hasPrefix(prefix) }
+        for (n, parent, pos) in placed {
             let id = prefix + n.path
             let detail = n.isRepo
                 ? "\(n.stack.map { $0.uppercased() + " · " } ?? "")\(n.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))"
                 : "\(n.repoCount) progetti · \(n.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))"
             if nodes[id] == nil {
-                let p = nodes[parent]?.pos ?? .zero
-                // Born just outside the parent, away from the centre, so the tree unfolds outward.
-                let len = max(hypot(p.x, p.y), 1)
-                let jitter = CGPoint(x: .random(in: -25...25), y: .random(in: -25...25))
-                nodes[id] = Node(id: id, label: n.name, detail: detail, kind: n.isRepo ? .leaf : .group, capability: cap,
-                                 pos: CGPoint(x: p.x + p.x / len * 50 + jitter.x, y: p.y + p.y / len * 50 + jitter.y))
+                nodes[id] = Node(id: id, label: n.name, detail: detail, kind: n.isRepo ? .leaf : .group,
+                                 capability: cap, pos: home)
             }
             nodes[id]?.label = n.name
             nodes[id]?.detail = detail
-            nodes[id]?.color = n.isRepo ? StackBadge.color(n.stack) : nil
+            nodes[id]?.stack = n.stack
+            nodes[id]?.target = pos
             edges.insert(Edge(a: parent, b: id))
         }
+    }
+
+    /// Where a capability sits on the ring around the core.
+    static func homePosition(_ cap: Capability) -> CGPoint {
+        let i = Capability.allCases.firstIndex(of: cap) ?? 0
+        let a = Double(i) / Double(Capability.allCases.count) * 2 * .pi
+        return CGPoint(x: cos(a) * 160, y: sin(a) * 160)
     }
 
     /// One physics step: repulsion, springs, gentle drift ("breathing").
@@ -107,9 +173,9 @@ final class GraphModel {
         for id in ids { force[id] = .zero }
 
         for i in 0..<ids.count {
-            guard let a = nodes[ids[i]] else { continue }
+            guard let a = nodes[ids[i]], a.target == nil else { continue }
             for j in (i + 1)..<ids.count {
-                guard let b = nodes[ids[j]] else { continue }
+                guard let b = nodes[ids[j]], b.target == nil else { continue }
                 var dx = a.pos.x - b.pos.x, dy = a.pos.y - b.pos.y
                 var d2 = dx * dx + dy * dy
                 if d2 < 1 { dx = .random(in: -1...1); dy = .random(in: -1...1); d2 = 1 }
@@ -122,7 +188,7 @@ final class GraphModel {
             }
         }
         for e in edges {
-            guard let a = nodes[e.a], let b = nodes[e.b] else { continue }
+            guard let a = nodes[e.a], let b = nodes[e.b], a.target == nil, b.target == nil else { continue }
             let rest: CGFloat = (a.kind == .core || b.kind == .core) ? 170
                 : b.kind == .group ? 75 : a.kind == .group ? 42 : 70
             let dx = b.pos.x - a.pos.x, dy = b.pos.y - a.pos.y
@@ -132,6 +198,13 @@ final class GraphModel {
             force[e.b]!.dx -= dx / d * f; force[e.b]!.dy -= dy / d * f
         }
         for id in ids {
+            if var n = nodes[id], let target = n.target, !n.pinned {
+                // Laid-out tree: ease towards the slot.
+                n.pos.x += (target.x - n.pos.x) * min(1, 0.12 * dt * 8)
+                n.pos.y += (target.y - n.pos.y) * min(1, 0.12 * dt * 8)
+                nodes[id] = n
+                continue
+            }
             guard var n = nodes[id], !n.pinned else { continue }
             var f = force[id]!
             // Weak gravity to the centre and a slow swirl so the network never freezes.
@@ -363,7 +436,8 @@ struct NeuralGraphView: View {
                          with: .radialGradient(Gradient(colors: [tint.opacity(on || fresh ? 0.45 : isHovered ? 0.35 : 0.12), .clear]),
                                                center: p, startRadius: 0, endRadius: g))
             }
-            ctx.fill(Path(ellipseIn: rect), with: .color(node.kind == .leaf ? (node.color ?? tint).opacity(on || isHovered ? 1 : 0.8) : Theme.bg))
+            let leafColor = node.stack != nil && Brand.shared.stackColors ? StackBadge.rawColor(node.stack) : tint
+            ctx.fill(Path(ellipseIn: rect), with: .color(node.kind == .leaf ? leafColor.opacity(on || isHovered ? 1 : 0.8) : Theme.bg))
             if node.kind == .group {
                 // Folder: ring + small folder glyph.
                 ctx.stroke(Path(ellipseIn: rect), with: .color(tint.opacity(isSelected ? 1 : 0.55)), lineWidth: isSelected ? 1.8 : 1)
@@ -388,7 +462,15 @@ struct NeuralGraphView: View {
                 let text = Text(node.kind == .capability ? node.label : String(node.label.prefix(28)))
                     .font(.system(size: node.kind == .capability ? 9.5 : node.kind == .group ? 8.5 : 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(on || isSelected ? Theme.text : Theme.dim)
-                ctx.draw(text, at: CGPoint(x: p.x, y: p.y + r + 9))
+                // Folder names sit on the side facing the core: their projects fan out the other way.
+                if node.kind == .group {
+                    let len = max(hypot(node.pos.x, node.pos.y), 1)
+                    let ux = node.pos.x / len, uy = node.pos.y / len
+                    ctx.draw(text, at: CGPoint(x: p.x - ux * (r + 5), y: p.y - uy * (r + 5)),
+                             anchor: UnitPoint(x: 0.5 + 0.5 * ux, y: 0.5 + 0.5 * uy))
+                } else {
+                    ctx.draw(text, at: CGPoint(x: p.x, y: p.y + r + 9))
+                }
             }
         }
     }
