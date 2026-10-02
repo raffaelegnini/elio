@@ -88,7 +88,7 @@ final class GraphModel {
         func weight(_ n: ProjectNode) -> Double {
             if n.isRepo { return 0 }
             let repos = n.children.filter(\.isRepo).count
-            return 1 + Double(repos) * 0.08 + n.children.filter { !$0.isRepo }.reduce(0) { $0 + weight($1) }
+            return 1 + Double(repos) * 0.14 + n.children.filter { !$0.isRepo }.reduce(0) { $0 + weight($1) }
         }
         let total = roots.reduce(0) { $0 + weight($1) }
         // Narrow and long: the tree grows away from the core rather than sideways.
@@ -265,6 +265,7 @@ struct NeuralGraphView: View {
     var chrome = EdgeInsets()
     /// Snapshots pass a pre-simulated model and skip loading.
     var preset: GraphModel?
+    var presetZoom: (scale: CGFloat, offset: CGSize)?
     @State private var model = GraphModel()
     @State private var offset: CGSize = .zero
     @State private var dragStartOffset: CGSize = .zero
@@ -359,7 +360,11 @@ struct NeuralGraphView: View {
             .clipped()
         }
         .task {
-            if let preset { model = preset; return }
+            if let preset {
+                model = preset
+                if let z = presetZoom { scale = z.scale; scaleStart = z.scale; offset = z.offset }
+                return
+            }
             await refreshLoop()
         }
         .onChange(of: loop.activity.count) { refreshSoon() }
@@ -415,11 +420,14 @@ struct NeuralGraphView: View {
             }
         }
 
+        // Labels are collected and drawn last, without overlaps: hovered first, then capabilities,
+        // folders, projects; a label that would cover another one is skipped.
+        var labels: [(priority: Int, text: Text, at: CGPoint, anchor: UnitPoint)] = []
         for node in model.nodes.values where node.kind != .core {
             let p = screen(node.pos)
             if isOff(node) {
                 // Dormant neuron: dark, no glow, no label for leaves.
-                let r = node.radius * max(scale, 0.6)
+                let r = node.radius * zoomFactor(node)
                 let rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
                 ctx.fill(Path(ellipseIn: rect), with: .color(node.kind == .leaf ? offColor : Theme.bg))
                 if node.kind == .capability {
@@ -432,7 +440,7 @@ struct NeuralGraphView: View {
             let f = flash(node)
             if f > 0 {
                 // Ignition: an expanding ring as the neuron comes alive.
-                let ring = node.radius * max(scale, 0.6) * (1 + (1 - f) * 3)
+                let ring = node.radius * zoomFactor(node) * (1 + (1 - f) * 3)
                 ctx.stroke(Path(ellipseIn: CGRect(x: p.x - ring, y: p.y - ring, width: ring * 2, height: ring * 2)),
                            with: .color(tint.opacity(f)), lineWidth: 2)
             }
@@ -442,7 +450,7 @@ struct NeuralGraphView: View {
             let isSelected = node.id == selected || isHovered
             // Hover: the neuron swells smoothly and glows.
             let grow = isHovered ? 1 + 0.3 * min(1, Date().timeIntervalSince(hoverStart) / 0.15) : 1
-            let r = node.radius * max(scale, 0.6) * grow * (on && node.kind == .capability ? 1.15 + 0.08 * sin(t * 8) : 1)
+            let r = node.radius * zoomFactor(node) * grow * (on && node.kind == .capability ? 1.15 + 0.08 * sin(t * 8) : 1)
             let rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
 
             // Glow.
@@ -473,8 +481,9 @@ struct NeuralGraphView: View {
                 ctx.stroke(Path(ellipseIn: rect.insetBy(dx: -5, dy: -5)), with: .color(.white.opacity(0.8)), lineWidth: 1)
             }
 
-            // Labels: capabilities always, leaves when zoomed in or selected.
+            // Labels: capabilities and folders always, projects when zoomed in or hovered (if there's room).
             if node.kind == .capability || node.kind == .group || scale > 1.25 || isSelected {
+                let priority = isSelected ? 0 : node.kind == .capability ? 1 : node.kind == .group ? 2 : 3
                 let text = Text(node.kind == .capability ? node.label : String(node.label.prefix(28)))
                     .font(.system(size: node.kind == .capability ? 9.5 : node.kind == .group ? 8.5 : 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(on || isSelected ? Theme.text : Theme.dim)
@@ -482,13 +491,28 @@ struct NeuralGraphView: View {
                 if node.kind == .group {
                     let len = max(hypot(node.pos.x, node.pos.y), 1)
                     let ux = node.pos.x / len, uy = node.pos.y / len
-                    ctx.draw(text, at: CGPoint(x: p.x - ux * (r + 5), y: p.y - uy * (r + 5)),
-                             anchor: UnitPoint(x: 0.5 + 0.5 * ux, y: 0.5 + 0.5 * uy))
+                    labels.append((priority, text, CGPoint(x: p.x - ux * (r + 5), y: p.y - uy * (r + 5)),
+                                   UnitPoint(x: 0.5 + 0.5 * ux, y: 0.5 + 0.5 * uy)))
                 } else {
-                    ctx.draw(text, at: CGPoint(x: p.x, y: p.y + r + 9))
+                    labels.append((priority, text, CGPoint(x: p.x, y: p.y + r + 9), .center))
                 }
             }
         }
+        var taken: [CGRect] = []
+        for label in labels.sorted(by: { $0.priority < $1.priority }) {
+            let resolved = ctx.resolve(label.text)
+            let size = resolved.measure(in: CGSize(width: 400, height: 40))
+            let rect = CGRect(x: label.at.x - size.width * label.anchor.x, y: label.at.y - size.height * label.anchor.y,
+                              width: size.width, height: size.height).insetBy(dx: -3, dy: -1)
+            if label.priority > 0, taken.contains(where: { $0.intersects(rect) }) { continue }
+            taken.append(rect)
+            ctx.draw(resolved, at: label.at, anchor: label.anchor)
+        }
+    }
+
+    /// Dots of projects stay small when zooming in, so zooming separates them instead of merging them.
+    private func zoomFactor(_ n: GraphModel.Node) -> CGFloat {
+        n.kind == .leaf ? min(max(scale, 0.6), 1.1) : max(scale, 0.6)
     }
 
     // MARK: - Interaction

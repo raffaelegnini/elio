@@ -58,6 +58,8 @@ enum Snapshots {
         for i in 0..<1500 { graph.step(dt: 1.0 / 60 * 8, time: Double(i) / 60) }
         graph.ageAll()
         loop.loadSample(tasks: [], squads: [], messages: [], usage: usage, routine: false, lit: [], state: .listening)
+        save(NeuralGraphView(loop: loop, preset: graph, presetZoom: (2.2, CGSize(width: 520, height: -820)))
+                .frame(width: 1400, height: 1000).background(Theme.bg), "\(dir)/graph-zoom.png")
         save(NeuralGraphView(loop: loop, preset: graph).frame(width: 1600, height: 1300).background(Theme.bg), "\(dir)/graph.png")
 
         loop.loadSample(tasks: [], squads: [], messages: [], usage: usage, routine: false, lit: [], state: .thinking)
