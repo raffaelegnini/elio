@@ -273,7 +273,9 @@ public final class VoiceLoop {
         voiceId = config.elevenLabsVoiceId
         applySettings(config)
         do {
+            VoiceLog.write("startup: speech model…")
             try await UtteranceTranscriber.ensureModel(locale: Locale(identifier: "it_IT"))
+            VoiceLog.write("startup: audio…")
             try audio.start()
             if muted { try audio.setInputEnabled(false) }
             pipeline.inputFormat = audio.inputFormat
@@ -296,6 +298,7 @@ public final class VoiceLoop {
                                   ["\(h), \(addressAs). Le faccio il briefing di oggi.",
                                    "\(h), \(addressAs). Le faccio il riassunto di oggi."] })
         } catch {
+            VoiceLog.write("startup failed: \(error)")
             lastError = "Audio: \(error.localizedDescription)"
             state = .off
         }

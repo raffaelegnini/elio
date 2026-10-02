@@ -8,7 +8,8 @@ import Foundation
 /// can't use. Echo is handled by VoiceLoop (half-duplex + high barge-in margin) instead.
 public final class AudioIO: @unchecked Sendable {
     public let engine = AVAudioEngine()          // output
-    private let inputEngine = AVAudioEngine()    // mic
+    private var inputEngine = AVAudioEngine()    // mic (recreated when a device switch leaves it stale)
+    private var inputObserver: Any?
     public let player = AVAudioPlayerNode()
     public let playbackFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 22050,
                                               channels: 1, interleaved: false)!
@@ -38,12 +39,17 @@ public final class AudioIO: @unchecked Sendable {
         try startInput()
 
         // Device changes (AirPods in/out) stop the engines: rebuild them on the new devices.
-        observers.append(NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: inputEngine, queue: .main
-        ) { [weak self] _ in self?.routeChanged(output: false) })
+        observeInputEngine()
         observers.append(NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
         ) { [weak self] _ in self?.routeChanged(output: true) })
+    }
+
+    private func observeInputEngine() {
+        if let o = inputObserver { NotificationCenter.default.removeObserver(o) }
+        inputObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: inputEngine, queue: .main
+        ) { [weak self] _ in self?.routeChanged(output: false) }
     }
 
     // Restarting an input with echo cancellation itself posts configuration-change notifications:
@@ -96,7 +102,33 @@ public final class AudioIO: @unchecked Sendable {
         }
     }
 
+    /// Starts the mic. If the engine refuses (-10868: it kept the previous device's format after we
+    /// forced the built-in mic), a fresh engine picks up the real format.
     private func startInput() throws {
+        do {
+            try startInputOnce(chooseDevice: true)
+        } catch {
+            VoiceLog.write("input start failed (\(error)): fresh engine")
+            rebuildInputEngine()
+            do {
+                try startInputOnce(chooseDevice: true)
+            } catch {
+                // Forcing the built-in mic can't work right now: use the system's default input.
+                VoiceLog.write("input start failed again (\(error)): default input")
+                rebuildInputEngine()
+                try startInputOnce(chooseDevice: false)
+            }
+        }
+    }
+
+    private func rebuildInputEngine() {
+        inputEngine.inputNode.removeTap(onBus: 0)
+        inputEngine.stop()
+        inputEngine = AVAudioEngine()
+        observeInputEngine()
+    }
+
+    private func startInputOnce(chooseDevice: Bool) throws {
         let input = inputEngine.inputNode
         let useAEC = echoCancellation && !AudioDevices.defaultOutputIsHeadphones()
         if input.isVoiceProcessingEnabled != useAEC { try input.setVoiceProcessingEnabled(useAEC) }
@@ -106,7 +138,7 @@ public final class AudioIO: @unchecked Sendable {
             input.voiceProcessingOtherAudioDuckingConfiguration =
                 AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
         }
-        if !useAEC, let unit = input.audioUnit {
+        if !useAEC, chooseDevice, let unit = input.audioUnit {
             let wanted: AudioDeviceID? = preferBuiltInMicWithBluetooth && AudioDevices.defaultOutputIsBluetooth()
                 ? AudioDevices.builtInMicrophone() : AudioDevices.defaultInput()
             if var id = wanted {
