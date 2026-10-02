@@ -99,7 +99,6 @@ public enum PermissionPolicy {
             // Overwrites: plain redirection, tee without -a, truncate, mv/cp without -n.
             #"\btee\s+(?!-a)"#,
             #"\btruncate\b|\bdefaults\s+delete\b|\bsrm\b"#,
-            #"(^|[\s;&|(])(mv|cp)\s+(?!(?:[^;&|]*\s)?-[a-zA-Z]*n\b)"#,
             // Persistence and shell startup files.
             #"LaunchAgents|LaunchDaemons|crontab|\.zshrc|\.zprofile|\.bash_profile|\.bashrc|\.profile\b|login\s*items"#,
             #"\b(curl|wget|nc|ncat|ssh|scp|sftp|rsync|ftp|telnet)\b"#,
@@ -112,6 +111,9 @@ public enum PermissionPolicy {
         if outward.contains(where: { cmd.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }) {
             return .confirm(.normal)
         }
+        // mv/cp only matter when they would replace an existing file.
+        let parts = cmd.splitOutsideQuotes(";|&\n").map { $0.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "(){}"))) }
+        if parts.contains(where: wouldOverwrite) { return .confirm(.normal) }
         // Overwriting redirection (quoted text like "<noreply@…>" is not one). With escaped quotes the
         // quoting can't be trusted: look at the raw command instead (any ">" counts).
         let escaped = cmd.contains("\\\"") || cmd.contains("\\'")
@@ -120,6 +122,40 @@ public enum PermissionPolicy {
             return .confirm(.normal)
         }
         return .allow
+    }
+
+    /// `mv`/`cp` that would replace an existing file (sources expanded for simple globs).
+    /// Unparseable forms count as overwriting, to stay on the safe side.
+    static func wouldOverwrite(_ part: String) -> Bool {
+        let t = tokens(part)
+        guard let verb = t.first, verb == "mv" || verb == "cp" else { return false }
+        let flags = t.dropFirst().filter { $0.hasPrefix("-") }
+        if flags.contains(where: { $0 != "--" && $0.dropFirst().contains("n") && !$0.hasPrefix("--") }) || flags.contains("--no-clobber") {
+            return false
+        }
+        let args = t.dropFirst().filter { !$0.hasPrefix("-") }.map(expandPath)
+        guard args.count >= 2, let dest = args.last else { return true }
+        let sources = args.dropLast()
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        let destExists = fm.fileExists(atPath: dest, isDirectory: &isDir)
+        if !destExists {
+            // New file/folder name, or a folder created earlier in the same command.
+            return false
+        }
+        guard isDir.boolValue else { return true }   // replacing an existing file
+        for src in sources {
+            let dir = (src as NSString).deletingLastPathComponent, pattern = (src as NSString).lastPathComponent
+            let names: [String]
+            if pattern.contains("*") || pattern.contains("?") {
+                names = ((try? fm.contentsOfDirectory(atPath: dir.isEmpty ? "." : dir)) ?? [])
+                    .filter { fnmatch(pattern, $0, 0) == 0 }
+            } else {
+                names = [pattern]
+            }
+            if names.contains(where: { fm.fileExists(atPath: (dest as NSString).appendingPathComponent($0)) }) { return true }
+        }
+        return false
     }
 
     /// Dotfiles and folders that hold credentials or run code at login.

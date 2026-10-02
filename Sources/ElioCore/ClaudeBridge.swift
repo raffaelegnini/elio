@@ -19,7 +19,7 @@ public actor ClaudeBridge {
         /// Silence after which a turn is considered stuck and the process is restarted.
         public var turnTimeout: TimeInterval = 120
         /// Hard cap per turn: tool heartbeats keep `lastActivity` fresh, so silence alone isn't enough.
-        public var maxTurnDuration: TimeInterval = 180
+        public var maxTurnDuration: TimeInterval = 900
         /// MCP servers (JSON) available to the session; their tools are pre-approved.
         public var mcpConfig: String?
         /// Claude in Chrome: the user's real browser (already logged in everywhere).
