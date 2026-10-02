@@ -41,7 +41,7 @@ final class WebServer: @unchecked Sendable {
             if let data { buffer.append(data) }
             if let request = HTTPRequest(buffer) {
                 Task { await self.respond(request, on: conn) }
-            } else if done || error != nil || buffer.count > 1_000_000 {
+            } else if done || error != nil || buffer.count > 9_000_000 {
                 conn.cancel()
             } else {
                 self.read(conn, buffer: buffer)
@@ -62,6 +62,27 @@ final class WebServer: @unchecked Sendable {
             } catch {
                 send(conn, 502, "text/plain", Data("\(error)".utf8))
             }
+        case ("GET", "/push/key"):
+            send(conn, 200, "application/json", Data("{\"key\":\"\(WebPush.shared.publicKey)\"}".utf8))
+        case ("POST", "/push/subscribe"):
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            guard let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
+                  let endpoint = obj["endpoint"] as? String, endpoint.hasPrefix("https://"),
+                  let keys = obj["keys"] as? [String: Any], let p = keys["p256dh"] as? String, let a = keys["auth"] as? String else {
+                return send(conn, 400, "text/plain", Data("bad request".utf8))
+            }
+            WebPush.shared.add(.init(endpoint: endpoint, p256dh: p, auth: a))
+            WebPush.shared.send(title: "Elio", body: "Notifiche attive su questo telefono.", tag: "welcome")
+            send(conn, 200, "application/json", Data("{\"ok\":true}".utf8))
+        case ("POST", "/stt"):
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            do {
+                let text = try await stt(req.body, mime: req.headers["content-type"] ?? "audio/mp4")
+                let json = try JSONSerialization.data(withJSONObject: ["text": text])
+                send(conn, 200, "application/json", json)
+            } catch {
+                send(conn, 502, "text/plain", Data("\(error)".utf8))
+            }
         case ("GET", _):
             var path = req.path.split(separator: "?").first.map(String.init) ?? "/"
             if path == "/" { path = "/index.html" }
@@ -75,6 +96,35 @@ final class WebServer: @unchecked Sendable {
         default:
             send(conn, 405, "text/plain", Data("method not allowed".utf8))
         }
+    }
+
+    /// Phone voice → text with ElevenLabs Scribe (the key stays on the Mac).
+    private func stt(_ audio: Data, mime: String) async throws -> String {
+        guard let key = KeychainItem.read(service: "elio-elevenlabs") else { throw ToolError("ElevenLabs key missing") }
+        guard !audio.isEmpty, audio.count < 8_000_000 else { throw ToolError("audio vuoto o troppo lungo") }
+        let boundary = "elio-\(UUID().uuidString)"
+        let ext = mime.contains("webm") ? "webm" : mime.contains("wav") ? "wav" : "m4a"
+        var body = Data()
+        func field(_ name: String, _ value: String) {
+            body += Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8)
+        }
+        field("model_id", "scribe_v1")
+        field("language_code", "ita")
+        field("tag_audio_events", "false")
+        body += Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"voice.\(ext)\"\r\nContent-Type: \(mime)\r\n\r\n".utf8)
+        body += audio
+        body += Data("\r\n--\(boundary)--\r\n".utf8)
+        var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/speech-to-text")!)
+        req.httpMethod = "POST"
+        req.setValue(key, forHTTPHeaderField: "xi-api-key")
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ToolError("ElevenLabs STT \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+        }
+        return (obj["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func tts(_ text: String) async throws -> Data {

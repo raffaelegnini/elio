@@ -3,73 +3,87 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#05090f">
+<meta name="theme-color" content="#0E0E10">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Elio">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="logo.svg">
 <title>Elio</title>
 <style>
   :root {
-    --bg: #05090f; --panel: rgba(13, 23, 33, .72); --line: rgba(89, 217, 255, .16);
-    --text: #dbf2ff; --dim: #85a8bf; --cyan: #4fdbff; --warn: #ff8a5c; --danger: #ff6b61; --ok: #4ade80;
-    --tint: var(--cyan);
+    --bg: #0E0E10; --panel: rgba(26, 26, 29, .78); --line: rgba(255, 211, 96, .16);
+    --text: #FBF8F1; --dim: #9E9A8E; --accent: #FFD360; --warn: #FF9F43; --danger: #FF6B61; --ok: #4ade80;
+    --tint: var(--accent);
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
     font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; overflow: hidden; }
   body::before { content: ""; position: fixed; inset: 0; pointer-events: none;
-    background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
-    background-size: 28px 28px; opacity: .22; }
+    background: radial-gradient(120% 60% at 50% 0%, rgba(255,211,96,.10), transparent 60%),
+                linear-gradient(var(--line) 1px, transparent 1px) 0 0/28px 28px,
+                linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/28px 28px; opacity: .35; }
   #app { position: relative; height: 100%; display: flex; flex-direction: column;
-    padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
-  header { display: flex; align-items: center; gap: 10px; padding: 12px 0 6px; }
-  .brand { font: 700 14px var(--mono); letter-spacing: .35em; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 8px currentColor; }
+    padding: calc(env(safe-area-inset-top) + 4px) 16px calc(env(safe-area-inset-bottom) + 6px); }
+  header { display: flex; align-items: center; gap: 10px; padding: 10px 0 4px; }
+  header img { height: 22px; }
+  .brand { font: 700 13px var(--mono); letter-spacing: .38em; }
+  .sub { font: 10px var(--mono); color: var(--dim); letter-spacing: .1em; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 8px currentColor; }
   .dot.on { background: var(--ok); }
   header .spacer { flex: 1; }
-  .icon-btn { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: transparent;
-    color: var(--cyan); display: grid; place-items: center; font-size: 15px; }
-  #orbWrap { position: relative; height: 34vh; min-height: 200px; display: grid; place-items: center; }
+  .icon-btn { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: rgba(255,255,255,.03);
+    color: var(--accent); display: grid; place-items: center; font-size: 15px; }
+  .icon-btn.hot { background: var(--accent); color: #000; border-color: transparent; }
+  #orbWrap { position: relative; height: 30vh; min-height: 180px; display: grid; place-items: center; }
   #orb { width: 100%; height: 100%; }
-  #state { position: absolute; bottom: 4px; font: 600 11px var(--mono); letter-spacing: .3em; color: var(--tint); text-transform: uppercase; }
+  #state { position: absolute; bottom: 2px; font: 600 10.5px var(--mono); letter-spacing: .32em; color: var(--tint); text-transform: uppercase; }
   #partial { min-height: 22px; text-align: center; color: var(--dim); font-size: 14px; padding: 0 8px; }
   #feed { flex: 1; overflow-y: auto; padding: 8px 2px 12px; display: flex; flex-direction: column; gap: 12px;
     mask-image: linear-gradient(transparent, #000 24px); -webkit-mask-image: linear-gradient(transparent, #000 24px); }
   .msg .who { font: 600 10px var(--mono); letter-spacing: .18em; color: var(--dim); margin-bottom: 2px; }
-  .msg.elio .who { color: var(--cyan); }
+  .msg.elio .who { color: var(--accent); }
   .msg.event .who { color: var(--warn); }
   .msg .text { white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; max-width: 85%; text-align: right; }
   .msg.user .text { color: var(--dim); }
   .meta { font: 10px var(--mono); color: var(--dim); opacity: .7; margin-left: 6px; letter-spacing: 0; }
-  .card { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 12px;
+  .card { border: 1px solid var(--line); background: var(--panel); border-radius: 16px; padding: 12px;
     backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
-  .confirm { border-color: rgba(79, 219, 255, .5); }
+  .confirm { border-color: rgba(255, 211, 96, .45); }
   .confirm.danger { border-color: rgba(255, 107, 97, .6); background: rgba(255, 107, 97, .08); }
-  .confirm .label { font: 600 10px var(--mono); letter-spacing: .2em; color: var(--cyan); }
+  .confirm .label { font: 600 10px var(--mono); letter-spacing: .2em; color: var(--accent); }
   .confirm.danger .label { color: var(--danger); }
   .confirm pre { white-space: pre-wrap; word-break: break-word; font: 12px var(--mono); background: rgba(0,0,0,.35);
     border-radius: 8px; padding: 8px; margin: 8px 0; max-height: 140px; overflow: auto; }
   .row { display: flex; gap: 10px; justify-content: space-between; }
-  button.act { flex: 1; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: transparent;
+  button.act { flex: 1; padding: 11px; border-radius: 12px; border: 1px solid var(--line); background: transparent;
     color: var(--dim); font: 600 14px -apple-system, system-ui; }
-  button.act.go { background: var(--cyan); color: #000; border: 0; }
-  .confirm.danger button.act.go { background: var(--danger); }
+  button.act.go { background: var(--accent); color: #000; border: 0; }
+  .confirm.danger button.act.go { background: var(--danger); color: #fff; }
   #tasks { display: flex; flex-direction: column; gap: 6px; }
   .task { display: flex; gap: 8px; align-items: center; font-size: 13px; }
-  .task .s { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); flex: none; }
+  .task .s { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); flex: none; }
   .task .s.done { background: var(--ok); box-shadow: none; } .task .s.failed { background: var(--danger); box-shadow: none; }
   .task .s.waitingConfirmation { background: var(--warn); }
   .task .step { color: var(--dim); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  form { display: flex; gap: 8px; align-items: center; padding: 10px 0 12px; }
-  #input { flex: 1; min-width: 0; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line);
+  #dock { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 6px; }
+  #mic { width: 76px; height: 76px; border-radius: 50%; border: 0; background: var(--accent); color: #000; font-size: 28px;
+    box-shadow: 0 0 0 0 rgba(255,211,96,.5), 0 8px 30px rgba(255,211,96,.35); touch-action: none; user-select: none;
+    -webkit-user-select: none; transition: transform .15s, background .2s; }
+  #mic.rec { background: var(--danger); color: #fff; transform: scale(1.08); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,107,97,.55); } 100% { box-shadow: 0 0 0 22px rgba(255,107,97,0); } }
+  #hint { font: 11px var(--mono); color: var(--dim); letter-spacing: .08em; }
+  form { display: flex; gap: 8px; align-items: center; width: 100%; }
+  #input { flex: 1; min-width: 0; padding: 11px 14px; border-radius: 14px; border: 1px solid var(--line);
     background: rgba(255,255,255,.05); color: var(--text); font-size: 16px; outline: none; }
-  #input:focus { border-color: rgba(79, 219, 255, .5); }
-  #mic { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--cyan); color: #000; font-size: 20px; flex: none;
-    box-shadow: 0 0 18px rgba(79,219,255,.45); touch-action: none; user-select: none; -webkit-user-select: none; }
-  #mic.rec { background: var(--danger); box-shadow: 0 0 24px rgba(255,107,97,.7); }
+  #input:focus { border-color: rgba(255, 211, 96, .55); }
+  #sendBtn { width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: transparent; color: var(--accent); font-size: 17px; }
+  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 120px); padding: 12px 14px; border-radius: 14px;
+    background: var(--panel); border: 1px solid var(--line); font-size: 13px; display: none; z-index: 5; backdrop-filter: blur(16px); }
+  #toast.show { display: block; }
   #pair { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 32px; background: var(--bg); z-index: 9; }
   #pair.show { display: grid; }
   #pair h1 { font: 700 18px var(--mono); letter-spacing: .3em; }
@@ -79,22 +93,30 @@
 <body>
 <div id="app">
   <header>
-    <span id="conn" class="dot"></span>
-    <span class="brand">E.L.I.O.</span>
+    <img src="logo.svg" alt="">
+    <div><div class="brand">E.L.I.O.</div><div class="sub">DNA Factory</div></div>
     <span class="spacer"></span>
+    <span id="conn" class="dot"></span>
+    <button id="bell" class="icon-btn" title="Notifiche">🔔</button>
     <button id="voiceToggle" class="icon-btn" title="Voce">🔊</button>
   </header>
   <div id="orbWrap"><canvas id="orb"></canvas><div id="state">connessione…</div></div>
   <div id="partial"></div>
   <div id="feed"><div id="tasks"></div></div>
-  <form id="form" autocomplete="off">
-    <input id="input" placeholder="Scrivi a Elio…" enterkeyhint="send">
-    <button id="mic" type="button" aria-label="Tieni premuto per parlare">🎙</button>
-  </form>
+  <div id="dock">
+    <button id="mic" type="button" aria-label="Parla con Elio">🎙</button>
+    <div id="hint">TIENI PREMUTO O TOCCA PER PARLARE</div>
+    <form id="form" autocomplete="off">
+      <input id="input" placeholder="Scrivi a Elio…" enterkeyhint="send">
+      <button id="sendBtn" type="submit" aria-label="Invia">➤</button>
+    </form>
+  </div>
 </div>
+<div id="toast"></div>
 <div id="pair"><div>
+  <img src="logo.svg" alt="" style="height:48px;margin-bottom:14px">
   <h1>E.L.I.O.</h1>
-  <p>Questo dispositivo non è ancora associato.<br>Sul Mac apri il menu di Elio → <b>Telefono</b> e apri il link di accoppiamento su questo telefono.</p>
+  <p>Questo telefono non è ancora associato.<br>Sul Mac: Impostazioni di Elio → <b>Telefono</b> → "Pubblica e copia link", poi apri il link qui.</p>
 </div></div>
 
 <script>
@@ -116,11 +138,11 @@ let ws = null, state = "connessione…", level = 0, current = null;
 let voiceOn = true;
 try { voiceOn = localStorage.getItem("elio.voice") !== "off"; } catch {}
 $("voiceToggle").textContent = voiceOn ? "🔊" : "🔇";
-const tints = { listening: "#4fc7ff", thinking: "#9e85ff", speaking: "#40f2d9", hearing: "#8cf2ff", offline: "#6b7280" };
+const tints = { listening: "#FFD360", thinking: "#FF9F43", speaking: "#F5C13F", hearing: "#FFE38A", offline: "#4A4843" };
 function setState(s, label) {
   state = s;
   $("state").textContent = label || s;
-  document.documentElement.style.setProperty("--tint", tints[s] || "#4fdbff");
+  document.documentElement.style.setProperty("--tint", tints[s] || "#FFD360");
 }
 
 // ---------- Socket ----------
@@ -314,43 +336,94 @@ $("voiceToggle").onclick = () => {
   if (!voiceOn) audio.pause();
 };
 
-// ---------- Voice in (hold the mic) ----------
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, heard = "";
-function startRec(e) {
-  e.preventDefault();
+// ---------- Voice in: record here, transcribe on the Mac ----------
+// Safari's dictation isn't reliable in home-screen apps: the audio goes to the Mac (ElevenLabs Scribe).
+let recorder = null, chunks = [], stream = null, analyser = null, downAt = 0, held = false;
+function toast(text, ms = 3500) { const t = $("toast"); t.textContent = text; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), ms); }
+async function startRec() {
   unlockAudio();
   audio.pause();
-  if (!SR) { $("partial").textContent = "Dettatura non supportata: usa la tastiera."; return; }
-  heard = "";
-  rec = new SR();
-  rec.lang = "it-IT"; rec.interimResults = true; rec.continuous = true;
-  rec.onresult = ev => {
-    let text = "";
-    for (const r of ev.results) text += r[0].transcript;
-    heard = text;
-    $("partial").textContent = text;
-    level = Math.min(1, level + 0.3);
-  };
-  rec.onerror = () => {};
-  rec.start();
+  try {
+    stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch { toast("Serve il permesso del microfono: Impostazioni → Safari/Elio → Microfono."); return; }
+  const type = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+  chunks = [];
+  recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  recorder.onstop = upload;
+  recorder.start();
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = ac.createAnalyser(); analyser.fftSize = 256;
+    ac.createMediaStreamSource(stream).connect(analyser);
+  } catch {}
   $("mic").classList.add("rec");
+  $("hint").textContent = "TI ASCOLTO… RILASCIA O TOCCA PER INVIARE";
   setState("hearing", "ti ascolto");
 }
-function stopRec(e) {
-  if (e) e.preventDefault();
-  if (!rec) return;
-  rec.stop();
-  rec = null;
+function stopRec() {
+  if (!recorder || recorder.state === "inactive") return;
+  recorder.stop();
   $("mic").classList.remove("rec");
-  setTimeout(() => { $("partial").textContent = ""; if (heard) say(heard); else setState("listening", "pronto"); }, 350);
+  $("hint").textContent = "TIENI PREMUTO O TOCCA PER PARLARE";
+  analyser = null;
 }
-$("mic").addEventListener("pointerdown", startRec);
-$("mic").addEventListener("pointerup", stopRec);
-$("mic").addEventListener("pointercancel", stopRec);
-$("mic").addEventListener("pointerleave", e => { if (rec) stopRec(e); });
+async function upload() {
+  const blob = new Blob(chunks, { type: recorder.mimeType || "audio/mp4" });
+  if (blob.size < 2000) { setState("listening", "pronto"); return; }
+  setState("thinking", "trascrivo");
+  $("partial").textContent = "…";
+  try {
+    const r = await fetch("stt", { method: "POST", headers: { "Content-Type": blob.type, "X-Elio-Token": token }, body: blob });
+    if (!r.ok) throw new Error(r.status);
+    const { text } = await r.json();
+    $("partial").textContent = "";
+    if (text) say(text); else { setState("listening", "pronto"); toast("Non ho sentito nulla."); }
+  } catch (e) { $("partial").textContent = ""; setState("listening", "pronto"); toast("Non sono riuscito a trascrivere: riprova."); }
+}
+// Hold to talk, or tap to start and tap again to send.
+$("mic").addEventListener("pointerdown", e => {
+  e.preventDefault();
+  if (recorder && recorder.state === "recording") { stopRec(); return; }
+  downAt = Date.now(); held = true; startRec();
+});
+$("mic").addEventListener("pointerup", e => {
+  e.preventDefault();
+  if (held && Date.now() - downAt > 450) stopRec();   // it was a hold: release sends
+  held = false;
+});
+$("mic").addEventListener("pointercancel", () => { held = false; stopRec(); });
 
 $("form").onsubmit = e => { e.preventDefault(); say($("input").value); $("input").value = ""; $("input").blur(); };
+
+// ---------- Notifications (Web Push) ----------
+function b64ToBytes(s) { s = s.replace(/-/g, "+").replace(/_/g, "/"); s += "=".repeat((4 - s.length % 4) % 4);
+  return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
+async function refreshBell() {
+  const ok = "Notification" in window && Notification.permission === "granted";
+  $("bell").classList.toggle("hot", !ok);
+  $("bell").style.display = ok ? "none" : "";
+}
+$("bell").onclick = async () => {
+  const standalone = navigator.standalone || matchMedia("(display-mode: standalone)").matches;
+  if (!("PushManager" in window) || !("Notification" in window)) {
+    toast(standalone ? "Questo iPhone non supporta le notifiche web (serve iOS 16.4 o successivo)."
+                     : "Prima aggiungi Elio alla schermata Home (Condividi → Aggiungi a Home) e aprilo da lì.", 6000);
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { toast("Notifiche non consentite."); return; }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await (await fetch("push/key")).json();
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+    const r = await fetch("push/subscribe", { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token },
+                                               body: JSON.stringify(sub.toJSON()) });
+    toast(r.ok ? "Notifiche attive: arriveranno quando non sei al Mac." : "Non sono riuscito ad attivarle.");
+  } catch (e) { toast("Non sono riuscito ad attivarle: " + e.message); }
+  refreshBell();
+};
+refreshBell();
 
 // ---------- Orb ----------
 const cv = $("orb"), cx = cv.getContext("2d");
@@ -363,10 +436,12 @@ function frame(t) {
   if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
   cx.setTransform(dpr, 0, 0, dpr, 0, 0);
   cx.clearRect(0, 0, w, h);
-  const tint = getComputedStyle(document.documentElement).getPropertyValue("--tint").trim() || "#4fdbff";
+  const tint = getComputedStyle(document.documentElement).getPropertyValue("--tint").trim() || "#FFD360";
   const R = Math.min(w, h) / 2.1, c = { x: w / 2, y: h / 2 }, time = t / 1000;
   const energy = { thinking: 1, speaking: .8, hearing: .75, offline: .15 }[state] ?? .35;
   level *= 0.93;
+  if (analyser) { const d = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(d);
+    level = Math.max(level, Math.min(1, d.reduce((a, b) => a + b, 0) / d.length / 60)); }
   const g = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R);
   g.addColorStop(0, tint + "44"); g.addColorStop(1, "transparent");
   cx.fillStyle = g; cx.beginPath(); cx.arc(c.x, c.y, R, 0, 7); cx.fill();

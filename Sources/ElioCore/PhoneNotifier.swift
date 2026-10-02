@@ -41,6 +41,9 @@ public final class PhoneNotifier: @unchecked Sendable {
         case "brief": "Briefing"
         default: "Elio"
         }
+        // The phone app itself (Web Push); ntfy stays as a fallback channel.
+        WebPush.shared.send(title: title, body: String(SecretFilter.redact(text).prefix(400)), tag: kind)
+        guard !topic.isEmpty else { return }
         var req = URLRequest(url: URL(string: "https://ntfy.sh/\(topic)")!)
         req.httpMethod = "POST"
         req.setValue(title, forHTTPHeaderField: "Title")
