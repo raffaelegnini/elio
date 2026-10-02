@@ -77,6 +77,41 @@ public enum FastPath {
         #if canImport(FoundationModels)
         guard isAvailable else { return }
         LanguageModelSession(instructions: instructions).prewarm()
+        LanguageModelSession(instructions: ackInstructions).prewarm()
+        #endif
+    }
+
+    static let ackInstructions = """
+    Sei l'assistente vocale di un professionista italiano, che chiami "Signore". Ricevi la sua richiesta e scrivi SOLO \
+    la frase di riscontro che diresti subito, prima di metterti al lavoro: specifica su cosa farai, breve (al massimo \
+    12 parole), all'indicativo presente, cortese. Esempi: "Certo, Signore, controllo l'agenda di domani." \
+    "Subito, Signore, apro il progetto Personal CRM e faccio il pull." "Certo, Signore, cerco la mail di Rossella." \
+    Parla in prima persona di cosa fai tu (controllo, apro, verifico, cerco, preparo), riformulando: non copiare le \
+    parole della richiesta e non usare imperativi come "dimmi" o "fammi". \
+    Non rispondere alla domanda, non inventare dati, nomi o numeri che non sono nella richiesta. \
+    Se è un saluto, una chiacchiera o una domanda di cultura generale, scrivi solo: -
+    """
+
+    /// The specific acknowledgement said while Claude works ("Certo, Signore, controllo l'agenda di domani."),
+    /// from the on-device model. Nil when not useful (small talk), unavailable or too slow.
+    public static func acknowledgement(for text: String, addressAs: String) async -> String? {
+        #if canImport(FoundationModels)
+        guard isAvailable, text.split(separator: " ").count >= 3 else { return nil }
+        return try? await withTimeout(2.0) {
+            let session = LanguageModelSession(instructions: ackInstructions.replacingOccurrences(of: "Signore", with: addressAs))
+            let r = try await session.respond(to: text, options: GenerationOptions(sampling: .greedy, maximumResponseTokens: 40))
+            var s = r.content.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"«»")))
+            guard s.count > 8, s != "-", s.split(separator: " ").count <= 16, !s.contains("\n") else { return nil }
+            // Only a real acknowledgement ("Certo, Signore, …"), never an answer it made up.
+            guard s.range(of: #"^(Certo|Subito|Va bene|D'accordo|Senz'altro|Volentieri|Perfetto|Certamente)\b"#,
+                          options: .regularExpression) != nil, s.contains(addressAs) else { return nil }
+            guard s.lowercased().range(of: #"\b(dimmi|fammi|dammi|mi dici|mostrami|spiegami|trovami)\b"#,
+                                       options: .regularExpression) == nil else { return nil }
+            if !(s.hasSuffix(".") || s.hasSuffix("!")) { s += "." }
+            return s
+        } ?? nil
+        #else
+        return nil
         #endif
     }
 

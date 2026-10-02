@@ -198,9 +198,26 @@ public actor Brain {
             return
         }
 
+        // While Claude starts (in parallel, right away), the on-device model writes a specific
+        // acknowledgement ("Certo, Signore, controllo l'agenda di domani."). It goes out first in the
+        // same reply stream, so the app speaks it on the already-open ElevenLabs socket and Claude's
+        // answer follows seamlessly. Claude's first words wait at most 0.7 s for it.
+        let gate = AckGate(id: id, out: out)
+        let ackOn = config.appleFastPath && FastPath.isAvailable
+        if ackOn {
+            let addressAs = config.addressAs
+            Task {
+                let ack = await FastPath.acknowledgement(for: text, addressAs: addressAs)
+                if let ack { log("ack in \(elapsed()) ms: \(ack)") }
+                gate.resolve(ack)
+            }
+        } else {
+            gate.resolve(nil)
+        }
+
         var firstDeltaMs: Int?
         do {
-            for try await event in await claude.ask(Self.withContext(text)) {
+            for try await event in await claude.ask(Self.withContext(text, ackGiven: ackOn)) {
                 switch event {
                 case .tool(let name, let toolId, let started):
                     broadcast(ServerMessage(type: .event, id: toolId, text: name, kind: "tool",
@@ -208,8 +225,9 @@ public actor Brain {
                     if !started { await memory.recordToolCall(name: name, ok: true, ms: 0) }
                 case .delta(let chunk):
                     if firstDeltaMs == nil { firstDeltaMs = elapsed() }
-                    out.yield(ServerMessage(type: .delta, id: id, text: chunk, route: .claude))
+                    gate.delta(chunk)
                 case .done(let full, _):
+                    gate.flush()
                     await memory.log(role: "assistant", text: full, route: Route.claude.rawValue)
                     out.yield(ServerMessage(type: .done, id: id, text: full, route: .claude, latencyMs: firstDeltaMs ?? elapsed()))
                 }
@@ -276,12 +294,13 @@ public actor Brain {
 
     /// Per-turn context goes in the message (not the system prompt) so the warm
     /// process never needs a restart and the system prompt stays cacheable.
-    static func withContext(_ text: String) -> String {
+    static func withContext(_ text: String, ackGiven: Bool = false) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "it_IT")
         f.dateFormat = "EEEE d MMMM yyyy, HH:mm"
         // A short reminder every turn keeps replies spoken-length (the system prompt alone wasn't enough).
-        return "[contesto: \(f.string(from: Date())). Rispondi in massimo due frasi, salvo richiesta di dettagli.]\n\(text)"
+        let ack = ackGiven ? " La frase di riscontro l'ha già detta l'app: niente \"Certo, Signore…\", entra subito nel merito." : ""
+        return "[contesto: \(f.string(from: Date())). Rispondi in massimo due frasi, salvo richiesta di dettagli.\(ack)]\n\(text)"
     }
 
     static func systemPrompt(_ config: ElioConfig) -> String {
@@ -418,4 +437,45 @@ final class EventHub: @unchecked Sendable {
     func send(_ message: ServerMessage) {
         for sink in lock.withLock({ Array(sinks.values) }) { sink(message) }
     }
+}
+
+/// Orders the reply stream: the on-device acknowledgement first, then Claude's text. Claude's deltas
+/// are held until the acknowledgement is ready, for at most 0.7 s after Claude's first word.
+final class AckGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let id: String
+    private let out: AsyncStream<ServerMessage>.Continuation
+    private var resolved = false
+    private var held: [String] = []
+    private var deadlineSet = false
+
+    init(id: String, out: AsyncStream<ServerMessage>.Continuation) { self.id = id; self.out = out }
+
+    func resolve(_ ack: String?) {
+        let toSend: [String] = lock.withLock {
+            guard !resolved else { return [] }
+            resolved = true
+            let pending = held
+            held = []
+            // Claude already spoke for a while without it: the acknowledgement would come too late.
+            if let ack, pending.joined().count < 40 { return [ack + " "] + pending }
+            return pending
+        }
+        toSend.forEach { out.yield(ServerMessage(type: .delta, id: id, text: $0, route: .claude)) }
+    }
+
+    func delta(_ chunk: String) {
+        let pass: Bool = lock.withLock {
+            if resolved { return true }
+            held.append(chunk)
+            if !deadlineSet {
+                deadlineSet = true
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.7) { [weak self] in self?.resolve(nil) }
+            }
+            return false
+        }
+        if pass { out.yield(ServerMessage(type: .delta, id: id, text: chunk, route: .claude)) }
+    }
+
+    func flush() { resolve(nil) }
 }
