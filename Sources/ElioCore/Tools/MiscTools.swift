@@ -59,8 +59,9 @@ public enum ProjectTools {
         name: "list_projects",
         description: "Elenca i repository git locali dell'utente con il loro percorso. Usalo per trovare il progetto giusto prima di avviare un task o mostrare un diff."
     ) { _, ctx in
-        let items = projects(roots: ctx.config.projectRoots)
-        return items.isEmpty ? "Nessun repository trovato." : items.map { "- \($0.name): \($0.path)" }.joined(separator: "\n")
+        let repos = ProjectTree.scan(roots: ctx.config.projectRoots).flatMap(\.repos)
+        return repos.isEmpty ? "Nessun repository trovato."
+            : repos.map { "- \($0.name)\($0.stack.map { " [\($0)]" } ?? ""): \($0.path)" }.joined(separator: "\n")
     }
 
     public static func defaultBase(repo: String) -> String {

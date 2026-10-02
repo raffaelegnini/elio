@@ -126,6 +126,8 @@ public enum ToolRegistry {
         DesktopTools.find,
         DesktopTools.clipboard,
         DesktopTools.note,
+        ProjectTreeTools.tree,
+        ProjectTreeTools.info,
     ]
 
     public static func listingJSON() -> String {

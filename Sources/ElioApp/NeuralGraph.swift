@@ -151,6 +151,9 @@ struct NeuralGraphView: View {
     @State private var scaleStart: CGFloat = 1
     @State private var dragging: String?
     @State private var selected: String?
+    /// Neuron under the pointer: highlighted, with its details shown next to it.
+    @State private var hovered: String?
+    @State private var hoverStart = Date()
 
     private var active: Set<Capability> { Set(loop.activeTools.map(Capability.of)) }
 
@@ -182,9 +185,25 @@ struct NeuralGraphView: View {
                 .simultaneousGesture(MagnifyGesture()
                     .onChanged { scale = min(3, max(0.35, scaleStart * $0.magnification)) }
                     .onEnded { _ in scaleStart = scale })
+                .onContinuousHover(coordinateSpace: .local) { phase in
+                    switch phase {
+                    case .active(let p):
+                        let id = model.node(at: toWorld(p, center: center))?.id
+                        if id != hovered {
+                            hovered = id
+                            hoverStart = Date()
+                            if id != nil { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+                        }
+                    case .ended:
+                        hovered = nil
+                        NSCursor.arrow.set()
+                    }
+                }
                 .onTapGesture(coordinateSpace: .local) { p in
-                    selected = model.node(at: toWorld(p, center: center))?.id
-                    if selected == "core" { loop.activate() }
+                    // Hover shows details; a click on the core talks to Elio, elsewhere pins/unpins the card.
+                    let id = model.node(at: toWorld(p, center: center))?.id
+                    if id == "core" { loop.activate(); return }
+                    selected = selected == id ? nil : id
                 }
 
                 // The living orb sits on the core.
@@ -196,11 +215,24 @@ struct NeuralGraphView: View {
                 controls
                     .padding(.top, chrome.top).padding(.leading, chrome.leading + 6)
 
-                if let id = selected, let node = model.nodes[id] {
-                    Inspector(node: node, close: { selected = nil })
+                if let id = hovered ?? selected, id != "core", let node = model.nodes[id] {
+                    let p = CGPoint(x: center.x + node.pos.x * scale, y: center.y + node.pos.y * scale)
+                    let flip = p.x + 320 > geo.size.width - chrome.trailing
+                    Inspector(node: node, close: { selected = nil; hovered = nil })
                         .frame(width: 280)
-                        .padding(.top, chrome.top + 36)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .position(x: flip ? p.x - 170 : p.x + 170, y: min(max(p.y, chrome.top + 80), geo.size.height - chrome.bottom - 40))
+                        .allowsHitTesting(selected == id)
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        .animation(.easeOut(duration: 0.15), value: id)
+                } else if hovered == "core" {
+                    Text("Clic per parlare con \(Brand.shared.name)")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Capsule().fill(Theme.panel))
+                        .overlay(Capsule().strokeBorder(Theme.accent.opacity(0.4)))
+                        .position(x: center.x, y: center.y + 78 * scale)
+                        .allowsHitTesting(false)
                 }
             }
             .clipped()
@@ -230,7 +262,9 @@ struct NeuralGraphView: View {
 
         for e in model.edges {
             guard let a = model.nodes[e.a], let b = model.nodes[e.b] else { continue }
+            // Synapses of the hovered neuron light up too.
             let on = (a.capability.map(active.contains) ?? false) || (b.capability.map(active.contains) ?? false)
+                || (hovered != nil && (e.a == hovered || e.b == hovered))
             let pa = screen(a.pos), pb = screen(b.pos)
             var path = Path()
             path.move(to: pa)
@@ -273,15 +307,18 @@ struct NeuralGraphView: View {
             }
             let on = node.capability.map(active.contains) ?? false
             let fresh = Date().timeIntervalSince(node.born) < 3
-            let isSelected = node.id == selected
-            let r = node.radius * max(scale, 0.6) * (on && node.kind == .capability ? 1.15 + 0.08 * sin(t * 8) : 1)
+            let isHovered = node.id == hovered
+            let isSelected = node.id == selected || isHovered
+            // Hover: the neuron swells smoothly and glows.
+            let grow = isHovered ? 1 + 0.3 * min(1, Date().timeIntervalSince(hoverStart) / 0.15) : 1
+            let r = node.radius * max(scale, 0.6) * grow * (on && node.kind == .capability ? 1.15 + 0.08 * sin(t * 8) : 1)
             let rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
 
             // Glow.
             if on || fresh || isSelected || node.kind == .capability {
-                let g = r * (on || fresh ? 3.2 : 2.2)
+                let g = r * (on || fresh || isHovered ? 3.2 : 2.2)
                 ctx.fill(Path(ellipseIn: CGRect(x: p.x - g, y: p.y - g, width: g * 2, height: g * 2)),
-                         with: .radialGradient(Gradient(colors: [tint.opacity(on || fresh ? 0.45 : 0.12), .clear]),
+                         with: .radialGradient(Gradient(colors: [tint.opacity(on || fresh ? 0.45 : isHovered ? 0.35 : 0.12), .clear]),
                                                center: p, startRadius: 0, endRadius: g))
             }
             ctx.fill(Path(ellipseIn: rect), with: .color(node.kind == .leaf ? tint.opacity(on ? 1 : 0.75) : Theme.bg))
@@ -399,7 +436,7 @@ struct NeuralGraphView: View {
         if !pErr {
             model.setLeaves(.codice, lines(p).map { line in
                 let body = line.hasPrefix("- ") ? String(line.dropFirst(2)) : line
-                let name = body.components(separatedBy: ":").first ?? body
+                let name = (body.components(separatedBy: ":").first ?? body).components(separatedBy: " [").first ?? body
                 return (name, name, body)
             })
         }

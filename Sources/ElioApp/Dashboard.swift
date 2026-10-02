@@ -200,6 +200,7 @@ struct DashboardView: View {
                 }
                 .frame(maxHeight: 200)
             }
+            Movable(id: "progetti", dormant: off(.codice)) { ProjectsPanel(loop: loop) }
             Spacer(minLength: 0)
         }
     }

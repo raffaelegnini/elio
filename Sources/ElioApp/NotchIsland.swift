@@ -51,6 +51,7 @@ struct IslandView: View {
     let loop: VoiceLoop
     let openDashboard: () -> Void
     let openSettings: () -> Void
+    @State private var hover = false
 
     private var waiting: Bool { !loop.confirmations.isEmpty || !loop.questions.isEmpty }
     private var busy: Bool { [.hearing, .thinking, .speaking].contains(loop.state) || waiting || loop.routineMode }
@@ -84,10 +85,10 @@ struct IslandView: View {
                 Circle()
                     .fill(RadialGradient(colors: [color.opacity(0.95), color.opacity(0.25)], center: .center,
                                          startRadius: 1, endRadius: 10))
-                    .scaleEffect(0.42 + 0.18 * pulse + 0.25 * voice)
+                    .scaleEffect(0.42 + 0.18 * pulse + 0.25 * voice + (hover ? 0.12 : 0))
                     .opacity(loop.connected ? 1 : 0.4)
                 Circle()
-                    .strokeBorder(color.opacity(busy ? 0.6 + 0.4 * pulse : 0.45), lineWidth: 1.5)
+                    .strokeBorder(color.opacity(hover ? 1 : busy ? 0.6 + 0.4 * pulse : 0.45), lineWidth: hover ? 2 : 1.5)
                 if loop.state == .thinking {
                     Circle().trim(from: 0, to: 0.28)
                         .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
@@ -100,7 +101,12 @@ struct IslandView: View {
                         .offset(x: 9, y: -9)
                 }
             }
-            .shadow(color: color.opacity(busy ? 0.5 * (0.5 + pulse) : 0), radius: 4)
+            .shadow(color: color.opacity(hover ? 0.9 : busy ? 0.5 * (0.5 + pulse) : 0), radius: hover ? 6 : 4)
+            .scaleEffect(hover ? 1.0 : 0.88)
+        }
+        .onHover { h in
+            withAnimation(.spring(duration: 0.25, bounce: 0.35)) { hover = h }
+            if h { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
         }
         .frame(width: NotchIsland.size, height: NotchIsland.size)
         .contentShape(Circle())
