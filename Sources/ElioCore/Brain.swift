@@ -5,7 +5,7 @@ public actor Brain {
     private let config: ElioConfig
     private let matcher = IntentMatcher()
     private let actions = LocalActions()
-    private let memory: Memory
+    public let memory: Memory
     private let claude: ClaudeBridge
     private let hub = EventHub()
     public let gate = ConfirmationGate()
@@ -44,6 +44,7 @@ public actor Brain {
         await gate.setBroadcast(send)
         await gate.setAddressAs(config.addressAs)
         await tasks.setBroadcast(send)
+        await tasks.setTaste(await memory.tasteRules())
         await scheduler.attach(tasks: tasks)
         await scheduler.setRepeatReminders(config.repeatReminders)
         await scheduler.start(broadcast: send)
@@ -406,6 +407,12 @@ public actor Brain {
         collegata e l'utente vuole far partire brani precisi: crea tu l'app su developer.spotify.com/dashboard col browser \
         (Web API, redirect URI http://127.0.0.1:8739/callback), salva il client id con spotify_setup e poi spotify_login.
         - usage_report per i token Claude usati (oggi e finestra di 5 ore).
+        - Workflow multi-agente: per lavori grossi avvia quanti agenti servono davvero (squad_start, con il coordinatore \
+        Elio che fa le veci di \(userName): risponde ai dubbi degli agenti, rivede il loro lavoro sui suoi gusti, fa \
+        correggere, aggiunge agenti con squad_add). workflow_mode cambia modalità: "silent" (stai zitto mentre lavorano, \
+        parli solo per domande, problemi e alla fine) o "talking" (racconti i progressi); se \(userName) dice "lavora in \
+        silenzio", "non disturbarmi", "stai zitto mentre lavorano" → silent; "tienimi aggiornato" → talking. \
+        workflow_report genera il report con grafici (tempi, token, costi, decisioni, correzioni); workflow_list i recenti.
         - Monitor (watch_create / watch_list / watch_control): controlli automatici configurabili. Se Raffaele vuole \
         sapere quando succede qualcosa ("avvisami se…", "ogni mattina controlla…", "quando Kuma segnala un down analizza…", \
         "tieni d'occhio questo sito/API"), crea un monitor: trigger schedule/slack/http/command/webhook, action notify o \
@@ -433,6 +440,12 @@ public actor Brain {
 
         Velocità: per persone, canali, progetti e dati delle integrazioni usa PRIMA lookup (rubrica locale, istantanea). \
         Chiama le API solo per dati che cambiano spesso (messaggi, task di oggi) o se lookup non trova.
+
+        Gusti di \(userName) ("diventare lui"): quando esprime come vuole il lavoro ("non mi piace…", "lo voglio così", \
+        "questo è AI slop", "niente…", "i commit li scrivo…") o boccia qualcosa fatto da un agente, salva subito una regola \
+        chiara e verificabile con taste_learn (con esempi bad/good se li dà), senza chiedere, e confermalo in una frase. \
+        Gli agenti ricevono questi gusti, un revisore controlla il loro lavoro e li fa correggere, e tu li usi per decidere \
+        le cose piccole al suo posto. taste_list per elencarli, taste_forget per toglierne uno.
 
         Memoria:
         - Hai una memoria a lungo termine (sotto). Quando l'utente dice "ricordati che…" o emerge un'informazione \
@@ -490,6 +503,8 @@ final class EventHub: @unchecked Sendable {
     func remove(_ id: UUID) { lock.withLock { sinks[id] = nil } }
 
     func send(_ message: ServerMessage) {
+        // Silent mode keeps workflow chatter off the speakers, for every client at once.
+        let message = Attention.shape(message)
         for sink in lock.withLock({ Array(sinks.values) }) { sink(message) }
     }
 }

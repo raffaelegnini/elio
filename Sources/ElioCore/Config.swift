@@ -49,6 +49,16 @@ public struct ElioConfig: Codable, Sendable {
     public var appleFastPath: Bool = true
     /// Projects coloured by technology (Magento, Laravel…) in the dashboard; off = accent colour.
     public var stackColors: Bool = false
+    /// Agent workflows: "talking" narrates progress, "silent" speaks only for questions, problems and the end.
+    public var workflowVoice: String = "talking"
+    /// Elio answers agents' small questions itself when the user's known preferences cover them.
+    public var delegateDecisions: Bool = true
+    /// A reviewer checks agents' work against the user's taste rules and has them fix what breaks them.
+    public var tasteReview: Bool = true
+    /// Model for taste reviews and delegated decisions.
+    public var reviewModel: String = "sonnet"
+    /// Most agents a squad may run (coordinator excluded).
+    public var maxSquadAgents: Int = 8
 
     public init() {}
 
@@ -91,6 +101,11 @@ public struct ElioConfig: Codable, Sendable {
         speakerThreshold = try c.decodeIfPresent(Double.self, forKey: .speakerThreshold) ?? d.speakerThreshold
         appleFastPath = try c.decodeIfPresent(Bool.self, forKey: .appleFastPath) ?? d.appleFastPath
         stackColors = try c.decodeIfPresent(Bool.self, forKey: .stackColors) ?? d.stackColors
+        workflowVoice = try c.decodeIfPresent(String.self, forKey: .workflowVoice) ?? d.workflowVoice
+        delegateDecisions = try c.decodeIfPresent(Bool.self, forKey: .delegateDecisions) ?? d.delegateDecisions
+        tasteReview = try c.decodeIfPresent(Bool.self, forKey: .tasteReview) ?? d.tasteReview
+        reviewModel = try c.decodeIfPresent(String.self, forKey: .reviewModel) ?? d.reviewModel
+        maxSquadAgents = try c.decodeIfPresent(Int.self, forKey: .maxSquadAgents) ?? d.maxSquadAgents
     }
 
     static func defaultClaudePath() -> String {

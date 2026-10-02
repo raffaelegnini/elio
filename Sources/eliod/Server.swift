@@ -113,6 +113,10 @@ final class Server: @unchecked Sendable {
             Task { await brain.tasks.control(id, action: action) }
         case .cancelTurn:
             Task { await brain.cancelCurrentTurn() }
+        case .mode(let raw):
+            let mode = Attention.Mode(rawValue: raw) ?? .talking
+            Attention.set(mode)
+            brain.publish(ServerMessage(type: .event, text: mode.rawValue, kind: "mode"))
         case .reload:
             guard mode == .local else { return }
             log("reload requested: restarting")

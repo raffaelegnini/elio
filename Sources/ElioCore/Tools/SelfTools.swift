@@ -31,6 +31,10 @@ public enum SelfTools {
         "confirmCodeExecution": ("chiedere conferma anche per build e test", true),
         "stackColors": ("progetti colorati per tecnologia in dashboard", false),
         "appleFastPath": ("comandi semplici (musica, app, link, volume) col modello Apple sul Mac", true),
+        "delegateDecisions": ("Elio risponde da solo alle domande piccole degli agenti, in base ai gusti dell'utente", true),
+        "tasteReview": ("un revisore controlla il lavoro degli agenti sui gusti dell'utente e fa correggere", false),
+        "reviewModel": ("modello per revisioni di gusto e decisioni delegate", false),
+        "maxSquadAgents": ("numero massimo di agenti per squadra", false),
     ]
 
     static let get = ElioTool(

@@ -142,6 +142,15 @@ public enum ToolRegistry {
         NativeIntegrations.connectTool,
         NativeIntegrations.disconnectTool,
         ProjectTreeTools.info,
+        SquadTools.add,
+        TasteTools.learn,
+        TasteTools.list,
+        TasteTools.forget,
+        TasteTools.rules,
+        WorkflowTools.mode,
+        WorkflowTools.report,
+        WorkflowTools.list,
+        WorkflowTools.listJSON,
     ]
 
     public static func listingJSON() -> String {
@@ -163,7 +172,8 @@ public enum ToolRegistry {
         case "ask_user": 1560
         case "slack_clock_in", "slack_send", "integration_activate": 150   // waits for the user's confirmation
         case "slack_mentions", "slack_dms": 45
-        case "start_task", "mac_task", "squad_start", "squad_send": 60
+        case "start_task", "mac_task", "squad_start", "squad_send", "squad_add": 60
+        case "workflow_report", "workflow_list_json": 45
         case "spotify_login", "integration_connect": 180
         case "mail_send": 200
         case "watch_create": 200

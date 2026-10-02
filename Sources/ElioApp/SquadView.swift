@@ -64,6 +64,10 @@ struct SquadView: View {
                 } label: { Image(systemName: "chevron.up.chevron.down") }
                 .menuStyle(.borderlessButton).fixedSize()
             }
+            if let s = squad {
+                Button("Report") { Task { _ = await loop.callTool("workflow_report", ["id": s.id]) } }
+                    .buttonStyle(HUDButton(color: Theme.accent))
+            }
             if let s = squad, s.endedAt == nil {
                 Button("Ferma squadra") { for m in members(s) where m.isActive { loop.controlTask(m.id, "stop") } }
                     .buttonStyle(HUDButton(color: Color(hex: "#FF6B61")))

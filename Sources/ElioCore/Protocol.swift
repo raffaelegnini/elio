@@ -18,6 +18,8 @@ public enum ClientMessage: Codable, Sendable {
     case taskControl(id: String, action: String)
     /// Stop what Elio is doing right now in the conversation (e.g. a long browser run).
     case cancelTurn
+    /// Talking / silent mode while agents work (from the phone too).
+    case mode(String)
 
     private enum CodingKeys: String, CodingKey { case type, id, text, name, args, approved }
 
@@ -34,6 +36,7 @@ public enum ClientMessage: Codable, Sendable {
         case "answer": self = .answer(id: try c.decode(String.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
         case "taskControl": self = .taskControl(id: try c.decode(String.self, forKey: .id), action: try c.decode(String.self, forKey: .text))
         case "cancelTurn": self = .cancelTurn
+        case "mode": self = .mode(try c.decode(String.self, forKey: .text))
         case "confirm":
             self = .confirm(id: try c.decode(String.self, forKey: .id), approved: try c.decode(Bool.self, forKey: .approved))
         case let other:
@@ -61,6 +64,8 @@ public enum ClientMessage: Codable, Sendable {
             try c.encode("taskControl", forKey: .type); try c.encode(id, forKey: .id); try c.encode(action, forKey: .text)
         case .cancelTurn:
             try c.encode("cancelTurn", forKey: .type)
+        case .mode(let mode):
+            try c.encode("mode", forKey: .type); try c.encode(mode, forKey: .text)
         case .confirm(let id, let approved):
             try c.encode("confirm", forKey: .type); try c.encode(id, forKey: .id); try c.encode(approved, forKey: .approved)
         }
@@ -128,6 +133,12 @@ public struct TaskInfo: Codable, Sendable, Identifiable {
     public var sessionId: String?
     /// Last thing the agent said (for the dashboard).
     public var lastMessage: String?
+    /// Workflow it belongs to (its squad, or its own first task id): stable across resumed runs.
+    public var workflow: String?
+    /// Every run of this agent (a resumed agent gets a new task id each time).
+    public var runIds: [String]?
+    /// Time spent actually working, all runs together.
+    public var activeSeconds: Double?
 
     public init(id: String, title: String, project: String?, status: Status, steps: [String] = [],
                 summary: String? = nil, startedAt: Date = Date(), endedAt: Date? = nil) {
@@ -159,6 +170,8 @@ public struct SquadInfo: Codable, Sendable, Identifiable {
     public var project: String
     public var startedAt: Date
     public var endedAt: Date?
+    /// Coordinated by an Elio lead agent that answers, reviews and reports in the user's place.
+    public var hasLead: Bool?
 
     public init(id: String, goal: String, project: String, startedAt: Date = Date()) {
         self.id = id; self.goal = goal; self.project = project; self.startedAt = startedAt

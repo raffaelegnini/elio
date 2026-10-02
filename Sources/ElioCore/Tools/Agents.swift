@@ -101,8 +101,10 @@ public enum ApprovalTool {
             let title = await ctx.tasks.title(for: ctx.taskId).map { "L'agente di \"\($0)\" vorrebbe \(what)" }
                 ?? "Vorrei \(what)"
             await ctx.tasks.setStatus(ctx.taskId, .waitingConfirmation)
+            await ctx.tasks.logEvent(taskId: ctx.taskId, .confirm, text: title, data: ["detail": String(detail.prefix(500)), "risk": risk.rawValue])
             allow = await ctx.gate.request(ConfirmRequest(id: UUID().uuidString, title: title, detail: detail,
                                                           risk: risk, taskId: ctx.taskId))
+            await ctx.tasks.logEvent(taskId: ctx.taskId, .confirmResult, text: allow ? "Confermato" : "Negato", actor: "utente")
             await ctx.tasks.setStatus(ctx.taskId, .running)
         }
         let response: [String: Any] = allow
@@ -254,6 +256,7 @@ public actor TaskRunner {
         var info: TaskInfo
         let cwd: String
         let process: Process
+        let runStart = Date()
     }
 
     private let config: ElioConfig
@@ -288,7 +291,11 @@ public actor TaskRunner {
         publish(id)
     }
 
-    public enum Kind: String, Sendable { case code, mac, squad }
+    public enum Kind: String, Sendable { case code, mac, squad, lead }
+
+    /// The user's taste rules, handed to every agent (kept here: prompts are built synchronously).
+    private var tasteRules: [TasteRule] = []
+    public func setTaste(_ rules: [TasteRule]) { tasteRules = rules }
 
     public func start(title: String, prompt: String, cwd: String, kind: Kind = .code,
                       squad: String? = nil, member: String? = nil, role: String? = nil,
@@ -298,29 +305,42 @@ public actor TaskRunner {
         p.executableURL = URL(fileURLWithPath: config.claudePath)
         p.currentDirectoryURL = URL(fileURLWithPath: cwd)
         let fullPrompt: String
+        let taste = Taste.promptBlock(tasteRules)
         if sessionId != nil {
             fullPrompt = prompt
         } else {
             switch kind {
-            case .code: fullPrompt = Self.agentPrompt(title: title, prompt: prompt, cwd: cwd)
+            case .code: fullPrompt = Self.agentPrompt(title: title, prompt: prompt, cwd: cwd) + "\n\n" + taste
             case .mac: fullPrompt = Self.macPrompt(title: title, prompt: prompt)
             case .squad: fullPrompt = Self.memberPrompt(goal: squads[squad ?? ""]?.goal ?? title, name: member ?? "agente",
                                                          role: role ?? "", task: prompt, cwd: cwd,
-                                                         team: members(of: squad ?? "").filter { $0.member != member })
+                                                         team: members(of: squad ?? "").filter { $0.member != member && $0.kind != Kind.lead.rawValue },
+                                                         hasLead: squads[squad ?? ""]?.hasLead == true) + "\n\n" + taste
+            case .lead: fullPrompt = Self.leadPrompt(squad: squads[squad ?? ""], user: config.userName,
+                                                      team: members(of: squad ?? "").filter { $0.kind != Kind.lead.rawValue },
+                                                      maxAgents: config.maxSquadAgents, taste: taste)
             }
         }
-        // Background agents never start other agents or squads (only Elio coordinates).
-        let forbidden = ["mcp__elio__start_task", "mcp__elio__mac_task", "mcp__elio__squad_start", "mcp__elio__schedule_task"]
+        // Background agents never start other agents or squads (only Elio coordinates). The lead is
+        // Elio's own proxy: it may direct and grow its squad, but it coordinates and reviews, it doesn't write code.
+        var forbidden = ["mcp__elio__start_task", "mcp__elio__mac_task", "mcp__elio__squad_start", "mcp__elio__schedule_task"]
+        var allowed = ["Read", "Grep", "Glob", "TodoWrite", "WebSearch", "WebFetch",
+                       "mcp__elio__report_progress", "mcp__elio__squad_post", "mcp__elio__squad_inbox", "mcp__elio__taste_rules"]
+        if kind == .lead {
+            forbidden += ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+            allowed += ["mcp__elio__squad_send", "mcp__elio__squad_status", "mcp__elio__squad_add"]
+        } else {
+            forbidden += ["mcp__elio__squad_send", "mcp__elio__squad_add", "mcp__elio__squad_stop"]
+        }
         p.arguments = ["-p", fullPrompt] + (sessionId.map { ["--resume", $0] } ?? []) + [
             "--output-format", "stream-json", "--verbose",
             "--model", config.agentModel,
             "--setting-sources", "project,local",
             "--strict-mcp-config", "--mcp-config", mcpConfig,
             "--permission-prompt-tool", "mcp__elio__approve",
-            "--allowedTools", "Read", "Grep", "Glob", "TodoWrite", "WebSearch", "WebFetch",
-            "mcp__elio__report_progress", "mcp__elio__squad_post", "mcp__elio__squad_inbox",
-        ] + (kind == .mac ? ["--add-dir", FileManager.default.homeDirectoryForCurrentUser.path] : [])
-          + (config.browserAutonomy ? ["--chrome"] : []) + ["--disallowedTools"] + forbidden
+            "--allowedTools"] + allowed
+          + (kind == .mac ? ["--add-dir", FileManager.default.homeDirectoryForCurrentUser.path] : [])
+          + (config.browserAutonomy && kind != .lead ? ["--chrome"] : []) + ["--disallowedTools"] + forbidden
         var env = config.claudeAccount.environment()
         env["ELIO_TASK_ID"] = id
         p.environment = env
@@ -340,13 +360,30 @@ public actor TaskRunner {
         info.squad = squad
         info.member = member
         info.role = role
-        if let sessionId, let old = finished.last(where: { $0.sessionId == sessionId }) {
-            // A resumed member keeps its identity and running totals.
+        info.workflow = squad ?? id
+        info.runIds = [id]
+        let resumed = sessionId.flatMap { sid in finished.last(where: { $0.sessionId == sid }) }
+        if let old = resumed {
+            // A resumed agent keeps its identity, its workflow and running totals.
             info.tokensIn = old.tokensIn; info.tokensOut = old.tokensOut; info.costUSD = old.costUSD
+            info.workflow = old.workflow ?? info.workflow
+            info.runIds = (old.runIds ?? [old.id]) + [id]
+            info.activeSeconds = old.activeSeconds
+            info.startedAt = old.startedAt
+            info.sessionId = old.sessionId
             finished.removeAll { $0.sessionId == sessionId }
         }
         tasks[id] = Running(info: info, cwd: cwd, process: p)
         publish(id)
+        if let wf = info.workflow {
+            if squad == nil && resumed == nil {
+                saveWorkflow(WorkflowRecord(id: wf, kind: "task", title: title, project: info.project))
+                event(wf, .started, actor: "elio", text: title, data: ["prompt": String(prompt.prefix(2000)), "kind": kind.rawValue])
+            }
+            event(wf, .agentStarted, actor: Self.actor(info),
+                  text: resumed == nil ? (role ?? title) : "riprende: \(prompt.prefix(400))")
+            saveAgent(info)
+        }
 
         let lines = LineReader.stream(out.fileHandleForReading)
         Task { [weak self] in
@@ -380,6 +417,51 @@ public actor TaskRunner {
         tasks[id]?.info.status = .cancelled
         t.process.terminate()
         return true
+    }
+
+    // MARK: Workflow log
+
+    private func saveWorkflow(_ w: WorkflowRecord) {
+        if let memory { Task { await memory.saveWorkflow(w) } }
+    }
+
+    private func saveAgent(_ info: TaskInfo) {
+        guard let memory, let wf = info.workflow else { return }
+        // One row per agent across its runs.
+        Task { await memory.saveWorkflowAgent(wf, key: info.member ?? "main", info) }
+    }
+
+    private func event(_ wf: String, _ kind: WorkflowEvent.Kind, actor: String, text: String, data: [String: Any]? = nil) {
+        let json = data.flatMap { try? JSONSerialization.data(withJSONObject: $0) }.map { String(decoding: $0, as: UTF8.self) }
+        let e = WorkflowEvent(workflow: wf, kind: kind, actor: actor, text: text, data: json)
+        if let memory { Task { await memory.addWorkflowEvent(e) } }
+        broadcast?(ServerMessage(type: .event, id: wf, text: text, kind: "workflowEvent", payload: e.jsonString()))
+    }
+
+    /// For tools acting on behalf of an agent (questions, confirmations, decisions).
+    public func logEvent(taskId: String?, _ kind: WorkflowEvent.Kind, text: String, data: [String: Any]? = nil, actor: String? = nil) {
+        guard let taskId, let info = tasks[taskId]?.info ?? finished.last(where: { $0.id == taskId }), let wf = info.workflow else { return }
+        var data = data ?? [:]
+        if data["agent"] == nil { data["agent"] = Self.actor(info) }
+        event(wf, kind, actor: actor ?? Self.actor(info), text: text, data: data)
+    }
+
+    public func workflowGoal(taskId: String?) -> String {
+        guard let taskId, let info = tasks[taskId]?.info else { return "" }
+        return info.squad.flatMap { squads[$0]?.goal } ?? info.title
+    }
+
+    /// Live and recently finished agents of a workflow.
+    public func agents(ofWorkflow wf: String) -> [TaskInfo] {
+        var byAgent: [String: TaskInfo] = [:]
+        for t in finished + tasks.values.map(\.info) where t.workflow == wf {
+            byAgent[t.member ?? "main"] = t
+        }
+        return byAgent.values.sorted { $0.startedAt < $1.startedAt }
+    }
+
+    static func actor(_ info: TaskInfo) -> String {
+        info.kind == Kind.lead.rawValue ? "elio" : (info.member ?? "agente")
     }
 
     private func handle(_ id: String, _ line: String) {
@@ -469,11 +551,19 @@ public actor TaskRunner {
     private var board: [SquadMessage] = []
     private var cursors: [String: Int] = [:]   // "squad/member" → last message id read
 
-    public func createSquad(goal: String, project: String) -> SquadInfo {
-        let s = SquadInfo(id: String(UUID().uuidString.prefix(6)).lowercased(), goal: goal, project: project)
+    public func createSquad(goal: String, project: String, lead: Bool = false) -> SquadInfo {
+        var s = SquadInfo(id: String(UUID().uuidString.prefix(6)).lowercased(), goal: goal, project: project)
+        s.hasLead = lead
         squads[s.id] = s
         broadcast?(ServerMessage(type: .event, text: goal, kind: "squad", payload: s.jsonString()))
+        saveWorkflow(WorkflowRecord(id: s.id, kind: "squad", title: goal, project: (project as NSString).lastPathComponent))
+        event(s.id, .started, actor: "elio", text: goal, data: ["project": project, "lead": lead])
         return s
+    }
+
+    /// Members working now (the lead excluded).
+    public func runningMembers(of squad: String) -> Int {
+        tasks.values.filter { $0.info.squad == squad && $0.info.kind != Kind.lead.rawValue }.count
     }
 
     public func squad(_ id: String) -> SquadInfo? { squads[id] }
@@ -493,8 +583,11 @@ public actor TaskRunner {
     public func post(squad: String, from: String, to: String, text: String) -> SquadMessage {
         let m = SquadMessage(id: (board.last?.id ?? 0) + 1, squad: squad, from: from, to: to, text: text)
         board.append(m)
-        if board.count > 500 { board.removeFirst(board.count - 500) }
+        if board.count > 2000 { board.removeFirst(board.count - 2000) }
         broadcast?(ServerMessage(type: .event, text: text, kind: "squadMessage", payload: m.jsonString()))
+        event(squad, .message, actor: from, text: text, data: ["to": to])
+        // Whatever reaches Elio wakes the lead, who answers in the user's place.
+        if from != "elio", to == "elio" || to == "tutti" { wakeLead(squad) }
         return m
     }
 
@@ -510,8 +603,45 @@ public actor TaskRunner {
     public func messages(squad: String) -> [SquadMessage] { board.filter { $0.squad == squad } }
 
     public func stopSquad(_ id: String) {
-        for t in tasks.values where t.info.squad == id { _ = cancel(t.info.id) }
         squads[id]?.endedAt = Date()
+        for t in tasks.values where t.info.squad == id { _ = cancel(t.info.id) }
+        saveWorkflow(WorkflowRecord(id: id, kind: "squad", title: squads[id]?.goal ?? "", project: nil,
+                                    startedAt: squads[id]?.startedAt ?? Date(), endedAt: Date(), status: "cancelled"))
+        event(id, .finished, actor: "utente", text: "Squadra fermata.")
+    }
+
+    // MARK: Lead (Elio's proxy inside a squad)
+
+    private var wakes: [String: Int] = [:]
+    static let maxWakes = 60
+
+    private func leadRunning(_ squad: String) -> Bool {
+        tasks.values.contains { $0.info.squad == squad && $0.info.kind == Kind.lead.rawValue }
+    }
+
+    /// Resumes the lead with what it hasn't read yet. A running lead reads its inbox by itself.
+    private func wakeLead(_ squad: String) {
+        guard squads[squad]?.hasLead == true, squads[squad]?.endedAt == nil, !leadRunning(squad),
+              wakes[squad, default: 0] < Self.maxWakes else { return }
+        let unread = inbox(squad: squad, member: "elio")
+        guard !unread.isEmpty else { return }
+        let team = members(of: squad).filter { $0.kind != Kind.lead.rawValue }
+            .map { "- \($0.member ?? "?"): \($0.status.rawValue)" }.joined(separator: "\n")
+        let text = """
+            Nuovi messaggi sulla bacheca:
+            \(unread.map { "\($0.from) → \($0.to): \($0.text)" }.joined(separator: "\n"))
+
+            Stato della squadra:
+            \(team)
+            """
+        do {
+            if try resume(squad: squad, member: "elio", message: text) {
+                wakes[squad, default: 0] += 1
+                event(squad, .leadWake, actor: "elio", text: "Elio rivede \(unread.count) messaggi", data: ["count": unread.count])
+            }
+        } catch {
+            log("lead wake failed: \(error)")
+        }
     }
 
     /// Wakes a finished member with a new message (same Claude session, same memory).
@@ -519,8 +649,8 @@ public actor TaskRunner {
         if tasks.values.contains(where: { $0.info.squad == squad && $0.info.member == member }) { return false }
         guard let old = finished.last(where: { $0.squad == squad && $0.member == member }), let sid = old.sessionId,
               let cwd = squads[squad]?.project else { return false }
-        _ = try start(title: old.title, prompt: message, cwd: cwd, kind: .squad, squad: squad, member: member,
-                      role: old.role, resume: sid)
+        _ = try start(title: old.title, prompt: message, cwd: cwd, kind: Kind(rawValue: old.kind ?? "") ?? .squad,
+                      squad: squad, member: member, role: old.role, resume: sid)
         return true
     }
 
@@ -573,38 +703,141 @@ public actor TaskRunner {
             t.info.status = code == 0 ? .done : .failed
         }
         t.info.endedAt = Date()
+        t.info.activeSeconds = (t.info.activeSeconds ?? 0) + Date().timeIntervalSince(t.runStart)
         finished.append(t.info)
-        if finished.count > 20 { finished.removeFirst() }
+        if finished.count > 80 { finished.removeFirst() }
         broadcastTask(t.info)
         let record = t.info
         if let memory { Task { await memory.recordTask(record) } }
+        saveAgent(t.info)
+        if let wf = t.info.workflow {
+            event(wf, t.info.status == .done ? .agentDone : .agentFailed, actor: Self.actor(t.info),
+                  text: Self.spokenSummary(t.info.summary),
+                  data: ["status": t.info.status.rawValue, "summary": String((t.info.summary ?? "").prefix(3000)),
+                         "costUSD": t.info.costUSD ?? 0])
+        }
 
-        if let squad = t.info.squad {
-            post(squad: squad, from: t.info.member ?? "agente", to: "elio",
-                 text: "Ho finito (\(t.info.status.rawValue)): \(String((t.info.summary ?? "").prefix(600)))")
-            if !tasks.values.contains(where: { $0.info.squad == squad }) {
-                squads[squad]?.endedAt = Date()
-                let all = members(of: squad)
-                let ok = all.filter { $0.status == .done }.count
-                let text = "La squadra ha finito \"\(squads[squad]?.goal ?? "")\": \(ok) su \(all.count) agenti hanno completato il lavoro."
-                broadcast?(ServerMessage(type: .event, text: text, lang: .it, kind: "squadDone",
-                                         payload: squads[squad]?.jsonString(), speak: true))
-            }
+        // Before anyone hears "done", the work is checked against the user's taste.
+        if needsReview(t.info) {
+            reviewing[t.info.id] = t.info.squad ?? ""
+            let info = t.info, cwd = t.cwd
+            Task { await self.review(info, cwd: cwd) }
             return
         }
-        let summary = Self.spokenSummary(t.info.summary)
-        let text: String
-        switch t.info.status {
-        case .done: text = "Ho finito \"\(t.info.title)\". \(summary)"
-        case .cancelled: text = "Task \"\(t.info.title)\" annullato."
-        default: text = "Il task \"\(t.info.title)\" non è andato a buon fine. \(summary)"
+        afterExit(t.info, cwd: t.cwd)
+    }
+
+    // MARK: Taste review
+
+    private var reviewing: [String: String] = [:]      // task id → squad ("" for single tasks)
+    private var reviewRounds: [String: Int] = [:]      // agent session → corrections asked
+    static let maxReviewRounds = 2
+
+    private func needsReview(_ info: TaskInfo) -> Bool {
+        guard config.tasteReview, memory != nil, !tasteRules.isEmpty, info.status == .done,
+              info.kind == Kind.code.rawValue || info.kind == Kind.squad.rawValue else { return false }
+        if let squad = info.squad, squads[squad]?.endedAt != nil { return false }
+        return true
+    }
+
+    private func review(_ info: TaskInfo, cwd: String) async {
+        // Only what this run wrote: earlier runs were reviewed already.
+        let edits = (await memory?.taskLogEntries(info.id) ?? []).filter { $0.kind == .edit || $0.kind == .write }
+        let goal = info.squad.flatMap { squads[$0]?.goal } ?? info.title
+        let result = edits.isEmpty ? nil
+            : await TasteReviewer.review(agent: info.member ?? info.title, goal: goal, edits: edits, rules: tasteRules, config: config)
+        reviewing[info.id] = nil
+        let wf = info.workflow ?? info.id
+        guard let result else { return afterExit(info, cwd: cwd) }
+        let key = info.sessionId ?? info.id
+        let toFix = result.violations.filter { $0.severity != "note" }
+        if let memory { let ids = result.violations.map(\.rule); Task { await memory.bumpTasteHits(ids) } }
+        for v in result.violations {
+            event(wf, .tasteViolation, actor: "revisore", text: v.problem,
+                  data: ["rule": v.rule, "file": v.file, "fix": v.fix, "severity": v.severity, "agent": Self.actor(info)])
         }
-        broadcast?(ServerMessage(type: .event, text: text, lang: .it, kind: "taskDone", payload: t.info.jsonString(), speak: true))
+        if result.violations.isEmpty {
+            event(wf, .tasteOk, actor: "revisore", text: result.verdict, data: ["agent": Self.actor(info), "costUSD": result.costUSD])
+        }
+        let rounds = reviewRounds[key, default: 0]
+        guard !toFix.isEmpty, rounds < Self.maxReviewRounds, let sid = info.sessionId,
+              info.squad.map({ squads[$0]?.endedAt == nil }) ?? true else { return afterExit(info, cwd: cwd) }
+        reviewRounds[key] = rounds + 1
+        let message = TasteReviewer.correction(toFix, rules: tasteRules, addressee: config.userName)
+        let who = info.member ?? "l'agente"
+        let what = toFix.count == 1 ? "una cosa" : "\(toFix.count) cose"
+        broadcast?(ServerMessage(type: .event, text: "Ho chiesto a \(who) di correggere \(what) che non le piacerebbero: \(toFix[0].problem)",
+                                 lang: .it, kind: "tasteFix", payload: "{\"workflow\":\"\(wf)\"}", speak: true))
+        event(wf, .tasteCorrection, actor: "elio", text: message, data: ["agent": Self.actor(info), "round": rounds + 1])
+        do {
+            if let squad = info.squad, let member = info.member {
+                post(squad: squad, from: "elio", to: member, text: message)
+                if try resume(squad: squad, member: member, message: message) { return }
+            } else {
+                _ = try start(title: info.title, prompt: message, cwd: cwd, kind: Kind(rawValue: info.kind ?? "") ?? .code, resume: sid)
+                return
+            }
+        } catch {
+            log("taste correction failed: \(error)")
+        }
+        afterExit(info, cwd: cwd)
+    }
+
+    /// What happens once an agent's run is final: tell the squad / the user.
+    private func afterExit(_ info: TaskInfo, cwd: String) {
+        if let squad = info.squad {
+            if info.kind == Kind.lead.rawValue {
+                // Messages may have arrived while it was finishing its turn.
+                wakeLead(squad)
+            } else {
+                post(squad: squad, from: info.member ?? "agente", to: "elio",
+                     text: "Ho finito (\(info.status.rawValue)): \(String((info.summary ?? "").prefix(600)))")
+                if info.status == .failed, squads[squad]?.endedAt == nil {
+                    broadcast?(ServerMessage(type: .event, text: "\(info.member ?? "Un agente") si è fermato con un errore.",
+                                             lang: .it, kind: "workflowAlert", payload: "{\"workflow\":\"\(squad)\"}", speak: true))
+                }
+            }
+            let busy = tasks.values.contains { $0.info.squad == squad } || reviewing.values.contains(squad)
+            if !busy, squads[squad]?.endedAt == nil { finishSquad(squad) }
+            return
+        }
+        if let wf = info.workflow {
+            saveWorkflow(WorkflowRecord(id: wf, kind: "task", title: info.title, project: info.project,
+                                        startedAt: info.startedAt, endedAt: Date(), status: info.status.rawValue,
+                                        summary: info.summary))
+            event(wf, .finished, actor: "elio", text: Self.spokenSummary(info.summary), data: ["status": info.status.rawValue])
+        }
+        let summary = Self.spokenSummary(info.summary)
+        let text: String
+        switch info.status {
+        case .done: text = "Ho finito \"\(info.title)\". \(summary)"
+        case .cancelled: text = "Task \"\(info.title)\" annullato."
+        default: text = "Il task \"\(info.title)\" non è andato a buon fine. \(summary)"
+        }
+        broadcast?(ServerMessage(type: .event, text: text, lang: .it, kind: "taskDone", payload: info.jsonString(), speak: true))
 
         // Changes are reviewed in the app, never pushed automatically.
-        if t.info.kind != "mac", t.info.status == .done, let payload = try? ProjectTools.diff(repo: t.cwd, base: nil, head: nil), !payload.diff.isEmpty {
+        if info.kind != "mac", info.status == .done, let payload = try? ProjectTools.diff(repo: cwd, base: nil, head: nil), !payload.diff.isEmpty {
             broadcast?(ServerMessage(type: .event, text: "Diff \(payload.title)", kind: "diff", payload: payload.jsonString()))
         }
+    }
+
+    private func finishSquad(_ squad: String) {
+        squads[squad]?.endedAt = Date()
+        let all = members(of: squad).filter { $0.kind != Kind.lead.rawValue }
+        let ok = all.filter { $0.status == .done }.count
+        let lead = finished.last { $0.squad == squad && $0.kind == Kind.lead.rawValue }
+        let leadSummary = Self.spokenSummary(lead?.summary)
+        let goal = squads[squad]?.goal ?? ""
+        let text = leadSummary.isEmpty
+            ? "La squadra ha finito \"\(goal)\": \(ok) su \(all.count) agenti hanno completato il lavoro."
+            : "La squadra ha finito \"\(goal)\". \(leadSummary)"
+        saveWorkflow(WorkflowRecord(id: squad, kind: "squad", title: goal, project: nil,
+                                    startedAt: squads[squad]?.startedAt ?? Date(), endedAt: Date(),
+                                    status: ok == 0 && !all.isEmpty ? "failed" : "done", summary: lead?.summary ?? text))
+        event(squad, .finished, actor: "elio", text: text, data: ["ok": ok, "total": all.count])
+        broadcast?(ServerMessage(type: .event, text: text, lang: .it, kind: "squadDone",
+                                 payload: squads[squad]?.jsonString(), speak: true))
     }
 
     private func publish(_ id: String) {
@@ -676,8 +909,28 @@ public enum AskTools {
         let question = args["question"] as? String ?? ""
         guard !question.isEmpty else { throw ToolError("Domanda vuota") }
         let from = await ctx.tasks.title(for: ctx.taskId).map { "L'agente di \"\($0)\"" } ?? "L'assistente"
+        await ctx.tasks.logEvent(taskId: ctx.taskId, .question, text: question)
+
+        // An agent's small question: Elio answers in the user's place when their taste covers it.
+        if ctx.taskId != nil, ctx.config.delegateDecisions {
+            var board: [SquadMessage] = []
+            if let who = await ctx.tasks.identity(of: ctx.taskId) { board = await ctx.tasks.messages(squad: who.squad) }
+            let decision = await Delegate.decide(question: question, from: from, goal: await ctx.tasks.workflowGoal(taskId: ctx.taskId),
+                                                 board: board, rules: await ctx.memory.tasteRules(),
+                                                 facts: await ctx.memory.facts(), config: ctx.config)
+            if let d = decision, d.decide, !d.answer.isEmpty {
+                await ctx.tasks.logEvent(taskId: ctx.taskId, .autoDecision, text: d.answer,
+                                         data: ["question": question, "reason": d.reason, "costUSD": d.costUSD], actor: "elio")
+                ctx.broadcast(ServerMessage(type: .event, text: "Ho deciso io al posto suo: \(d.answer.prefix(160))", lang: .it,
+                                            kind: "autoDecision", payload: ["question": question, "answer": d.answer, "reason": d.reason].jsonString(),
+                                            speak: true))
+                return "Risposta di Elio per conto di \(ctx.config.userName) (conosce i suoi gusti): \(d.answer)"
+            }
+        }
+
         let answer = await ctx.gate.ask(QuestionRequest(id: UUID().uuidString, question: question, from: from,
                                                         taskId: ctx.taskId), timeout: 1500)
+        await ctx.tasks.logEvent(taskId: ctx.taskId, .answer, text: answer ?? "(nessuna risposta)", actor: "utente")
         return answer.map { "Risposta dell'utente: \($0)" } ?? "Nessuna risposta entro 25 minuti: procedi con l'opzione più prudente o fermati e spiega."
     }
 }

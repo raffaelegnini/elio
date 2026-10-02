@@ -47,7 +47,7 @@ var webServer: WebServer?
 if let remoteToken = try? AuthToken.loadOrCreateRemote() {
     do {
         remoteServer = try Server(brain: brain, token: remoteToken, port: cfg.remotePort, mode: .remote)
-        webServer = try WebServer(port: cfg.webPort, remoteToken: remoteToken, config: cfg)
+        webServer = try WebServer(port: cfg.webPort, remoteToken: remoteToken, config: cfg, brain: brain)
         remoteServer?.start()
         webServer?.start()
     } catch {

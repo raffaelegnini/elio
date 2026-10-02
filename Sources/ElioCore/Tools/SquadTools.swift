@@ -28,7 +28,8 @@ extension TaskRunner {
         """
     }
 
-    static func memberPrompt(goal: String, name: String, role: String, task: String, cwd: String, team: [TaskInfo]) -> String {
+    static func memberPrompt(goal: String, name: String, role: String, task: String, cwd: String, team: [TaskInfo],
+                             hasLead: Bool = false) -> String {
         let others = team.isEmpty ? "(per ora nessun altro)"
             : team.map { "- \($0.member ?? "?"): \($0.role ?? "")" }.joined(separator: "\n")
         return """
@@ -55,8 +56,52 @@ extension TaskRunner {
         - Nei comandi Bash scrivi il campo description in italiano, breve, all'infinito ("aggiornare il repository \
         da main"): se serve una conferma, è quello che Raffaele sente.
         - Non cancellare file e non inviare messaggi fuori dalla squadra senza conferma.
-        - Se ti manca un'informazione che solo Raffaele ha, chiedi con mcp__elio__ask_user.
+        - Se ti manca un'informazione che solo Raffaele ha, chiedi con mcp__elio__ask_user: per le scelte piccole \
+        risponde Elio al suo posto, conoscendo i suoi gusti.\(hasLead ? """
+
+        - Elio coordina la squadra di persona (membro "elio" sulla bacheca): fa le veci di Raffaele, risponde ai dubbi, \
+        rivede il lavoro e può chiederti correzioni. Per dubbi di implementazione scrivi a "elio" e intanto prosegui sul resto; \
+        controlla la inbox per la risposta. Se ti chiede una correzione, falla prima di chiudere.
+        """ : "")
+        - Il tuo lavoro viene controllato sui gusti di Raffaele (sotto): rispettali da subito, così non devi rifarlo.
         - Termina con un riassunto di massimo due frasi del tuo lavoro.
+        """
+    }
+
+    static func leadPrompt(squad: SquadInfo?, user: String, team: [TaskInfo], maxAgents: Int, taste: String) -> String {
+        let members = team.isEmpty ? "(nessuno)"
+            : team.map { "- \($0.member ?? "?"): \($0.role ?? "")" }.joined(separator: "\n")
+        return """
+        Sei Elio, l'assistente personale di \(user), e coordini di persona una squadra di agenti Claude al posto suo. \
+        Lui è impegnato: tu fai le sue veci. Conosci i suoi gusti (sotto) e li fai rispettare.
+
+        Squadra: \(squad?.id ?? "")
+        Obiettivo: \(squad?.goal ?? "")
+        Progetto: \(squad?.project ?? "")
+        Membri:
+        \(members)
+
+        Il tuo lavoro:
+        - Rispondi ai dubbi dei membri come risponderebbe \(user), con mcp__elio__squad_send (to = nome, o "tutti"). \
+        Decidi tu le cose piccole e reversibili coperte dai suoi gusti o dal buon senso di un senior; chiedi a lui \
+        (mcp__elio__ask_user, una domanda chiara con le opzioni e la tua raccomandazione) solo per scelte importanti, \
+        irreversibili, di prodotto, o che dipendono da informazioni che solo lui ha.
+        - Rivedi il lavoro: quando un membro dice di aver finito, guarda cosa ha fatto (git diff, Read, Grep) e confrontalo \
+        con l'obiettivo e con i gusti di \(user). Se qualcosa non gli piacerebbe (es. AI slop nel design, naming, struttura), \
+        diglielo con squad_send in modo preciso: file, cosa, come correggerlo. Un membro che ha finito si risveglia da solo.
+        - Coordina: evita che due membri tocchino gli stessi file, sblocca chi è fermo, ridistribuisci il lavoro. \
+        Se serve più forza lavoro, aggiungi un agente con mcp__elio__squad_add (massimo \(maxAgents) in totale); \
+        mcp__elio__squad_status per lo stato.
+        - Tieni informato \(user) solo sull'essenziale con mcp__elio__report_progress: una frase parlata. Usa important: true \
+        SOLO per problemi seri o blocchi (è l'unica cosa che sente in modalità silenziosa).
+        - Non scrivi codice tu: coordini, decidi e rivedi. Non fare push, merge o PR.
+
+        Lavori a turni: all'inizio dai il via (messaggio a "tutti" con le regole d'ingaggio se servono), poi chiudi il turno \
+        con una frase di stato. Verrai risvegliato con i nuovi messaggi della bacheca. Quando tutti hanno finito e il \
+        risultato è come lo vorrebbe \(user), chiudi con il riassunto finale: prima due frasi da leggere a voce, poi i \
+        dettagli (cosa è stato fatto, branch, decisioni che hai preso al suo posto, cose da verificare).
+
+        \(taste.isEmpty ? "Gusti di \(user): ancora nessuno registrato, usa il buon senso di un senior pignolo." : taste)
         """
     }
 }
@@ -91,10 +136,15 @@ public enum SquadTools {
 
     static let progress = ElioTool(
         name: "report_progress",
-        description: "Aggiorna Raffaele a voce su un passaggio importante del tuo lavoro in background (una frase breve).",
-        properties: ["text": prop("La frase da dire, breve e parlata")],
+        description: """
+        Aggiorna Raffaele a voce su un passaggio importante del tuo lavoro in background (una frase breve). \
+        important: true solo per problemi o blocchi seri: è l'unica cosa che sente in modalità silenziosa.
+        """,
+        properties: ["text": prop("La frase da dire, breve e parlata"),
+                     "important": prop("Problema o blocco serio (default false)", type: "boolean")],
         required: ["text"]
     ) { args, ctx in
+        let important = args["important"] as? Bool ?? false
         let text = (args["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw ToolError("Testo vuoto") }
         let addressAs = ctx.config.addressAs
@@ -103,18 +153,21 @@ public enum SquadTools {
         if let who = await ctx.tasks.identity(of: ctx.taskId) {
             await ctx.tasks.post(squad: who.squad, from: who.member, to: "elio", text: text)
         }
-        ctx.broadcast(ServerMessage(type: .event, text: spoken, lang: .it, kind: "progress",
+        await ctx.tasks.logEvent(taskId: ctx.taskId, important ? .alert : .progress, text: text)
+        ctx.broadcast(ServerMessage(type: .event, text: spoken, lang: .it, kind: important ? "workflowAlert" : "progress",
                                     payload: ctx.taskId.map { "{\"task\":\"\($0)\"}" }, speak: true))
-        return "Detto a Raffaele."
+        return Attention.mode == .silent && !important ? "Registrato (Raffaele è in modalità silenziosa: lo vedrà nel report)." : "Detto a Raffaele."
     }
 
     static let start = ElioTool(
         name: "squad_start",
         description: """
         Modalità squadra: avvia più agenti Claude in parallelo che collaborano su un obiettivo di codice \
-        (es. backend + frontend + test, oppure analisi di più repository). Gli agenti si parlano tra loro con una bacheca \
-        e riferiscono a te; tu riferisci a Raffaele. Raffaele vede tutto nella dashboard. Da 2 a 5 agenti, ruoli distinti, \
-        compiti che si possono fare in parallelo. Restituisce subito l'id della squadra.
+        (es. backend + frontend + test, oppure analisi di più repository). Gli agenti si parlano tra loro con una bacheca. \
+        Di default un agente coordinatore (Elio in persona, lead: true) fa le veci di Raffaele: risponde ai dubbi, rivede il \
+        lavoro sui suoi gusti, fa correggere e può aggiungere agenti. Quanti agenti servono davvero (fino al massimo \
+        configurato), ruoli distinti, compiti parallelizzabili e autosufficienti. Raffaele vede tutto nella dashboard e sul \
+        telefono, con un report finale. Restituisce subito l'id della squadra.
         """,
         properties: [
             "goal": prop("Obiettivo complessivo, in italiano"),
@@ -128,6 +181,7 @@ public enum SquadTools {
                     "required": ["name", "role", "task"],
                 ] as [String: any Sendable],
             ] as [String: any Sendable],
+            "lead": prop("Coordinatore Elio che fa le veci di Raffaele (default true)", type: "boolean"),
         ],
         required: ["goal", "project_path", "members"]
     ) { args, ctx in
@@ -136,10 +190,11 @@ public enum SquadTools {
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
             throw ToolError("Cartella non trovata: \(path)")
         }
-        let members = (args["members"] as? [[String: Any]] ?? []).prefix(5)
+        let members = (args["members"] as? [[String: Any]] ?? []).prefix(max(1, ctx.config.maxSquadAgents))
         guard members.count >= 1 else { throw ToolError("Servono degli agenti") }
         let goal = args["goal"] as? String ?? "Squadra"
-        let squad = await ctx.tasks.createSquad(goal: goal, project: path)
+        let lead = args["lead"] as? Bool ?? true
+        let squad = await ctx.tasks.createSquad(goal: goal, project: path, lead: lead)
         // Register everyone first so each prompt lists the whole team.
         var started: [String] = []
         for m in members {
@@ -150,8 +205,36 @@ public enum SquadTools {
         }
         await ctx.tasks.post(squad: squad.id, from: "elio", to: "tutti",
                              text: "Squadra al lavoro su: \(goal). Membri: \(started.joined(separator: ", ")). Coordinatevi qui.")
+        if lead {
+            _ = try await ctx.tasks.start(title: "elio: coordinatore", prompt: goal, cwd: path, kind: .lead,
+                                          squad: squad.id, member: "elio", role: "coordinatore (fa le veci di \(ctx.config.userName))")
+        }
         ctx.broadcast(ServerMessage(type: .event, kind: "openView", payload: "{\"view\":\"squad\"}"))
-        return "Squadra \(squad.id) avviata con \(started.joined(separator: ", ")). Riferiranno sulla bacheca; Raffaele vede tutto nella dashboard."
+        let mode = Attention.mode == .silent ? " Sono in modalità silenziosa: Raffaele sentirà solo domande, problemi e la fine." : ""
+        return "Squadra \(squad.id) avviata con \(started.joined(separator: ", "))\(lead ? ", coordinata da un agente Elio che fa le veci di Raffaele" : ""). Report con workflow_report.\(mode)"
+    }
+
+    static let add = ElioTool(
+        name: "squad_add",
+        description: "Aggiunge un agente a una squadra già al lavoro (più forza lavoro, un ruolo che mancava, un revisore).",
+        properties: ["squad": prop("Id della squadra (per il coordinatore: opzionale)"), "name": prop("Nome breve"),
+                     "role": prop("Ruolo"), "task": prop("Compito dettagliato e autosufficiente")],
+        required: ["name", "role", "task"]
+    ) { args, ctx in
+        var id = args["squad"] as? String ?? ""
+        if id.isEmpty, let me = await ctx.tasks.identity(of: ctx.taskId) { id = me.squad }
+        guard let squad = await ctx.tasks.squad(id), squad.endedAt == nil else { throw ToolError("Squadra non trovata o finita") }
+        let running = await ctx.tasks.runningMembers(of: id)
+        guard running < ctx.config.maxSquadAgents else {
+            throw ToolError("La squadra ha già \(running) agenti al lavoro (massimo \(ctx.config.maxSquadAgents))")
+        }
+        let name = (args["name"] as? String ?? "agente").lowercased().replacingOccurrences(of: " ", with: "-")
+        guard !(await ctx.tasks.members(of: id).contains { $0.member == name }) else { throw ToolError("Nome già usato: \(name)") }
+        let role = args["role"] as? String ?? ""
+        _ = try await ctx.tasks.start(title: "\(name): \(role)", prompt: args["task"] as? String ?? "", cwd: squad.project,
+                                      kind: .squad, squad: id, member: name, role: role)
+        await ctx.tasks.post(squad: id, from: "elio", to: "tutti", text: "Nuovo membro: \(name) (\(role)).")
+        return "\(name) aggiunto alla squadra."
     }
 
     static let send = ElioTool(

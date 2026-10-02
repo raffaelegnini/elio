@@ -11,8 +11,10 @@ final class WebServer: @unchecked Sendable {
     private let root: URL
     private let remoteToken: String
     private let config: ElioConfig
+    private let brain: Brain
 
-    init(port: UInt16, remoteToken: String, config: ElioConfig) throws {
+    init(port: UInt16, remoteToken: String, config: ElioConfig, brain: Brain) throws {
+        self.brain = brain
         root = ElioPaths.support.appendingPathComponent("web", isDirectory: true)
         self.remoteToken = remoteToken
         self.config = config
@@ -72,6 +74,23 @@ final class WebServer: @unchecked Sendable {
             }
             obj["start_url"] = "./#pair=\(pair)"
             send(conn, 200, "application/manifest+json", (try? JSONSerialization.data(withJSONObject: obj)) ?? data)
+        case ("GET", let p) where p.hasPrefix("/api/"):
+            // Workflow progress and reports for the phone (read-only).
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            let comps = URLComponents(string: "http://x\(p)")
+            let id = comps?.queryItems?.first { $0.name == "id" }?.value ?? ""
+            switch comps?.path {
+            case "/api/workflows":
+                let json = (try? await WorkflowFeed.json(memory: brain.memory, tasks: brain.tasks)) ?? "{}"
+                send(conn, 200, "application/json", Data(SecretFilter.redact(json).utf8))
+            case "/api/workflow":
+                guard let report = await WorkflowReport.build(id: id, memory: brain.memory, tasks: brain.tasks) else {
+                    return send(conn, 404, "text/plain", Data("not found".utf8))
+                }
+                send(conn, 200, "application/json", Data(SecretFilter.redact(report.jsonString()).utf8))
+            default:
+                send(conn, 404, "text/plain", Data("not found".utf8))
+            }
         case ("GET", "/push/key"):
             send(conn, 200, "application/json", Data("{\"key\":\"\(WebPush.shared.publicKey)\"}".utf8))
         case ("POST", "/push/subscribe"):

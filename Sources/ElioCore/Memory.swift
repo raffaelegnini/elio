@@ -13,7 +13,7 @@ public actor Memory {
         public let route: String?
     }
 
-    private var db: OpaquePointer?
+    var db: OpaquePointer?
 
     public init(path: URL = ElioPaths.database) throws {
         var handle: OpaquePointer?
@@ -95,6 +95,7 @@ public actor Memory {
                 done INTEGER NOT NULL DEFAULT 0
             );
             """)
+        try Self.exec(handle, Self.workflowSchema)
     }
 
     deinit { sqlite3_close(db) }
@@ -451,7 +452,7 @@ public actor Memory {
 
     // MARK: - SQLite helpers
 
-    private static func exec(_ db: OpaquePointer?, _ sql: String) throws {
+    static func exec(_ db: OpaquePointer?, _ sql: String) throws {
         var err: UnsafeMutablePointer<CChar>?
         guard sqlite3_exec(db, sql, nil, nil, &err) == SQLITE_OK else {
             let msg = err.map { String(cString: $0) } ?? "unknown"
@@ -460,7 +461,7 @@ public actor Memory {
         }
     }
 
-    private func prepare(_ sql: String, _ params: [Any?]) -> OpaquePointer? {
+    func prepare(_ sql: String, _ params: [Any?]) -> OpaquePointer? {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             ElioCore.log("sqlite prepare failed: \(String(cString: sqlite3_errmsg(db)))")
@@ -478,7 +479,7 @@ public actor Memory {
         return stmt
     }
 
-    private func run(_ sql: String, _ params: [Any?]) {
+    func run(_ sql: String, _ params: [Any?]) {
         guard let stmt = prepare(sql, params) else { return }
         defer { sqlite3_finalize(stmt) }
         if sqlite3_step(stmt) != SQLITE_DONE {
@@ -486,7 +487,7 @@ public actor Memory {
         }
     }
 
-    private func query(_ sql: String, _ params: [Any?], row: (OpaquePointer) -> Void) {
+    func query(_ sql: String, _ params: [Any?], row: (OpaquePointer) -> Void) {
         guard let stmt = prepare(sql, params) else { return }
         defer { sqlite3_finalize(stmt) }
         while sqlite3_step(stmt) == SQLITE_ROW { row(stmt) }

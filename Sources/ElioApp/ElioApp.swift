@@ -83,6 +83,10 @@ struct MenuContent: View {
                 .disabled(PhoneSetup.tailscaleCLI == nil)
             }
             Divider()
+            Toggle("Workflow in silenzio (solo domande e problemi)", isOn: Binding(
+                get: { ElioConfig.load().workflowVoice == "silent" },
+                set: { on in Task { _ = await loop.callTool("workflow_mode", ["mode": on ? "silent" : "talking"]) } }))
+            Button("Report ultimo workflow") { Task { _ = await loop.callTool("workflow_report") } }
             Toggle("Ascolto sempre attivo (\"\(Brand.shared.name)…\")", isOn: Binding(
                 get: { loop.alwaysListening }, set: { loop.alwaysListening = $0 }))
             Toggle("Avvia al login", isOn: Binding(

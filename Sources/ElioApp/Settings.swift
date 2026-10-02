@@ -364,6 +364,17 @@ private struct BrainSettings: View {
               note: "Con il browser Elio usa il tuo Chrome (dove sei già loggato) per fare le cose da solo, per esempio prendere le chiavi API delle integrazioni. Acquisti, invii e cancellazioni li chiede sempre.") {
             Toggle("Elio può usare il browser da solo", isOn: $model.config.browserAutonomy).font(.system(size: 12.5))
         }
+        Group(title: "Workflow multi-agente",
+              note: "Elio coordina le squadre al posto tuo: risponde ai dubbi piccoli degli agenti con i tuoi gusti, fa rivedere il loro lavoro e chiede di correggere ciò che non ti piacerebbe. Le scelte importanti le chiede sempre a te, sul Mac o sul telefono.") {
+            Toggle("Elio decide le cose piccole al posto mio", isOn: $model.config.delegateDecisions).font(.system(size: 12.5))
+            Toggle("Revisione del gusto sul lavoro degli agenti", isOn: $model.config.tasteReview).font(.system(size: 12.5))
+            Toggle("Silenzioso mentre lavorano (solo domande, problemi e fine)", isOn: Binding(
+                get: { model.config.workflowVoice == "silent" },
+                set: { model.config.workflowVoice = $0 ? "silent" : "talking" })).font(.system(size: 12.5))
+            Field(label: "Modello del revisore", text: $model.config.reviewModel, placeholder: "sonnet")
+            Stepper("Agenti per squadra: \(model.config.maxSquadAgents)", value: $model.config.maxSquadAgents, in: 1...16)
+                .font(.system(size: 12.5))
+        }
         Group(title: "Comandi rapidi",
               note: "Musica, app, link, volume, blocco schermo e tema li capisce il modello Apple sul Mac in meno di un secondo, senza usare Claude. Tutto il resto va a Claude.") {
             Toggle("Usa il modello Apple per i comandi semplici", isOn: $model.config.appleFastPath).font(.system(size: 12.5))

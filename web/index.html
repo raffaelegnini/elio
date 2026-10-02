@@ -84,6 +84,28 @@
   #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 120px); padding: 12px 14px; border-radius: 14px;
     background: var(--panel); border: 1px solid var(--line); font-size: 13px; display: none; z-index: 5; backdrop-filter: blur(16px); }
   #toast.show { display: block; }
+  #wfSheet { position: fixed; inset: 0; z-index: 7; background: var(--bg); display: none; flex-direction: column;
+    padding: calc(env(safe-area-inset-top) + 10px) 16px calc(env(safe-area-inset-bottom) + 10px); }
+  #wfSheet.show { display: flex; }
+  #wfSheet .top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  #wfSheet h2 { font: 700 13px var(--mono); letter-spacing: .3em; margin: 0; flex: 1; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 3px; margin-bottom: 6px; }
+  .seg button { border: 0; border-radius: 9px; padding: 9px; background: transparent; color: var(--dim); font: 600 13px -apple-system, system-ui; }
+  .seg button.on { background: var(--accent); color: #000; }
+  .seghint { font-size: 12px; color: var(--dim); margin: 0 2px 14px; }
+  #wfList { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+  .wf .h { display: flex; gap: 8px; align-items: baseline; }
+  .wf .h .t { font-weight: 600; flex: 1; min-width: 0; }
+  .wf .st { font: 600 9.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); white-space: nowrap; }
+  .wf .st.done { color: var(--ok); } .wf .st.failed { color: var(--danger); } .wf .st.cancelled { color: var(--dim); }
+  .bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); margin: 8px 0; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+  .wf .ag { display: flex; gap: 8px; font-size: 12.5px; padding: 3px 0; align-items: baseline; }
+  .wf .ag b { font-weight: 600; white-space: nowrap; } .wf .ag span { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .wf .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font: 11px var(--mono); color: var(--dim); }
+  .wf .foot a { color: var(--accent); text-decoration: none; font: 600 12px -apple-system, system-ui; }
+  .wf .ctl { display: flex; gap: 6px; }
+  .wf .ctl button { border: 1px solid var(--line); background: transparent; color: var(--dim); border-radius: 8px; padding: 3px 8px; font-size: 12px; }
   #pair { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 32px; background: var(--bg); z-index: 9; }
   #pair.show { display: grid; }
   #pair h1 { font: 700 18px var(--mono); letter-spacing: .3em; }
@@ -98,6 +120,7 @@
     <span class="spacer"></span>
     <span id="conn" class="dot"></span>
     <button id="bell" class="icon-btn" title="Notifiche">🔔</button>
+    <button id="wfBtn" class="icon-btn" title="Workflow">▦</button>
     <button id="voiceToggle" class="icon-btn" title="Voce">🔊</button>
   </header>
   <div id="orbWrap"><canvas id="orb"></canvas><div id="state">connessione…</div></div>
@@ -113,6 +136,12 @@
   </div>
 </div>
 <div id="toast"></div>
+<div id="wfSheet">
+  <div class="top"><h2>WORKFLOW</h2><button id="wfClose" class="icon-btn" aria-label="Chiudi">✕</button></div>
+  <div class="seg" id="modeSeg"><button data-mode="talking">🗣 Parlante</button><button data-mode="silent">🤫 Silenziosa</button></div>
+  <div class="seghint" id="modeHint"></div>
+  <div id="wfList"></div>
+</div>
 <div id="pair"><div>
   <img src="logo.svg" alt="" style="height:48px;margin-bottom:14px">
   <h1>E.L.I.O.</h1>
@@ -262,8 +291,15 @@ function handleEvent(m) {
     case "task": case "taskDone": {
       const t = JSON.parse(m.payload || "{}");
       if (t.id) { tasks.set(t.id, t); renderTasks(); }
+      refreshWorkflows();
       break;
     }
+    case "workflowEvent": case "squad": case "squadDone":
+      refreshWorkflows();
+      break;
+    case "mode":
+      setMode(m.text);
+      break;
   }
   if (m.speak && m.text) { addMsg("event", m.text); speak(m.text); }
 }
@@ -303,6 +339,77 @@ function say(text) {
   setState("thinking", "elaboro");
   send({ type: "say", id, text });
 }
+
+// ---------- Workflows: progress, mode, reports ----------
+let mode = "talking", wfOpen = false, wfTimer = null;
+const STATUS = { running: "in corso", done: "completato", failed: "fallito", cancelled: "fermato" };
+function setMode(m) {
+  mode = m === "silent" ? "silent" : "talking";
+  document.querySelectorAll("#modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  $("modeHint").textContent = mode === "silent"
+    ? "Elio sta zitto mentre gli agenti lavorano: ti cerca solo per domande, problemi e alla fine."
+    : "Elio ti racconta i progressi e le decisioni che prende al posto tuo.";
+}
+$("modeSeg").onclick = e => {
+  const m = e.target.closest("button")?.dataset.mode;
+  if (!m) return;
+  setMode(m);
+  send({ type: "mode", text: m });
+};
+function refreshWorkflows() {
+  if (!wfOpen) return;
+  clearTimeout(wfTimer);
+  wfTimer = setTimeout(loadWorkflows, 400);
+}
+async function loadWorkflows() {
+  try {
+    const r = await fetch("api/workflows", { headers: { "X-Elio-Token": token } });
+    if (!r.ok) throw new Error(r.status);
+    const feed = await r.json();
+    setMode(feed.mode);
+    renderWorkflows(feed.workflows || []);
+  } catch { $("wfList").innerHTML = `<div class="card" style="color:var(--dim)">Non riesco a leggere i workflow dal Mac.</div>`; }
+}
+function renderWorkflows(list) {
+  const el = $("wfList");
+  el.innerHTML = "";
+  if (!list.length) { el.innerHTML = `<div class="card" style="color:var(--dim)">Nessun workflow ancora. Chiedi a Elio di mettere su una squadra.</div>`; return; }
+  for (const w of list) {
+    const wf = w.workflow, agents = w.agents || [];
+    const workers = agents.filter(a => a.kind !== "lead");
+    const done = workers.filter(a => ["done", "failed", "cancelled"].includes(a.status)).length;
+    const pct = wf.status === "running" ? Math.round(100 * done / Math.max(1, workers.length)) : 100;
+    const cost = agents.reduce((s, a) => s + (a.costUSD || 0), 0);
+    const card = document.createElement("div");
+    card.className = "card wf";
+    card.innerHTML = `<div class="h"><span class="t"></span><span class="st ${wf.status}">${STATUS[wf.status] || wf.status}${w.pending ? " · attende te" : ""}</span></div>
+      <div class="bar"><i style="width:${pct}%"></i></div><div class="ags"></div>
+      <div class="foot"><span>${new Date(wf.startedAt).toLocaleString("it-IT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · $${cost.toFixed(2)}</span>
+      <a href="report.html?id=${encodeURIComponent(wf.id)}">Report →</a></div>`;
+    card.querySelector(".t").textContent = wf.title;
+    const ags = card.querySelector(".ags");
+    for (const a of agents) {
+      const row = document.createElement("div");
+      row.className = "ag";
+      const active = ["running", "waitingConfirmation", "paused"].includes(a.status);
+      row.innerHTML = `<span class="s ${a.status}" style="width:7px;height:7px;border-radius:50%;flex:none;align-self:center;background:${
+        { done: "var(--ok)", failed: "var(--danger)", waitingConfirmation: "var(--warn)", cancelled: "var(--dim)" }[a.status] || "var(--accent)"}"></span><b></b><span></span>`;
+      row.querySelector("b").textContent = a.member || "agente";
+      row.querySelector("span:last-child").textContent = active ? (a.lastMessage || (a.steps || []).slice(-1)[0] || a.role || "") : (a.summary || a.status).split("\n")[0];
+      if (active) {
+        const ctl = document.createElement("span");
+        ctl.className = "ctl";
+        ctl.innerHTML = `<button data-a="${a.status === "paused" ? "resume" : "pause"}">${a.status === "paused" ? "▶" : "⏸"}</button><button data-a="stop">■</button>`;
+        ctl.onclick = e => { const act = e.target.dataset.a; if (act) { send({ type: "taskControl", id: a.id, text: act }); setTimeout(loadWorkflows, 600); } };
+        row.appendChild(ctl);
+      }
+      ags.appendChild(row);
+    }
+    el.appendChild(card);
+  }
+}
+$("wfBtn").onclick = () => { wfOpen = true; $("wfSheet").classList.add("show"); loadWorkflows(); };
+$("wfClose").onclick = () => { wfOpen = false; $("wfSheet").classList.remove("show"); };
 
 // ---------- Voice out (ElevenLabs via the Mac) ----------
 const audio = new Audio();
