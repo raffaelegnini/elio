@@ -170,12 +170,12 @@ public actor ClaudeBridge {
             "--strict-mcp-config",
             // No shell or file edits in the conversational session: web research plus Elio
             // tools. Code work goes to background agents behind the confirmation gate.
-            "--tools", "WebSearch", "WebFetch", "Read", "Write", "Edit", "Glob", "Grep", "Bash",
+            "--tools", "WebSearch", "WebFetch", "Read", "Write", "Edit", "Glob", "Grep", "Bash", "Skill",
             "--system-prompt", options.systemPrompt,
         ]
         if let mcp = options.mcpConfig {
             // Integration MCP tools are not pre-approved: they go through PermissionPolicy via `approve`.
-            args += ["--mcp-config", mcp, "--allowedTools", "mcp__elio", "WebSearch", "WebFetch", "Read", "Glob", "Grep",
+            args += ["--mcp-config", mcp, "--allowedTools", "mcp__elio", "WebSearch", "WebFetch", "Read", "Glob", "Grep", "Skill",
                      "--add-dir", ElioPaths.outputDir.path]
             if options.browser { args += ["mcp__claude-in-chrome"] }
             args += ["--permission-prompt-tool", "mcp__elio__approve"]

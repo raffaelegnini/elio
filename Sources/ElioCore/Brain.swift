@@ -49,6 +49,11 @@ public actor Brain {
         await routines.start(brain: self)
         await sync.start()
         if config.appleFastPath { FastPath.prewarm() }
+        // The user's skills (also new ones) become available; a change rebuilds the session for the next message.
+        SkillSync.start { [weak self] names in
+            log("skills changed (\(names.count)): reloading the session")
+            await self?.refreshSession()
+        }
         let tasks = self.tasks
         await UsageMeter.shared.setAgentsCost { await tasks.agentsCost() }
         await UsageMeter.shared.start(every: 60) { snap in
@@ -351,6 +356,9 @@ public actor Brain {
         collegata e l'utente vuole far partire brani precisi: crea tu l'app su developer.spotify.com/dashboard col browser \
         (Web API, redirect URI http://127.0.0.1:8739/callback), salva il client id con spotify_setup e poi spotify_login.
         - usage_report per i token Claude usati (oggi e finestra di 5 ore).
+
+        Skill: hai le skill di Raffaele (strumento Skill: documenti Word/Excel/PowerPoint/PDF, Google Workspace e quelle \
+        che aggiunge lui). Usale quando il compito corrisponde; le nuove compaiono da sole entro un minuto.
 
         File e documenti: hai Read/Write/Edit/Bash, \
         save_document (md, txt, csv, html, pdf impaginato), pdf_tool (testo, unione, estrazione, rotazione, cancellazione pagine), \
