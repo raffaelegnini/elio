@@ -812,6 +812,16 @@ public final class VoiceLoop {
     /// an explicit "confermo"; a plain "sì" is not enough. Returns true if consumed.
     private func answerByVoice(_ text: String) -> Bool {
         guard let req = confirmations.first else { return false }
+        // "Che comando è?", "dimmi tutto", "leggimelo": the full detail, then ask again.
+        if text.lowercased().range(of: #"\b(che|quale|qual è il|leggi\w*|dimmi\w*|cosa (fa|esegue|c'è)|nel dettaglio|tutto il|per intero|comando)\b"#,
+                                   options: .regularExpression) != nil,
+           ConfirmationAnswer.parse(text, risk: req.risk) == .unrelated {
+            let detail = String(Speakable.clean(req.detail).prefix(700))
+            speaker.enqueue("È questo: \(detail). Procedo, \(addressAs)?")
+            speaker.endUtterance()
+            armedUntil = Date().addingTimeInterval(30)
+            return true
+        }
         switch ConfirmationAnswer.parse(text, risk: req.risk) {
         case .approve:
             answer(req, approved: true)

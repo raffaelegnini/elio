@@ -120,8 +120,18 @@ public final class AudioIO: @unchecked Sendable {
               let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate,
                                        channels: 1, interleaved: false) else { throw VoiceError.audioFormat }
         inputFormat = mono
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            guard let m = Self.firstChannel(of: buffer, as: mono) else { return }
+        // format: nil = whatever the node really delivers. Passing a format read right after switching
+        // device (AirPods out → built-in mic) can be stale (48 vs 44.1 kHz): AVAudioEngine then throws an
+        // Objective-C exception and the app aborts.
+        input.removeTap(onBus: 0)
+        var monoCache = mono
+        input.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
+            if monoCache.sampleRate != buffer.format.sampleRate,
+               let m = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: buffer.format.sampleRate,
+                                     channels: 1, interleaved: false) {
+                monoCache = m
+            }
+            guard let m = Self.firstChannel(of: buffer, as: monoCache) else { return }
             self?.onInput?(m, Self.levelDb(m))
         }
         inputEngine.prepare()
@@ -184,7 +194,7 @@ public final class AudioIO: @unchecked Sendable {
 
 /// Converts PCM buffers between formats (mic → analyzer, synthesizer → player).
 final class BufferConverter {
-    private let converter: AVAudioConverter
+    private var converter: AVAudioConverter
     let output: AVAudioFormat
 
     init?(from input: AVAudioFormat, to output: AVAudioFormat) {
@@ -194,6 +204,12 @@ final class BufferConverter {
     }
 
     func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        // The mic may change rate under us (device switch): follow the buffers, not the initial guess.
+        if buffer.format.sampleRate != converter.inputFormat.sampleRate
+            || buffer.format.channelCount != converter.inputFormat.channelCount {
+            guard let c = AVAudioConverter(from: buffer.format, to: output) else { return nil }
+            converter = c
+        }
         let ratio = output.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1024
         guard let out = AVAudioPCMBuffer(pcmFormat: output, frameCapacity: capacity) else { return nil }

@@ -41,7 +41,7 @@ public actor ConfirmationGate {
         guard let f = s.first else { return s }
         // Keep proper names/acronyms ("Teamwork", "PR") capitalised.
         let firstWord = s.split(separator: " ").first.map(String.init) ?? ""
-        let verbs = ["Invio", "Scrivo", "Modifico", "Attivo", "Il", "Un", "L'", "La", "Lo"]
+        let verbs = ["Invio", "Scrivo", "Modifico", "Attivo", "Vorrei", "Il", "Un", "L'", "La", "Lo"]
         return verbs.contains(where: { firstWord.hasPrefix($0) }) ? f.lowercased() + s.dropFirst() : s
     }
 
@@ -95,8 +95,11 @@ public enum ApprovalTool {
             allow = true
         case .confirm(let risk):
             let detail = describe(tool: tool, input: input)
-            let title = await ctx.tasks.title(for: ctx.taskId).map { "Il task \"\($0)\" vuole eseguire: \(short(detail))" }
-                ?? "Un agente vuole eseguire: \(short(detail))"
+            // Spoken: what it amounts to ("cancellare la cartella build"), never the raw command;
+            // the full command is in `detail` (card, and read aloud if the user asks).
+            let what = summary(tool: tool, input: input)
+            let title = await ctx.tasks.title(for: ctx.taskId).map { "L'agente di \"\($0)\" vorrebbe \(what)" }
+                ?? "Vorrei \(what)"
             await ctx.tasks.setStatus(ctx.taskId, .waitingConfirmation)
             allow = await ctx.gate.request(ConfirmRequest(id: UUID().uuidString, title: title, detail: detail,
                                                           risk: risk, taskId: ctx.taskId))
@@ -117,6 +120,65 @@ public enum ApprovalTool {
             let data = (try? JSONSerialization.data(withJSONObject: input)) ?? Data()
             return "\(tool) \(String(decoding: data, as: UTF8.self).prefix(300))"
         }
+    }
+
+    /// Plain-language gist of an action, for the spoken confirmation.
+    static func summary(tool: String, input: [String: Any]) -> String {
+        switch tool {
+        case "Bash":
+            let cmd = input["command"] as? String ?? ""
+            // Claude's own description of the command, when it's in Italian.
+            if let d = (input["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !d.isEmpty,
+               d.count < 120, !looksEnglish(d) {
+                return lowerFirstWord(d)
+            }
+            return bashGist(cmd)
+        case "Edit", "MultiEdit": return "modificare \(fileName(input["file_path"]))"
+        case "Write": return "scrivere \(fileName(input["file_path"]))"
+        default:
+            let name = tool.components(separatedBy: "__").last ?? tool
+            return "usare \(name.replacingOccurrences(of: "_", with: " "))"
+        }
+    }
+
+    static func bashGist(_ cmd: String) -> String {
+        let c = cmd.lowercased()
+        func has(_ p: String) -> Bool { c.range(of: p, options: .regularExpression) != nil }
+        if has(#"\bgit\s+push\b"#) { return "fare il push su git" }
+        if has(#"\bgit\s+(merge|rebase)\b"#) { return "fare un merge o un rebase" }
+        if has(#"\bgit\s+(reset\s+--hard|clean|checkout\s+(--|\.)|restore)"#) { return "scartare delle modifiche su git" }
+        if has(#"\b(rm|rmdir|unlink|shred)\s|\s-delete\b|xargs\s+rm"#) { return "cancellare dei file" }
+        if has(#"\bsudo\b"#) { return "eseguire un comando come amministratore" }
+        if has(#"\b(kill|killall|pkill)\b"#) { return "terminare dei processi" }
+        if has(#"\b(curl|wget)\b.*(-d\b|--data|-f\b|-t\b|-x\s*(post|put|delete|patch))"#) { return "inviare dati a un server" }
+        if has(#"\b(curl|wget|ssh|scp|rsync|sftp)\b"#) { return "collegarsi a un server esterno" }
+        if has(#"\b(gh|bb)\s+pr\b"#) { return "aprire o unire una pull request" }
+        if has(#"\b(drop|truncate)\s+(table|database)|delete\s+from|migrate:(fresh|reset|rollback)"#) { return "cancellare dati dal database" }
+        if has(#"launchagents|crontab|\.zshrc|\.bash|\.profile"#) { return "cambiare i programmi o le impostazioni di avvio del Mac" }
+        if has(#"\b(python[0-9.]*|node|perl|ruby|php)\s+-[a-z]*[ce]\b|\b(sh|bash|zsh)\s+-c\b|\beval\b"#) { return "eseguire uno script al volo" }
+        if has(#"\b(mv|cp)\s"#) { return "spostare o copiare file sovrascrivendo quelli esistenti" }
+        if has(#"\btee\b|>"#) { return "sovrascrivere un file" }
+        if has(#"\bchmod\s+-r|\bchown\b"#) { return "cambiare i permessi di molti file" }
+        if has(#"\bosascript\b"#) { return "controllare un'altra app con AppleScript" }
+        let first = cmd.split(whereSeparator: { $0 == " " || $0 == "\n" }).first.map(String.init) ?? "un comando"
+        return "eseguire il comando \(first)"
+    }
+
+    static func looksEnglish(_ s: String) -> Bool {
+        let words = Set(s.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+        return !words.isDisjoint(with: ["the", "and", "to", "from", "of", "in", "check", "run", "list", "show", "get",
+                                        "install", "remove", "delete", "create", "update", "pull", "push", "latest", "with"])
+    }
+
+    static func lowerFirstWord(_ s: String) -> String {
+        let t = s.hasSuffix(".") ? String(s.dropLast()) : s
+        guard let f = t.first else { return t }
+        return f.lowercased() + t.dropFirst()
+    }
+
+    static func fileName(_ any: Any?) -> String {
+        let p = any as? String ?? ""
+        return p.isEmpty ? "un file" : "il file \((p as NSString).lastPathComponent)"
     }
 
     static func short(_ s: String) -> String {
@@ -591,6 +653,8 @@ public actor TaskRunner {
         - Per creare o modificare file usa Edit/Write (già autorizzati nel progetto), non printf/echo/cat con > o >>: \
         quelli chiedono una conferma all'utente e ti bloccano. Comandi git semplici, uno per volta (niente catene con | e &&), \
         senza `git -C` né `cd`: sei già nella cartella del progetto.
+        - Nei comandi Bash scrivi il campo description in italiano, breve, all'infinito ("aggiornare il repository \
+        da main"): se serve una conferma, è quello che Raffaele sente.
         - Esegui test/lint pertinenti se esistono.
         - Se ti manca un'informazione o devi scegliere tra opzioni con impatto, chiedi a Raffaele con \
         mcp__elio__ask_user invece di indovinare (una domanda chiara, con le opzioni).

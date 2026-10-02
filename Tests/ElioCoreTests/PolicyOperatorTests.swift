@@ -65,3 +65,18 @@ import Testing
         #expect(PermissionPolicy.decide(tool: "Write", input: ["file_path": "/private/tmp/other.py"], cwd: dir) != .allow)
     }
 }
+
+@Suite struct ConfirmationWordingTests {
+    @Test func gist() {
+        #expect(ApprovalTool.summary(tool: "Bash", input: ["command": "cd /a/b/c && rm -rf build", "description": "Remove build"]) == "cancellare dei file")
+        #expect(ApprovalTool.summary(tool: "Bash", input: ["command": "git push origin elio/x", "description": "Pubblicare il branch elio/x"]) == "pubblicare il branch elio/x")
+        #expect(ApprovalTool.summary(tool: "Write", input: ["file_path": "/x/.zshrc"]) == "scrivere il file .zshrc")
+    }
+
+    @Test func escapedQuotesAloneDontAsk() {
+        let cmd = "cd /Users/r/dev/DNA/laravel/crm && git pull --ff-only origin main 2>&1 | head -5; for d in a b; do echo \\\"$d\\\"; done"
+        #expect(PermissionPolicy.decideOperatorBash(cmd) == .allow)
+        #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": "ls | xargs -n1 echo"], cwd: "/tmp") != .allow)
+        #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": "npm run dev && ls src | wc -l"], cwd: "/tmp") == .allow)
+    }
+}

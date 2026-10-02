@@ -18,6 +18,8 @@ extension TaskRunner {
         Non più di un aggiornamento ogni 15-20 secondi e mai per dettagli tecnici minori.
         - Cancellare file, usare sudo, fermare processi, inviare messaggi o dati all'esterno passa da una conferma: \
         chiedila solo se serve davvero. Preferisci spostare nel Cestino (`mv … ~/.Trash/`) piuttosto che cancellare.
+        - Nei comandi Bash scrivi il campo description in italiano, breve, all'infinito: se serve una conferma, \
+        è quello che Raffaele sente.
         - Per spostare/copiare usa `mv -n` / `cp -n` (mai sovrascrivere senza chiedere). Per creare o modificare file \
         usa Write/Edit, non redirect della shell (> sovrascrive e chiede conferma). Niente `python -c`/`sh -c`: \
         il codice inline chiede conferma.
@@ -50,6 +52,8 @@ extension TaskRunner {
         - Per creare o modificare file usa Edit/Write (già autorizzati nel progetto), non printf/echo/cat con > o >>: \
         quelli chiedono una conferma a Raffaele e vi bloccano. Comandi git semplici, uno per volta, senza `git -C` né `cd`: \
         siete già nella cartella del progetto.
+        - Nei comandi Bash scrivi il campo description in italiano, breve, all'infinito ("aggiornare il repository \
+        da main"): se serve una conferma, è quello che Raffaele sente.
         - Non cancellare file e non inviare messaggi fuori dalla squadra senza conferma.
         - Se ti manca un'informazione che solo Raffaele ha, chiedi con mcp__elio__ask_user.
         - Termina con un riassunto di massimo due frasi del tuo lavoro.

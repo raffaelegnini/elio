@@ -25,7 +25,8 @@ public enum PermissionPolicy {
             return isInside(path, cwd) ? .allow : .confirm(.normal)
         case "Bash":
             let command = (input["command"] as? String) ?? ""
-            return onMac ? decideOperatorBash(command) : decideBash(command)
+            // Only destructive or outward-facing commands need an OK; "strict" brings back the safe-list.
+            return onMac || !strictCodeExecution ? decideOperatorBash(command) : decideBash(command)
         default:
             if tool.hasPrefix("mcp__elio__") { return .allow }
             // The user asked Elio to drive their browser on its own (Settings → Autonomia).
@@ -111,9 +112,10 @@ public enum PermissionPolicy {
         if outward.contains(where: { cmd.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }) {
             return .confirm(.normal)
         }
-        // Overwriting redirection (quoted text like "<noreply@…>" is not one, unless quotes are escaped).
-        if cmd.contains("\\\"") || cmd.contains("\\'") { return .confirm(.normal) }
-        let unquoted = cmd.replacingOccurrences(of: #"'[^']*'|"[^"]*""#, with: "''", options: .regularExpression)
+        // Overwriting redirection (quoted text like "<noreply@…>" is not one). With escaped quotes the
+        // quoting can't be trusted: look at the raw command instead (any ">" counts).
+        let escaped = cmd.contains("\\\"") || cmd.contains("\\'")
+        let unquoted = escaped ? cmd : cmd.replacingOccurrences(of: #"'[^']*'|"[^"]*""#, with: "''", options: .regularExpression)
         if unquoted.range(of: #"(^|[^0-9&>])>(?!>)\s*(?!/dev/null|&)\S"#, options: .regularExpression) != nil {
             return .confirm(.normal)
         }
