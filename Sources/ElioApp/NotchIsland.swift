@@ -11,9 +11,11 @@ final class NotchIsland {
     private var panel: NSPanel?
     private var observer: Any?
     static let size: CGFloat = 26
+    /// Transparent room around the orb so its glow isn't clipped into a square by the window edge.
+    static let canvas: CGFloat = 44
 
     func attach(_ loop: VoiceLoop, openDashboard: @escaping () -> Void, openSettings: @escaping () -> Void) {
-        let s = Self.size
+        let s = Self.canvas
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: s, height: s),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
@@ -42,8 +44,9 @@ final class NotchIsland {
         guard let panel, let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main else { return }
         let barHeight = screen.safeAreaInsets.top > 0 ? screen.safeAreaInsets.top : (screen.frame.maxY - screen.visibleFrame.maxY)
         let notchRight = screen.auxiliaryTopRightArea.map { screen.frame.minX + $0.minX } ?? screen.frame.midX + 100
-        let s = Self.size
-        panel.setFrameOrigin(NSPoint(x: notchRight + 10, y: screen.frame.maxY - barHeight + (barHeight - s) / 2))
+        let pad = (Self.canvas - Self.size) / 2
+        panel.setFrameOrigin(NSPoint(x: notchRight + 10 - pad,
+                                     y: screen.frame.maxY - barHeight + (barHeight - Self.size) / 2 - pad))
     }
 }
 
@@ -110,6 +113,7 @@ struct IslandView: View {
         }
         .frame(width: NotchIsland.size, height: NotchIsland.size)
         .contentShape(Circle())
+        .frame(width: NotchIsland.canvas, height: NotchIsland.canvas)
         .onTapGesture { openDashboard() }
         .help(tooltip)
         .contextMenu {
