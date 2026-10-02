@@ -198,7 +198,7 @@ struct DashboardView: View {
                         }
                     }
                 }
-                .frame(maxHeight: 200)
+                .panelMaxHeight(200)
             }
             Movable(id: "progetti", dormant: off(.codice)) { ProjectsPanel(loop: loop) }
             Spacer(minLength: 0)
@@ -257,7 +257,7 @@ struct DashboardView: View {
                         .onTapGesture { state.theater = t.id }
                 }
             }
-            .frame(maxHeight: 260) }
+            .panelMaxHeight(260) }
             Movable(id: "attivita") { GlassPanel(title: "ATTIVITÀ NEURALE", trailing: nil) {
                 if loop.activity.isEmpty {
                     Text("In attesa…").font(.system(size: 12)).foregroundStyle(Theme.dim)

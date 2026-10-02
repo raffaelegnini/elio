@@ -38,7 +38,7 @@ struct ProjectsPanel: View {
                 .scrollIndicators(.never)
             }
         }
-        .frame(maxHeight: 340)
+        .panelMaxHeight(340)
         .task {
             while !Task.isCancelled {
                 await load()

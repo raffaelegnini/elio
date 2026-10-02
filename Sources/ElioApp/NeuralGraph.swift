@@ -17,11 +17,14 @@ final class GraphModel {
         var vel: CGVector = .zero
         var pinned = false
         var born = Date()
+        /// Leaf colour (e.g. the project's stack); nil = state tint.
+        var color: Color?
 
-        enum Kind { case core, capability, leaf }
+        /// group: a folder of projects (dev → DNA → magento…), between a capability and its leaves.
+        enum Kind { case core, capability, group, leaf }
 
         var radius: CGFloat {
-            switch kind { case .core: 26; case .capability: 15; case .leaf: 5.5 }
+            switch kind { case .core: 26; case .capability: 15; case .group: 9; case .leaf: 5.5 }
         }
     }
 
@@ -65,6 +68,38 @@ final class GraphModel {
         }
     }
 
+    /// Replaces a capability's subtree with a folder hierarchy: capability → dev → DNA → magento → repos.
+    func setTree(_ cap: Capability, _ roots: [ProjectNode]) {
+        let prefix = "\(cap.rawValue):"
+        var wanted: [(node: ProjectNode, parent: String)] = []
+        func walk(_ n: ProjectNode, parent: String) {
+            wanted.append((n, parent))
+            for c in n.children { walk(c, parent: prefix + n.path) }
+        }
+        roots.forEach { walk($0, parent: cap.rawValue) }
+        let keep = Set(wanted.map { prefix + $0.node.path })
+        for id in nodes.keys where id.hasPrefix(prefix) && !keep.contains(id) { nodes[id] = nil }
+        edges = edges.filter { e in !(e.b.hasPrefix(prefix)) }
+        for (n, parent) in wanted {
+            let id = prefix + n.path
+            let detail = n.isRepo
+                ? "\(n.stack.map { $0.uppercased() + " · " } ?? "")\(n.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))"
+                : "\(n.repoCount) progetti · \(n.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))"
+            if nodes[id] == nil {
+                let p = nodes[parent]?.pos ?? .zero
+                // Born just outside the parent, away from the centre, so the tree unfolds outward.
+                let len = max(hypot(p.x, p.y), 1)
+                let jitter = CGPoint(x: .random(in: -25...25), y: .random(in: -25...25))
+                nodes[id] = Node(id: id, label: n.name, detail: detail, kind: n.isRepo ? .leaf : .group, capability: cap,
+                                 pos: CGPoint(x: p.x + p.x / len * 50 + jitter.x, y: p.y + p.y / len * 50 + jitter.y))
+            }
+            nodes[id]?.label = n.name
+            nodes[id]?.detail = detail
+            nodes[id]?.color = n.isRepo ? StackBadge.color(n.stack) : nil
+            edges.insert(Edge(a: parent, b: id))
+        }
+    }
+
     /// One physics step: repulsion, springs, gentle drift ("breathing").
     func step(dt: CGFloat, time: Double) {
         let ids = Array(nodes.keys)
@@ -78,7 +113,8 @@ final class GraphModel {
                 var dx = a.pos.x - b.pos.x, dy = a.pos.y - b.pos.y
                 var d2 = dx * dx + dy * dy
                 if d2 < 1 { dx = .random(in: -1...1); dy = .random(in: -1...1); d2 = 1 }
-                let strength: CGFloat = (a.kind == .leaf && b.kind == .leaf) ? 900 : 5200
+                let strength: CGFloat = (a.kind == .leaf && b.kind == .leaf) ? 500
+                    : (a.kind == .leaf || b.kind == .leaf) ? 1800 : 5200
                 let f = strength / d2
                 let d = sqrt(d2)
                 force[ids[i]]!.dx += dx / d * f; force[ids[i]]!.dy += dy / d * f
@@ -87,7 +123,8 @@ final class GraphModel {
         }
         for e in edges {
             guard let a = nodes[e.a], let b = nodes[e.b] else { continue }
-            let rest: CGFloat = (a.kind == .core || b.kind == .core) ? 170 : 70
+            let rest: CGFloat = (a.kind == .core || b.kind == .core) ? 170
+                : b.kind == .group ? 75 : a.kind == .group ? 42 : 70
             let dx = b.pos.x - a.pos.x, dy = b.pos.y - a.pos.y
             let d = max(sqrt(dx * dx + dy * dy), 0.1)
             let f = (d - rest) * 0.06
@@ -144,6 +181,8 @@ struct NeuralGraphView: View {
     let loop: VoiceLoop
     /// Areas covered by floating UI: controls and inspector stay out of them.
     var chrome = EdgeInsets()
+    /// Snapshots pass a pre-simulated model and skip loading.
+    var preset: GraphModel?
     @State private var model = GraphModel()
     @State private var offset: CGSize = .zero
     @State private var dragStartOffset: CGSize = .zero
@@ -237,7 +276,10 @@ struct NeuralGraphView: View {
             }
             .clipped()
         }
-        .task { await refreshLoop() }
+        .task {
+            if let preset { model = preset; return }
+            await refreshLoop()
+        }
         .onChange(of: loop.activity.count) { refreshSoon() }
     }
 
@@ -321,7 +363,14 @@ struct NeuralGraphView: View {
                          with: .radialGradient(Gradient(colors: [tint.opacity(on || fresh ? 0.45 : isHovered ? 0.35 : 0.12), .clear]),
                                                center: p, startRadius: 0, endRadius: g))
             }
-            ctx.fill(Path(ellipseIn: rect), with: .color(node.kind == .leaf ? tint.opacity(on ? 1 : 0.75) : Theme.bg))
+            ctx.fill(Path(ellipseIn: rect), with: .color(node.kind == .leaf ? (node.color ?? tint).opacity(on || isHovered ? 1 : 0.8) : Theme.bg))
+            if node.kind == .group {
+                // Folder: ring + small folder glyph.
+                ctx.stroke(Path(ellipseIn: rect), with: .color(tint.opacity(isSelected ? 1 : 0.55)), lineWidth: isSelected ? 1.8 : 1)
+                var icon = ctx.resolve(Image(systemName: "folder.fill"))
+                icon.shading = .color(tint.opacity(0.9))
+                ctx.draw(icon, in: rect.insetBy(dx: r * 0.45, dy: r * 0.45))
+            }
             if node.kind == .capability {
                 ctx.stroke(Path(ellipseIn: rect), with: .color(tint.opacity(on ? 1 : 0.6)), lineWidth: isSelected ? 2.2 : 1.2)
                 if let cap = node.capability {
@@ -335,9 +384,9 @@ struct NeuralGraphView: View {
             }
 
             // Labels: capabilities always, leaves when zoomed in or selected.
-            if node.kind == .capability || scale > 1.25 || isSelected {
+            if node.kind == .capability || node.kind == .group || scale > 1.25 || isSelected {
                 let text = Text(node.kind == .capability ? node.label : String(node.label.prefix(28)))
-                    .font(.system(size: node.kind == .capability ? 9.5 : 9, weight: .semibold, design: .monospaced))
+                    .font(.system(size: node.kind == .capability ? 9.5 : node.kind == .group ? 8.5 : 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(on || isSelected ? Theme.text : Theme.dim)
                 ctx.draw(text, at: CGPoint(x: p.x, y: p.y + r + 9))
             }
@@ -418,7 +467,7 @@ struct NeuralGraphView: View {
 
     private func refresh() async {
         async let facts = loop.callTool("recall")
-        async let projects = loop.callTool("list_projects")
+        async let projects = loop.callTool("project_tree")
         async let agenda = loop.callTool("calendar_events")
         async let reminders = loop.callTool("list_reminders")
 
@@ -433,12 +482,8 @@ struct NeuralGraphView: View {
             })
         }
         let (p, pErr) = await projects
-        if !pErr {
-            model.setLeaves(.codice, lines(p).map { line in
-                let body = line.hasPrefix("- ") ? String(line.dropFirst(2)) : line
-                let name = (body.components(separatedBy: ":").first ?? body).components(separatedBy: " [").first ?? body
-                return (name, name, body)
-            })
+        if !pErr, let tree = [ProjectNode].fromJSON(p) {
+            model.setTree(.codice, tree)
         }
         let (a, aErr) = await agenda
         if !aErr {
