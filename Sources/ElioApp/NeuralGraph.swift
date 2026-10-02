@@ -84,50 +84,45 @@ final class GraphModel {
         let direction = atan2(home.y, home.x)
         let base = hypot(home.x, home.y)
 
-        // Weight = room a branch needs on the arc: each folder 1, plus one per row of its projects.
-        let perRow = 7
+        // Weight = room a branch needs on the arc: each folder 1, plus a bit per cluster of projects.
         func weight(_ n: ProjectNode) -> Double {
             if n.isRepo { return 0 }
             let repos = n.children.filter(\.isRepo).count
-            return 1 + Double((repos + perRow - 1) / perRow) * 0.8 + n.children.filter { !$0.isRepo }.reduce(0) { $0 + weight($1) }
+            return 1 + Double(repos) * 0.08 + n.children.filter { !$0.isRepo }.reduce(0) { $0 + weight($1) }
         }
         let total = roots.reduce(0) { $0 + weight($1) }
-        let wedge = min(Double.pi * 0.95, max(Double.pi / 4, total * 0.11))
-        let ring: CGFloat = 92
+        // Narrow and long: the tree grows away from the core rather than sideways.
+        let wedge = min(Double.pi * 0.55, max(Double.pi / 5, total * 0.06))
+        let ring: CGFloat = 115
 
         var placed: [(node: ProjectNode, parent: String, pos: CGPoint)] = []
         func layout(_ n: ProjectNode, parent: String, depth: Int, from a0: Double, to a1: Double) {
-            let angle = (a0 + a1) / 2
-            let r = base + ring * CGFloat(depth + 1)
-            placed.append((n, parent, CGPoint(x: cos(angle) * r, y: sin(angle) * r)))
+            // A little organic irregularity, stable for each folder.
+            let h = Self.noise(n.path)
+            let angle = (a0 + a1) / 2 + (h - 0.5) * (a1 - a0) * 0.25
+            let r = base + ring * CGFloat(depth + 1) + CGFloat(h - 0.5) * 30
+            let me = CGPoint(x: cos(angle) * r, y: sin(angle) * r)
+            placed.append((n, parent, me))
             let id = prefix + n.path
-            // Sub-folders share the slice; projects cluster just beyond their folder in short rows.
             let folders = n.children.filter { !$0.isRepo }
             let repos = n.children.filter(\.isRepo)
+            // Projects: a loose spray in front of their folder (sunflower spiral inside a cone, with jitter),
+            // like dendrites, not rows.
+            let cone = min(Double.pi * 0.6, max(1.3, (a1 - a0) * 2.2))
+            // Phyllotaxis (sunflower) inside a forward cone: natural-looking, evenly spaced, no overlaps.
+            let golden = 2.39996323
+            for (i, c) in repos.enumerated() {
+                let j = Self.noise(c.path)
+                let dist = 24 + 16 * sqrt(Double(i) + 1) + (j - 0.5) * 8
+                // Golden-angle sequence folded into the cone.
+                let u = (Double(i) * golden / (2 * .pi)).truncatingRemainder(dividingBy: 1)
+                let a = angle + (u - 0.5) * cone
+                placed.append((c, id, CGPoint(x: me.x + cos(a) * dist, y: me.y + sin(a) * dist)))
+            }
             let folderWeight = folders.reduce(0) { $0 + weight($1) }
             var a = a0
-            let span = a1 - a0
-            let mine = weight(n) - folderWeight   // room for this folder's own projects
-            let repoSpan = span * mine / max(weight(n), 0.001)
-            // Projects in the middle of the slice, sub-folders around them.
-            let left = folders.prefix(folders.count / 2), right = folders.dropFirst(folders.count / 2)
-            for c in left {
-                let share = span * weight(c) / max(weight(n), 0.001)
-                layout(c, parent: id, depth: depth + 1, from: a, to: a + share)
-                a += share
-            }
-            let center = a + repoSpan / 2
-            for (i, c) in repos.enumerated() {
-                let row = i / perRow, col = i % perRow
-                let inRow = min(perRow, repos.count - row * perRow)
-                let rr = r + 30 + CGFloat(row) * 16
-                let step = Double(14 / rr)
-                let ang = center + (Double(col) - Double(inRow - 1) / 2) * step
-                placed.append((c, id, CGPoint(x: cos(ang) * rr, y: sin(ang) * rr)))
-            }
-            a += repoSpan
-            for c in right {
-                let share = span * weight(c) / max(weight(n), 0.001)
+            for c in folders {
+                let share = (a1 - a0) * weight(c) / max(folderWeight, 0.001)
                 layout(c, parent: id, depth: depth + 1, from: a, to: a + share)
                 a += share
             }
@@ -157,6 +152,16 @@ final class GraphModel {
             nodes[id]?.target = pos
             edges.insert(Edge(a: parent, b: id))
         }
+    }
+
+    /// Snapshots: no "just born" glow.
+    func ageAll() { for id in nodes.keys { nodes[id]?.born = .distantPast } }
+
+    /// Stable pseudo-random 0…1 per string (organic but repeatable layout).
+    static func noise(_ s: String) -> Double {
+        var h: UInt64 = 1469598103934665603
+        for b in s.utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
+        return Double(h % 10_000) / 10_000
     }
 
     /// Where a capability sits on the ring around the core.
@@ -199,9 +204,13 @@ final class GraphModel {
         }
         for id in ids {
             if var n = nodes[id], let target = n.target, !n.pinned {
-                // Laid-out tree: ease towards the slot.
-                n.pos.x += (target.x - n.pos.x) * min(1, 0.12 * dt * 8)
-                n.pos.y += (target.y - n.pos.y) * min(1, 0.12 * dt * 8)
+                // Laid-out tree: ease towards the slot, with a slow individual drift so it feels alive.
+                let ph = Self.noise(id) * 6.28
+                let wob = n.kind == .leaf ? 3.0 : 1.6
+                let tx = target.x + CGFloat(sin(time * 0.6 + ph) * wob)
+                let ty = target.y + CGFloat(cos(time * 0.5 + ph * 1.3) * wob)
+                n.pos.x += (tx - n.pos.x) * min(1, 0.12 * dt * 8)
+                n.pos.y += (ty - n.pos.y) * min(1, 0.12 * dt * 8)
                 nodes[id] = n
                 continue
             }
@@ -383,7 +392,14 @@ struct NeuralGraphView: View {
             let pa = screen(a.pos), pb = screen(b.pos)
             var path = Path()
             path.move(to: pa)
-            path.addLine(to: pb)
+            if b.target != nil {
+                // Tree synapses bend slightly, each its own way.
+                let bend = CGFloat(GraphModel.noise(e.b) - 0.5) * 0.45
+                let mx = (pa.x + pb.x) / 2 - (pb.y - pa.y) * bend, my = (pa.y + pb.y) / 2 + (pb.x - pa.x) * bend
+                path.addQuadCurve(to: pb, control: CGPoint(x: mx, y: my))
+            } else {
+                path.addLine(to: pb)
+            }
             let base = b.kind == .leaf ? 0.10 : 0.22
             if isOff(b) {
                 ctx.stroke(path, with: .color(offColor.opacity(0.35)), lineWidth: 0.6)

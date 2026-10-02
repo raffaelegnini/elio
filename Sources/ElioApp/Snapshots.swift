@@ -56,8 +56,9 @@ enum Snapshots {
         let graph = GraphModel()
         graph.setTree(.codice, ProjectTree.scan(roots: cfg.projectRoots))
         for i in 0..<1500 { graph.step(dt: 1.0 / 60 * 8, time: Double(i) / 60) }
+        graph.ageAll()
         loop.loadSample(tasks: [], squads: [], messages: [], usage: usage, routine: false, lit: [], state: .listening)
-        save(NeuralGraphView(loop: loop, preset: graph).frame(width: 1400, height: 1000).background(Theme.bg), "\(dir)/graph.png")
+        save(NeuralGraphView(loop: loop, preset: graph).frame(width: 1600, height: 1300).background(Theme.bg), "\(dir)/graph.png")
 
         loop.loadSample(tasks: [], squads: [], messages: [], usage: usage, routine: false, lit: [], state: .thinking)
         save(IslandView(loop: loop, openDashboard: {}, openSettings: {}).background(Color.gray), "\(dir)/island.png")
