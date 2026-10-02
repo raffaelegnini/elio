@@ -488,7 +488,7 @@ private struct OwnerVoiceSettings: View {
                 Toggle("Solo la mia voce può comandare e interrompere Elio", isOn: $model.config.speakerVerification).font(.system(size: 12.5))
                 HStack {
                     Text("Severità").font(.system(size: 12.5)).frame(width: 190, alignment: .leading)
-                    Slider(value: $model.config.speakerThreshold, in: 0.45...0.85)
+                    Slider(value: $model.config.speakerThreshold, in: 0.3...0.85)
                     Text(String(format: "%.2f", model.config.speakerThreshold)).font(Theme.mono).frame(width: 40)
                 }
             }

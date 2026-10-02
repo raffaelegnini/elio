@@ -24,7 +24,7 @@ public enum SelfTools {
         "accentColor": ("colore accento (#RRGGBB)", false),
         "projectRoots": ("cartelle dei progetti (separate da virgola)", false),
         "echoCancellation": ("cancellazione dell'eco", false),
-        "speakerThreshold": ("severità del riconoscimento della voce (0.45–0.85)", false),
+        "speakerThreshold": ("severità del riconoscimento della voce (0.3–0.85)", false),
         "speakerVerification": ("solo la voce dell'utente può comandare", true),
         "browserAutonomy": ("usare il browser da solo", true),
         "confirmCodeExecution": ("chiedere conferma anche per build e test", true),
