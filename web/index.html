@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Elio">
-<link rel="manifest" href="manifest.webmanifest">
+<link id="manifest" rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" href="logo.svg">
 <title>Elio</title>
@@ -116,7 +116,10 @@
 <div id="pair"><div>
   <img src="logo.svg" alt="" style="height:48px;margin-bottom:14px">
   <h1>E.L.I.O.</h1>
-  <p>Questo telefono non è ancora associato.<br>Sul Mac: Impostazioni di Elio → <b>Telefono</b> → "Pubblica e copia link", poi apri il link qui.</p>
+  <p>Questo telefono non è ancora associato.<br>Sul Mac: Impostazioni di Elio → <b>Telefono</b> → "Pubblica e copia link".<br>Poi incollalo qui:</p>
+  <input id="pairInput" placeholder="Incolla il link di associazione" style="width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,211,96,.3);background:rgba(255,255,255,.05);color:#FBF8F1;font-size:16px">
+  <button id="pairBtn" class="act go" style="width:100%;margin-top:10px;padding:12px;border-radius:12px;border:0;background:#FFD360;color:#000;font-weight:600">Associa</button>
+  <p id="pairErr" style="color:#FF6B61"></p>
 </div></div>
 
 <script>
@@ -130,6 +133,15 @@ if (params.get("pair")) {
 let token = null;
 try { token = localStorage.getItem("elio.token"); } catch {}
 if (!token) document.getElementById("pair").classList.add("show");
+// The app added to the Home Screen has its own storage: give it the pairing through its manifest.
+if (token) document.getElementById("manifest").href = "manifest.webmanifest?pair=" + encodeURIComponent(token);
+function pairWith(text) {
+  const m = String(text).match(/pair=([A-Za-z0-9_-]+)/) || String(text).trim().match(/^([A-Za-z0-9_-]{20,})$/);
+  if (!m) return false;
+  try { localStorage.setItem("elio.token", m[1]); } catch {}
+  location.replace(location.pathname);
+  return true;
+}
 
 // ---------- State ----------
 const $ = id => document.getElementById(id);
@@ -397,6 +409,9 @@ $("mic").addEventListener("pointercancel", () => { held = false; stopRec(); });
 $("form").onsubmit = e => { e.preventDefault(); say($("input").value); $("input").value = ""; $("input").blur(); };
 
 // ---------- Notifications (Web Push) ----------
+$("pairBtn").onclick = () => { if (!pairWith($("pairInput").value)) $("pairErr").textContent = "Link non valido."; };
+$("pairInput").addEventListener("paste", e => setTimeout(() => pairWith($("pairInput").value), 50));
+
 function b64ToBytes(s) { s = s.replace(/-/g, "+").replace(/_/g, "/"); s += "=".repeat((4 - s.length % 4) % 4);
   return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
 async function refreshBell() {

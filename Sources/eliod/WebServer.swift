@@ -62,6 +62,16 @@ final class WebServer: @unchecked Sendable {
             } catch {
                 send(conn, 502, "text/plain", Data("\(error)".utf8))
             }
+        case ("GET", let p) where p.hasPrefix("/manifest.webmanifest?"):
+            // Home-screen apps on iOS don't share storage with Safari: the app added from a paired page
+            // starts already paired (start_url carries the token, only if it's the right one).
+            let pair = URLComponents(string: "http://x\(p)")?.queryItems?.first { $0.name == "pair" }?.value ?? ""
+            guard pair == remoteToken, let data = try? Data(contentsOf: root.appendingPathComponent("manifest.webmanifest")),
+                  var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return send(conn, 404, "text/plain", Data("not found".utf8))
+            }
+            obj["start_url"] = "./#pair=\(pair)"
+            send(conn, 200, "application/manifest+json", (try? JSONSerialization.data(withJSONObject: obj)) ?? data)
         case ("GET", "/push/key"):
             send(conn, 200, "application/json", Data("{\"key\":\"\(WebPush.shared.publicKey)\"}".utf8))
         case ("POST", "/push/subscribe"):
