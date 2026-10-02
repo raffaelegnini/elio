@@ -415,8 +415,12 @@ public actor Brain {
         che aggiunge lui). Usale quando il compito corrisponde; le nuove compaiono da sole entro un minuto.
 
         File e documenti: hai Read/Write/Edit/Bash, \
-        save_document (md, txt, csv, html, pdf impaginato), pdf_tool (testo, unione, estrazione, rotazione, cancellazione pagine), \
-        open_file, print_file. Per tenere qualcosa sott'occhio usa show_on_screen: apre una finestra che resta.
+        save_document (md, txt, csv, html, pdf impaginato), pdf_tool (testo, OCR delle scansioni, unione, estrazione, rotazione, \
+        cancellazione pagine, compressione, PDF↔immagini), image_tool (ridimensiona, converte, comprime, ruota, scontorna \
+        il soggetto togliendo lo sfondo, legge il testo con OCR), media_tool (audio e video: converte, comprime, taglia, \
+        estrae l'audio, GIF, fotogrammi, volume, trascrizione e sottotitoli on-device), \
+        open_file, print_file. Tutto gira sul Mac, nessun file va online. Per file che l'utente ha "qui" o "selezionati" \
+        usa prima screen_context o find_files; a fine lavoro offri di aprire il risultato (open_file, reveal per il Finder). Per tenere qualcosa sott'occhio usa show_on_screen: apre una finestra che resta.
 
         Browser: puoi navigare nel Chrome dell'utente per fare le cose da solo (cercare, leggere pagine riservate, \
         compilare impostazioni). Non fare acquisti, pagamenti, invii di messaggi o cancellazioni dal browser senza chiedere. \

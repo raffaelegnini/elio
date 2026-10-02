@@ -84,6 +84,8 @@ public enum ToolRegistry {
         FileTools.open,
         FileTools.printFile,
         FileTools.pdf,
+        MediaTools.image,
+        MediaTools.media,
         ReminderTools.set,
         ReminderTools.list,
         ApprovalTool.approve,
@@ -168,6 +170,9 @@ public enum ToolRegistry {
         case "watch_control": 60
         case "mail_inbox", "mail_search", "mail_read", "integrations_native": 45
         case "spotify_play": 30
+        case "image_tool": 120
+        case "pdf_tool": 300
+        case "media_tool": 1800   // video encoding and transcription of long recordings
         default: 20
         }
         let box = ArgsBox(args)

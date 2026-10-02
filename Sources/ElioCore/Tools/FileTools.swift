@@ -104,12 +104,14 @@ public enum FileTools {
         name: "pdf_tool",
         description: """
         Lavora sui PDF. action: info (pagine), text (estrae il testo), merge (unisce inputs in output), \
-        extract (pagine "1-3,5" in output), delete (toglie pagine), rotate (ruota pagine di angle gradi).
+        extract (pagine "1-3,5" in output), delete (toglie pagine), rotate (ruota pagine di angle gradi), \
+        ocr (legge il testo dei PDF scansionati), compress (riduce il peso), to_images (pagine in PNG), \
+        from_images (crea un PDF dalle immagini in inputs).
         """,
         properties: [
-            "action": prop("info, text, merge, extract, delete, rotate"),
+            "action": prop("info, text, merge, extract, delete, rotate, ocr, compress, to_images, from_images"),
             "input": prop("PDF di partenza"),
-            "inputs": ["type": "array", "items": ["type": "string"], "description": "PDF da unire (merge)"],
+            "inputs": ["type": "array", "items": ["type": "string"], "description": "PDF da unire (merge) o immagini (from_images)"],
             "pages": prop("Pagine, es. 1-3,5 (1 = prima pagina)"),
             "angle": prop("Gradi per rotate: 90, 180, 270", type: "integer"),
             "output": prop("PDF risultato (default: accanto all'originale con un suffisso)"),
@@ -166,9 +168,67 @@ public enum FileTools {
             try await checkWrite(url, ctx: ctx)
             guard result.write(to: url) else { throw ToolError("Scrittura non riuscita") }
             return "Creato \(url.path) (\(result.pageCount) pagine)."
+        case "ocr":
+            let doc = try load(args["input"] as? String ?? "")
+            let selected = parsePages(args["pages"] as? String ?? "", count: doc.pageCount)
+            let pages = (selected.isEmpty ? Array(0..<doc.pageCount) : selected.sorted()).prefix(60)
+            var text: [String] = []
+            for i in pages {
+                guard let image = render(doc.page(at: i), dpi: 200) else { continue }
+                text.append("— Pagina \(i + 1) —\n" + (try MediaTools.recognizeText(image)))
+            }
+            let input = resolve(args["input"] as? String ?? "")
+            return try MediaTools.long(text.joined(separator: "\n\n"), name: input.deletingPathExtension().lastPathComponent + "-testo")
+        case "compress":
+            let input = resolve(args["input"] as? String ?? "")
+            let doc = try load(input.path)
+            let url = output(default: "compresso")
+            try await checkWrite(url, ctx: ctx)
+            guard doc.write(to: url, withOptions: [.saveImagesAsJPEGOption: true, .optimizeImagesForScreenOption: true]) else {
+                throw ToolError("Scrittura non riuscita")
+            }
+            return "Creato \(url.path) (\(MediaTools.fileSize(input)) → \(MediaTools.fileSize(url)))."
+        case "to_images":
+            let input = resolve(args["input"] as? String ?? "")
+            let doc = try load(input.path)
+            let selected = parsePages(args["pages"] as? String ?? "", count: doc.pageCount)
+            let folder = (args["output"] as? String).map { resolve($0) }
+                ?? ElioPaths.outputDir.appendingPathComponent(input.deletingPathExtension().lastPathComponent + "-pagine", isDirectory: true)
+            try await checkWrite(folder.appendingPathComponent("pagina-1.png"), ctx: ctx)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            var count = 0
+            for i in selected.isEmpty ? Array(0..<doc.pageCount) : selected.sorted() {
+                guard let image = render(doc.page(at: i), dpi: 150) else { continue }
+                try MediaTools.write(image, to: folder.appendingPathComponent("pagina-\(i + 1).png"), type: .png)
+                count += 1
+            }
+            return "Create \(count) immagini in \(folder.path)."
+        case "from_images":
+            let paths = args["inputs"] as? [String] ?? []
+            guard !paths.isEmpty else { throw ToolError("Indica le immagini in inputs") }
+            let result = PDFDocument()
+            for p in paths {
+                let image = try MediaTools.uprightImage(MediaTools.existing(p))
+                guard let page = PDFPage(image: NSImage(cgImage: image, size: .zero)) else { continue }
+                result.insert(page, at: result.pageCount)
+            }
+            let url = output(default: "da-immagini")
+            try await checkWrite(url, ctx: ctx)
+            guard result.write(to: url) else { throw ToolError("Scrittura non riuscita") }
+            return "Creato \(url.path) (\(result.pageCount) pagine)."
         default:
             throw ToolError("Azione sconosciuta")
         }
+    }
+
+    /// A PDF page as a bitmap at the given resolution (white background, rotation applied).
+    static func render(_ page: PDFPage?, dpi: CGFloat) -> CGImage? {
+        guard let page else { return nil }
+        let box = page.bounds(for: .mediaBox)
+        let scale = dpi / 72
+        let rotated = page.rotation % 180 != 0
+        let size = NSSize(width: (rotated ? box.height : box.width) * scale, height: (rotated ? box.width : box.height) * scale)
+        return page.thumbnail(of: size, for: .mediaBox).cgImage(forProposedRect: nil, context: nil, hints: nil)
     }
 
     /// "1-3,5" → zero-based page indexes.
