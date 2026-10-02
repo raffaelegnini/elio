@@ -3,21 +3,24 @@ import ElioCore
 import ElioVoice
 import SwiftUI
 
-/// Always-visible "island" growing out of the notch (menu bar icons can be hidden behind it):
-/// compact while listening, wider while hearing / thinking / speaking. Click → dashboard,
-/// right-click → quick actions.
+/// A small orb in the menu bar, just right of the notch (the notch itself is left to apps like
+/// boring.notch). It glows and pulses with Elio's state: listening, hearing, thinking, speaking,
+/// waiting for an answer, muted. Click → dashboard, right-click → quick actions, hover → what's happening.
 @MainActor
 final class NotchIsland {
     private var panel: NSPanel?
     private var observer: Any?
+    static let size: CGFloat = 26
 
     func attach(_ loop: VoiceLoop, openDashboard: @escaping () -> Void, openSettings: @escaping () -> Void) {
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 64),
+        let s = Self.size
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: s, height: s),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = .statusBar
+        // Above the menu bar so the status items can't cover it.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.isMovable = false
@@ -34,13 +37,13 @@ final class NotchIsland {
         }
     }
 
-    /// Centered under the notch (or under the menu bar on screens without one).
+    /// Vertically centred in the menu bar, 10 pt right of the notch (or of the screen centre without one).
     private func position() {
         guard let panel, let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main else { return }
-        let top = screen.safeAreaInsets.top > 0 ? screen.safeAreaInsets.top : (screen.frame.maxY - screen.visibleFrame.maxY)
-        let x = screen.frame.midX - panel.frame.width / 2
-        let y = screen.frame.maxY - top - panel.frame.height + 2
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        let barHeight = screen.safeAreaInsets.top > 0 ? screen.safeAreaInsets.top : (screen.frame.maxY - screen.visibleFrame.maxY)
+        let notchRight = screen.auxiliaryTopRightArea.map { screen.frame.minX + $0.minX } ?? screen.frame.midX + 100
+        let s = Self.size
+        panel.setFrameOrigin(NSPoint(x: notchRight + 10, y: screen.frame.maxY - barHeight + (barHeight - s) / 2))
     }
 }
 
@@ -48,71 +51,69 @@ struct IslandView: View {
     let loop: VoiceLoop
     let openDashboard: () -> Void
     let openSettings: () -> Void
-    @State private var hover = false
 
-    private var active: Bool {
-        [.hearing, .thinking, .speaking].contains(loop.state) || !loop.confirmations.isEmpty || !loop.questions.isEmpty
+    private var waiting: Bool { !loop.confirmations.isEmpty || !loop.questions.isEmpty }
+    private var busy: Bool { [.hearing, .thinking, .speaking].contains(loop.state) || waiting || loop.routineMode }
+    private var agents: Int { loop.tasks.filter(\.isActive).count }
+
+    private var color: Color {
+        if waiting { return Color(hex: "#FF9F43") }
+        if loop.muted { return Color(hex: "#FF6B61") }
+        if !loop.connected { return Color(hex: "#6E6B62") }
+        return Theme.tint(loop.state)
     }
 
-    private var label: String {
-        if let q = loop.questions.first { return q.question }
-        if let c = loop.confirmations.first { return c.title }
-        if !loop.partial.isEmpty { return loop.partial }
-        if let tool = loop.activeTools.first { return Capability.describe(tool: tool) + "…" }
-        switch loop.state {
-        case .thinking: return "Ci penso…"
-        case .speaking: return loop.turns.last(where: { $0.role == "elio" })?.text ?? "…"
-        case .hearing: return "Ti ascolto"
-        case .muted: return "Microfono spento"
-        default: return Brand.shared.name
-        }
+    private var tooltip: String {
+        if let q = loop.questions.first { return "Aspetta una risposta: \(q.question)" }
+        if let c = loop.confirmations.first { return "Aspetta conferma: \(c.title)" }
+        if !loop.connected { return "\(Brand.shared.name): daemon non raggiungibile" }
+        if loop.muted { return "\(Brand.shared.name): microfono spento" }
+        var s = "\(Brand.shared.name): \(loop.state.label)"
+        if let tool = loop.activeTools.first { s += " · \(Capability.describe(tool: tool))" }
+        if agents > 0 { s += " · \(agents) agenti al lavoro" }
+        return s
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                OrbView(state: loop.state, level: loop.level)
-                    .frame(width: active || hover ? 26 : 18, height: active || hover ? 26 : 18)
-                if active || hover {
-                    Text(label)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .transition(.opacity)
-                    Spacer(minLength: 0)
-                    if loop.state == .thinking || loop.state == .speaking {
-                        Button { loop.stopEverything() } label: {
-                            Image(systemName: "stop.fill").font(.system(size: 9, weight: .bold)).foregroundStyle(Color(hex: "#FF6B61"))
-                        }
-                        .buttonStyle(.plain)
-                        .help("Ferma")
-                    }
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !busy)) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            let pulse = busy ? (sin(t * (loop.state == .thinking ? 5 : 3)) + 1) / 2 : 0
+            let voice = loop.state == .hearing || loop.state == .speaking ? Double(max(0, min(1, loop.level))) : 0
+            ZStack {
+                Circle().fill(Color.black)
+                Circle()
+                    .fill(RadialGradient(colors: [color.opacity(0.95), color.opacity(0.25)], center: .center,
+                                         startRadius: 1, endRadius: 10))
+                    .scaleEffect(0.42 + 0.18 * pulse + 0.25 * voice)
+                    .opacity(loop.connected ? 1 : 0.4)
+                Circle()
+                    .strokeBorder(color.opacity(busy ? 0.6 + 0.4 * pulse : 0.45), lineWidth: 1.5)
+                if loop.state == .thinking {
+                    Circle().trim(from: 0, to: 0.28)
+                        .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                        .rotationEffect(.radians(t * 6))
+                        .padding(1)
+                }
+                if agents > 0 {
+                    Circle().fill(Color.green).frame(width: 6, height: 6)
+                        .overlay(Circle().strokeBorder(Color.black, lineWidth: 1))
+                        .offset(x: 9, y: -9)
                 }
             }
-            .padding(.horizontal, active || hover ? 12 : 8)
-            .frame(width: active || hover ? 340 : 64, height: active || hover ? 38 : 26)
-            .background(
-                UnevenRoundedRectangle(bottomLeadingRadius: 16, bottomTrailingRadius: 16)
-                    .fill(Color.black)
-                    .overlay(UnevenRoundedRectangle(bottomLeadingRadius: 16, bottomTrailingRadius: 16)
-                        .strokeBorder(Theme.tint(loop.state).opacity(active ? 0.55 : 0.2), lineWidth: 1))
-                    .shadow(color: Theme.tint(loop.state).opacity(active ? 0.35 : 0), radius: 10)
-            )
-            .contentShape(Rectangle())
-            .onHover { h in withAnimation(.spring(duration: 0.3)) { hover = h } }
-            .onTapGesture { openDashboard() }
-            .contextMenu {
-                Button("Parla con \(Brand.shared.name)") { loop.activate() }
-                Button(loop.muted ? "Riattiva microfono" : "Silenzia microfono") { loop.setMuted(!loop.muted) }
-                Button("Briefing di oggi") { loop.submit(text: "briefing") }
-                Divider()
-                Button("Dashboard") { openDashboard() }
-                Button("Impostazioni") { openSettings() }
-            }
-            .animation(.spring(duration: 0.35, bounce: 0.25), value: active)
-            Spacer(minLength: 0)
+            .shadow(color: color.opacity(busy ? 0.5 * (0.5 + pulse) : 0), radius: 4)
         }
-        .frame(width: 360, height: 64, alignment: .top)
+        .frame(width: NotchIsland.size, height: NotchIsland.size)
+        .contentShape(Circle())
+        .onTapGesture { openDashboard() }
+        .help(tooltip)
+        .contextMenu {
+            Button("Parla con \(Brand.shared.name)") { loop.activate() }
+            Button(loop.muted ? "Riattiva microfono" : "Silenzia microfono") { loop.setMuted(!loop.muted) }
+            if loop.state == .thinking || loop.state == .speaking { Button("Ferma") { loop.stopEverything() } }
+            Button("Briefing di oggi") { loop.submit(text: "briefing") }
+            Divider()
+            Button("Dashboard") { openDashboard() }
+            Button("Impostazioni") { openSettings() }
+        }
     }
 }
