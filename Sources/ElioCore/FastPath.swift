@@ -142,13 +142,13 @@ public enum FastPath {
             return "Cerco \(c.target)."
         // Music errors (missing permission, Spotify not installed) are answered here: Claude couldn't do better.
         case .play:
-            if c.target.isEmpty { return music { try Spotify.control("play") } }
+            if c.target.isEmpty { return music("far ripartire la musica", addressAs) { try Spotify.control("play") } }
             do { return try await Spotify.play(c.target, type: c.kind.isEmpty ? "track" : c.kind, mine: c.target.lowercased().contains("mia")) }
-            catch { return "\(error)" }
-        case .pause: return music { try Spotify.control("pause") }
-        case .next: return music { try Spotify.control("next") }
-        case .previous: return music { try Spotify.control("previous") }
-        case .nowPlaying: return music { try Spotify.control("now") }
+            catch { return failure("mettere \(c.target)", error, addressAs) }
+        case .pause: return music("mettere in pausa", addressAs) { try Spotify.control("pause") }
+        case .next: return music("passare alla canzone successiva", addressAs) { try Spotify.control("next") }
+        case .previous: return music("tornare alla canzone precedente", addressAs) { try Spotify.control("previous") }
+        case .nowPlaying: return music("vedere cosa sta suonando", addressAs) { try Spotify.control("now") }
         case .volumeUp: return (try? actions.setVolume(.up)).map { "Volume a \($0)." }
         case .volumeDown: return (try? actions.setVolume(.down)).map { "Volume a \($0)." }
         case .volumeSet: return (try? actions.setVolume(.set(max(0, min(100, c.value))))).map { "Volume a \($0)." }
@@ -164,8 +164,23 @@ public enum FastPath {
     }
 }
 
-private func music(_ f: () throws -> String) -> String {
-    do { return try f() } catch { return "\(error)" }
+/// Spoken outcome of a music command: the result, or "Non sono riuscito a …, Signore: <motivo>".
+private func music(_ what: String, _ addressAs: String, _ f: () throws -> String) -> String {
+    do { return try f() } catch { return failure(what, error, addressAs) }
+}
+
+/// A plain-language failure, never a raw error code.
+func failure(_ what: String, _ error: Error, _ addressAs: String) -> String {
+    let raw = "\(error)"
+    let reason: String
+    switch raw {
+    case let r where r.contains("permesso"): reason = r.hasSuffix(".") ? String(r.dropLast()) : r
+    case let r where r.contains("non è installato"): reason = "Spotify non è installato su questo Mac"
+    case let r where r.contains("Spotify API 401") || r.contains("non collegato"): reason = "devo ricollegarmi al suo account Spotify"
+    case let r where r.contains("Spotify API"): reason = "Spotify non me l'ha lasciato fare"
+    default: reason = "qualcosa non ha funzionato"
+    }
+    return "Non sono riuscito a \(what), \(addressAs): \(reason)."
 }
 
 #if canImport(FoundationModels)

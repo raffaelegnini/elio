@@ -182,7 +182,8 @@ public actor Brain {
         let elapsed = { Int(Date().timeIntervalSince(start) * 1000) }
         await memory.log(role: "user", text: text)
 
-        if let matched = matcher.match(text), let reply = await runLocal(matched) {
+        if let matched = matcher.match(text), let raw = await runLocal(matched) {
+            let reply = matched.lang == .it ? Self.addressing(raw, config.addressAs) : raw
             await memory.log(role: "assistant", text: reply, route: Route.local.rawValue)
             out.yield(ServerMessage(type: .done, id: id, text: reply, route: .local, lang: matched.lang, latencyMs: elapsed()))
             return
@@ -191,7 +192,8 @@ public actor Brain {
         // Simple device commands: Apple's on-device model, no Claude round trip.
         let fast = config.appleFastPath ? await FastPath.parse(text) : nil
         if let cmd = fast { log("fast path parsed: \(cmd.action.rawValue) '\(cmd.target)' in \(elapsed()) ms") }
-        if let cmd = fast, let reply = await FastPath.run(cmd, actions: actions, addressAs: config.addressAs) {
+        if let cmd = fast, let raw = await FastPath.run(cmd, actions: actions, addressAs: config.addressAs) {
+            let reply = Self.addressing(raw, config.addressAs)
             log("fast path done in \(elapsed()) ms")
             await memory.log(role: "assistant", text: reply, route: Route.local.rawValue)
             out.yield(ServerMessage(type: .done, id: id, text: reply, route: .local, lang: .it, latencyMs: elapsed()))
@@ -296,6 +298,17 @@ public actor Brain {
 
     /// Per-turn context goes in the message (not the system prompt) so the warm
     /// process never needs a restart and the system prompt stays cacheable.
+    /// "Metto Treasure." → "Metto Treasure, Signore." (local replies too always address the user).
+    static func addressing(_ reply: String, _ addressAs: String) -> String {
+        let r = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !r.isEmpty, !r.contains(addressAs) else { return r }
+        // Into the first sentence: "Volume a 40, Signore." / "Apro Figma, Signore."
+        if let end = r.firstIndex(where: { ".!?".contains($0) }) {
+            return String(r[..<end]) + ", \(addressAs)" + String(r[end...])
+        }
+        return r + ", \(addressAs)."
+    }
+
     static func withContext(_ text: String, ackGiven: Bool = false) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "it_IT")
@@ -423,6 +436,9 @@ public actor Brain {
         Segreti (password, token, chiavi, credenziali):
         - Non ripeterli mai di tua iniziativa: di' che ci sono e dove si trovano. Se l'utente li chiede esplicitamente, \
         scrivili racchiusi tra ⟦ e ⟧ (es. ⟦abc123⟧): l'app li maschera, non li pronuncia e non li archivia.
+
+        Quando qualcosa non riesce: dillo in parole semplici ("Non sono riuscito a mettere la canzone, Signore: Spotify \
+        mi chiede ancora il permesso."), mai codici o messaggi d'errore tecnici, e proponi come risolvere.
 
         Onestà:
         - Non inventare mai dati personali (calendario, mail, task, messaggi): usa gli strumenti o di' che non lo sai.

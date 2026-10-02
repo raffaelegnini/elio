@@ -27,17 +27,32 @@ public enum Spotify {
         while p.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
         if p.isRunning {
             p.terminate()
-            throw ToolError("macOS sta chiedendo il permesso di controllare Spotify: approvi la finestra (o Impostazioni di Sistema → Privacy e sicurezza → Automazione → eliod → Spotify).")
+            askPermission()
+            throw ToolError("macOS mi deve ancora dare il permesso di controllare Spotify: approvi la finestra che le ho aperto.")
         }
         let errText = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         if p.terminationStatus != 0 {
             if errText.contains("-1743") || errText.contains("Not authorized") {
-                throw ToolError("Elio non ha il permesso di controllare Spotify: Impostazioni di Sistema → Privacy e sicurezza → Automazione → eliod → attivi Spotify.")
+                throw ToolError("non ho il permesso di controllare Spotify: lo attivi in Impostazioni di Sistema, Privacy e sicurezza, Automazione, eliod.")
             }
             throw ToolError("Spotify: \(errText.trimmingCharacters(in: .whitespacesAndNewlines))")
         }
         return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Killing osascript after the timeout also closed macOS's permission dialog before anyone could see
+    /// it. This asks once more and waits (in the background) until the user answers.
+    nonisolated(unsafe) static var lastPermissionAsk = Date.distantPast
+    static func askPermission() {
+        guard Date().timeIntervalSince(lastPermissionAsk) > 300 else { return }
+        lastPermissionAsk = Date()
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        p.arguments = ["-e", "tell application \"Spotify\" to get name"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try? p.run()
     }
 
     static var isInstalled: Bool {
@@ -114,7 +129,10 @@ public enum Spotify {
         req.setValue("Bearer \(try await token())", forHTTPHeaderField: "Authorization")
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
-            throw ToolError("Spotify API \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            let msg = ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+                ?? String(decoding: data.prefix(200), as: UTF8.self)
+            throw ToolError("Spotify API \(code): \(msg)")
         }
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
@@ -134,7 +152,7 @@ public enum Spotify {
         }
         let t = ["track", "artist", "album", "playlist"].contains(type) ? type : "track"
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        let res = try await get("/search?q=\(q)&type=\(t)&limit=1&market=from_token")
+        let res = try await get("/search?q=\(q)&type=\(t)&limit=1")
         guard let item = ((res["\(t)s"] as? [String: Any])?["items"] as? [[String: Any]])?.compactMap({ $0 }).first,
               let uri = item["uri"] as? String else { return nil }
         let name = item["name"] as? String ?? query
@@ -163,7 +181,7 @@ public enum Spotify {
         let challenge = Data(SHA256.hash(data: Data(v.utf8))).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         let state = UUID().uuidString
-        let scopes = "user-read-playback-state user-modify-playback-state playlist-read-private playlist-read-collaborative user-library-read user-read-currently-playing"
+        let scopes = "user-read-private user-read-playback-state user-modify-playback-state playlist-read-private playlist-read-collaborative user-library-read user-read-currently-playing"
         var c = URLComponents(string: "https://accounts.spotify.com/authorize")!
         c.queryItems = [
             .init(name: "client_id", value: id), .init(name: "response_type", value: "code"),
