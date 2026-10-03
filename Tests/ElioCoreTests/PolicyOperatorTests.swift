@@ -76,7 +76,9 @@ import Testing
     @Test func escapedQuotesAloneDontAsk() {
         let cmd = "cd /Users/r/dev/DNA/laravel/crm && git pull --ff-only origin main 2>&1 | head -5; for d in a b; do echo \\\"$d\\\"; done"
         #expect(PermissionPolicy.decideOperatorBash(cmd) == .allow)
-        #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": "ls | xargs -n1 echo"], cwd: "/tmp") != .allow)
+        // Project agents may pipe into xargs; deleting through it still asks.
+        #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": "ls | xargs -n1 echo"], cwd: "/tmp") == .allow)
+        #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": "ls | xargs -n1 rm -rf"], cwd: "/tmp") != .allow)
         #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": "npm run dev && ls src | wc -l"], cwd: "/tmp") == .allow)
     }
 }

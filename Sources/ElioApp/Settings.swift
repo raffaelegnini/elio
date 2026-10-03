@@ -216,6 +216,53 @@ private struct Field: View {
     }
 }
 
+/// Several folders: one per row, added with the Finder picker, removed with ⊖.
+/// Used for the project folders (CODICE scans all of them, each one becomes a branch of the network).
+private struct FolderList: View {
+    let label: String
+    @Binding var folders: [String]
+
+    var body: some View {
+        HStack(alignment: .top) {
+            Text(label).font(.system(size: 12.5)).foregroundStyle(Theme.text).frame(width: 190, alignment: .leading)
+                .padding(.top, 3)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(folders.enumerated()), id: \.offset) { i, folder in
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder").foregroundStyle(Theme.accent).frame(width: 16)
+                        Text(folder).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.text)
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 4)
+                        Button { folders.remove(at: i) } label: { Image(systemName: "minus.circle") }
+                            .buttonStyle(.plain).foregroundStyle(Theme.dim).help("Rimuovi")
+                    }
+                }
+                if folders.isEmpty {
+                    Text("Nessuna cartella: aggiungine almeno una.").font(.system(size: 12)).foregroundStyle(Theme.dim)
+                }
+                Button("Aggiungi cartella…", action: add).controlSize(.small)
+            }
+        }
+    }
+
+    private func add() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Aggiungi"
+        panel.message = "Scegli le cartelle che contengono i tuoi progetti"
+        guard panel.runModal() == .OK else { return }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        for url in panel.urls {
+            // Stored with ~ so the config works for any colleague's user name.
+            let path = url.path.hasPrefix(home) ? "~" + url.path.dropFirst(home.count) : url.path
+            let expanded = Set(folders.map { ($0 as NSString).expandingTildeInPath })
+            if !expanded.contains(url.path) { folders.append(path) }
+        }
+    }
+}
+
 private struct SecretField: View {
     let label: String
     let service: String
@@ -354,7 +401,7 @@ private struct BrainSettings: View {
                 }.labelsHidden()
             }
             Field(label: "Percorso di claude", text: $model.config.claudePath)
-            Field(label: "Cartelle dei progetti", text: listBinding($model.config.projectRoots), placeholder: "~/Desktop/dev")
+            FolderList(label: "Cartelle dei progetti", folders: $model.config.projectRoots)
         }
         Group(title: "Sicurezza degli agenti",
               note: "Push, merge, cancellazioni e messaggi chiedono sempre conferma. Test e build eseguono il codice del progetto: con questa opzione chiedono conferma anche loro.") {
@@ -372,8 +419,13 @@ private struct BrainSettings: View {
                 get: { model.config.workflowVoice == "silent" },
                 set: { model.config.workflowVoice = $0 ? "silent" : "talking" })).font(.system(size: 12.5))
             Field(label: "Modello del revisore", text: $model.config.reviewModel, placeholder: "sonnet")
-            Stepper("Agenti per squadra: \(model.config.maxSquadAgents)", value: $model.config.maxSquadAgents, in: 1...16)
+            Stepper("Agenti per missione (al massimo): \(model.config.maxSquadAgents)", value: $model.config.maxSquadAgents, in: 1...12)
                 .font(.system(size: 12.5))
+            Field(label: "Modello degli agenti di squadra", text: $model.config.squadModel, placeholder: "opus")
+            Toggle("Modello leggero per le micro-modifiche (typo, testi, colori)", isOn: $model.config.smartModelRouting)
+                .font(.system(size: 12.5))
+                .help("Opus resta il default. Il modello leggero solo quando Elio e il router concordano che è banale: circa un lavoro su venti.")
+            Toggle("Si prepara mentre parlo (ricerca veloce in parallelo)", isOn: $model.config.speechPrep).font(.system(size: 12.5))
         }
         Group(title: "Comandi rapidi",
               note: "Musica, app, link, volume, blocco schermo e tema li capisce il modello Apple sul Mac in meno di un secondo, senza usare Claude. Tutto il resto va a Claude.") {
@@ -389,7 +441,7 @@ private struct RoutineSettings: View {
         Group(title: "Briefing di oggi", note: "Si adatta all'ora: al mattino la notte e la giornata, di giorno cosa è successo e cosa resta, la sera il riassunto e domani. Parte da solo al primo sblocco dopo l'orario minimo nei giorni feriali.") {
             Field(label: "Dalle", text: $model.config.briefEarliest, placeholder: "07:30")
             Field(label: "Al più tardi alle", text: $model.config.briefLatest, placeholder: "09:30")
-            Toggle("Sigla d'apertura", isOn: $model.config.briefOpening).font(.system(size: 12.5))
+            Toggle("Sigla d'apertura (briefing e recap)", isOn: $model.config.briefOpening).font(.system(size: 12.5))
         }
         Group(title: "Recap di fine giornata") {
             Field(label: "Orario automatico (vuoto = solo a comando)", text: $model.config.recapTime, placeholder: "18:30")

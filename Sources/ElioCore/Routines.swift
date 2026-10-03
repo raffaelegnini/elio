@@ -63,13 +63,16 @@ public actor Routines {
         if hour < 12 {
             focus = """
             È mattina: cosa è successo stanotte e cosa c'è oggi. Ordine: night_recap e list_tasks (lavori notturni, \
-            branch da revisionare) → calendar_events di oggi → list_reminders → slack_mentions e slack_dms delle ultime \
-            16 ore. Alla fine chiama slack_clock_in (chiede lei la conferma).
+            branch da revisionare) → calendar_events di oggi → todo_list (cosa ha in lista oggi e cosa è rimasto da ieri: \
+            se ce n'è, chiedigli se riportarlo a oggi) → list_reminders → slack_mentions e slack_dms delle ultime \
+            16 ore. Alla fine chiama slack_clock_in (chiede lei la conferma) e chiedigli cosa vuole fare oggi: \
+            se te lo dice, lo metti tu in lista.
             """
         } else if hour < 18 {
             focus = """
             È giorno: cosa è successo finora e cosa resta da fare oggi. Ordine: day_summary → calendar_events di oggi \
-            (fatti e ancora da fare) → list_reminders → slack_mentions e slack_dms di oggi → list_tasks.
+            (fatti e ancora da fare) → todo_list (quante fatte, cosa resta) → list_reminders → slack_mentions e slack_dms \
+            di oggi → list_tasks.
             """
         } else {
             focus = """
@@ -104,8 +107,10 @@ public actor Routines {
         await brain?.runRoutine(kind: "recap", prompt: """
         [routine: recap] Raffaele chiude la giornata. L'app lo ha GIÀ salutato e gli ha detto che gli fai il riassunto: \
         non salutare, entra subito nel contenuto. Racconta MENTRE raccogli, una frase dopo ogni strumento: \
-        day_summary → calendar_events di oggi e di domani → slack_mentions e slack_dms di oggi (se c'è Slack) → list_tasks. \
-        Frasi brevi e parlate, al massimo cinque in tutto: fatto, in sospeso, primo impegno di domani.
+        day_summary → todo_list (quante voci ha fatto, cosa resta) → calendar_events di oggi e di domani → slack_mentions \
+        e slack_dms di oggi (se c'è Slack) → list_tasks. \
+        Frasi brevi e parlate, al massimo cinque in tutto: fatto, in sospeso, primo impegno di domani. Chiedigli se le voci \
+        rimaste vanno a domani (se dice sì, todo_update con day domani).
         Alla fine show_on_screen (titolo "Recap di oggi": fatto, in sospeso, domani).
         """)
     }

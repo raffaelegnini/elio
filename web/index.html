@@ -84,9 +84,31 @@
   #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 120px); padding: 12px 14px; border-radius: 14px;
     background: var(--panel); border: 1px solid var(--line); font-size: 13px; display: none; z-index: 5; backdrop-filter: blur(16px); }
   #toast.show { display: block; }
-  #wfSheet { position: fixed; inset: 0; z-index: 7; background: var(--bg); display: none; flex-direction: column;
+  .sheet, #wfSheet { position: fixed; inset: 0; z-index: 7; background: var(--bg); display: none; flex-direction: column;
     padding: calc(env(safe-area-inset-top) + 10px) 16px calc(env(safe-area-inset-bottom) + 10px); }
-  #wfSheet.show { display: flex; }
+  #wfSheet.show, .sheet.show { display: flex; }
+  .sheet .top, #wfSheet .top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .sheet h2 { font: 700 13px var(--mono); letter-spacing: .3em; margin: 0; flex: 1; }
+  .seg.tri { grid-template-columns: 1fr 1fr 1fr; margin: 6px 0 12px; }
+  #todoList { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .td { display: flex; align-items: flex-start; gap: 12px; padding: 11px 4px; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .td .ck { width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--dim); flex: none; display: grid; place-items: center;
+    color: #000; font-size: 13px; background: transparent; }
+  .td.imp .ck { border-color: var(--accent); }
+  .td.done .ck { background: var(--accent); border-color: var(--accent); }
+  .td .tx { flex: 1; min-width: 0; }
+  .td.done .tx .t { color: var(--dim); text-decoration: line-through; }
+  .td.imp:not(.done) .tx .t { font-weight: 600; }
+  .td .m { font: 11px var(--mono); color: var(--dim); margin-top: 2px; }
+  .td .more { background: none; border: 0; color: var(--dim); font-size: 18px; padding: 0 4px; }
+  .td .acts { display: none; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .td.open .acts { display: flex; }
+  .td .acts button { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 8px; padding: 5px 9px; font-size: 12px; }
+  .tdsec { font: 600 10px var(--mono); letter-spacing: .18em; color: var(--dim); margin: 14px 0 4px; display: flex; justify-content: space-between; }
+  .tdsec.late { color: var(--warn); }
+  .tdsec button { background: none; border: 0; color: var(--accent); font: 600 12px -apple-system, system-ui; }
+  #todoForm { margin-top: 10px; }
+  #todoAdd { width: 42px; height: 42px; border-radius: 50%; border: 0; background: var(--accent); color: #000; font-size: 20px; }
   #wfSheet .top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   #wfSheet h2 { font: 700 13px var(--mono); letter-spacing: .3em; margin: 0; flex: 1; }
   .seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 3px; margin-bottom: 6px; }
@@ -120,6 +142,7 @@
     <span class="spacer"></span>
     <span id="conn" class="dot"></span>
     <button id="bell" class="icon-btn" title="Notifiche">🔔</button>
+    <button id="todoBtn" class="icon-btn" title="To do">☑</button>
     <button id="wfBtn" class="icon-btn" title="Workflow">▦</button>
     <button id="voiceToggle" class="icon-btn" title="Voce">🔊</button>
   </header>
@@ -136,6 +159,14 @@
   </div>
 </div>
 <div id="toast"></div>
+<div id="todoSheet" class="sheet">
+  <div class="top"><h2>TO DO</h2><span id="todoCount" style="font:600 12px var(--mono);color:var(--accent)"></span><button id="todoClose" class="icon-btn" aria-label="Chiudi">✕</button></div>
+  <div class="bar"><i id="todoBar" style="width:0%"></i></div>
+  <div class="seg tri" id="todoTabs"><button data-t="today" class="on">Oggi</button><button data-t="tomorrow">Domani</button><button data-t="someday">Prima o poi</button></div>
+  <div id="todoList"></div>
+  <form id="todoForm" autocomplete="off"><input id="todoInput" placeholder="Aggiungi… (!importante @domani 18:30)" enterkeyhint="done">
+    <button id="todoAdd" type="submit" aria-label="Aggiungi">＋</button></form>
+</div>
 <div id="wfSheet">
   <div class="top"><h2>WORKFLOW</h2><button id="wfClose" class="icon-btn" aria-label="Chiudi">✕</button></div>
   <div class="seg" id="modeSeg"><button data-mode="talking">🗣 Parlante</button><button data-mode="silent">🤫 Silenziosa</button></div>
@@ -221,15 +252,19 @@ function handle(m) {
   if (m.type === "event") return handleEvent(m);
   if (!current || m.id !== current.id) return;
   if (m.type === "delta") {
+    // Whole sentences arrive as Elio writes them (between one tool and the next): say each one right away.
     current.text += m.text || "";
     current.el.querySelector(".text").textContent = current.text;
     feed.scrollTop = feed.scrollHeight;
+    speak((m.text || "").trim());
+    current.spoken = current.text.length;
   } else if (m.type === "done") {
-    const text = m.route === "local" ? (m.text || "") : (current.text || m.text || "");
+    const text = m.route === "local" ? (m.text || "") : (m.text || current.text || "");
     current.el.querySelector(".text").textContent = text;
     current.el.querySelector(".meta").textContent = ` ${m.route || ""} ${m.latencyMs ?? ""}ms`;
+    const rest = m.route === "local" ? text : text.slice(current.spoken || 0);
     current = null;
-    speak(text);
+    speak(rest.trim());
   } else if (m.type === "error") {
     current.el.querySelector(".text").textContent = "⚠️ " + (m.text || "errore");
     current = null;
@@ -299,6 +334,9 @@ function handleEvent(m) {
       break;
     case "mode":
       setMode(m.text);
+      break;
+    case "todos":
+      try { todoData = JSON.parse(m.payload || "null"); if (todoOpen) renderTodos(); } catch {}
       break;
   }
   if (m.speak && m.text) { addMsg("event", m.text); speak(m.text); }
@@ -408,12 +446,75 @@ function renderWorkflows(list) {
     el.appendChild(card);
   }
 }
+// ---------- To do ----------
+let todoTab = "today", todoOpen = false, todoData = null;
+async function todoCall(body) {
+  try {
+    const r = await fetch("api/todos", body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token }, body: JSON.stringify(body) }
+                                           : { headers: { "X-Elio-Token": token } });
+    if (!r.ok) throw new Error(r.status);
+    todoData = await r.json();
+    renderTodos();
+  } catch { $("todoList").innerHTML = `<div class="card" style="color:var(--dim)">Non riesco a leggere la lista dal Mac.</div>`; }
+}
+function todoRow(t, late) {
+  const el = document.createElement("div");
+  el.className = "td" + (t.done ? " done" : "") + (t.priority > 0 ? " imp" : "");
+  const meta = [late && t.day ? "dal " + t.day.slice(8) + "/" + t.day.slice(5, 7) : "", t.time ? "⏰ " + t.time : "",
+                t.estimate ? "~" + t.estimate + " min" : "", t.focus ? "● in corso" : "", t.notes || ""].filter(Boolean).join(" · ");
+  el.innerHTML = `<button class="ck">${t.done ? "✓" : ""}</button><div class="tx"><div class="t"></div><div class="m"></div>
+    <div class="acts"><button data-a="important">${t.priority > 0 ? "☆ Normale" : "★ Importante"}</button><button data-a="focus">${t.focus ? "Togli focus" : "◎ Ci lavoro ora"}</button>
+    <button data-a="${late || todoTab !== "today" ? "today" : "tomorrow"}">${late || todoTab !== "today" ? "→ Oggi" : "→ Domani"}</button><button data-a="remove">🗑</button></div></div><button class="more">⋯</button>`;
+  el.querySelector(".t").textContent = t.text;
+  el.querySelector(".m").textContent = meta;
+  if (!meta) el.querySelector(".m").remove();
+  el.querySelector(".ck").onclick = () => { if (navigator.vibrate) navigator.vibrate(15); todoCall({ action: "toggle", id: t.id }); };
+  el.querySelector(".more").onclick = () => el.classList.toggle("open");
+  el.querySelector(".acts").onclick = e => { const a = e.target.dataset.a; if (a) todoCall({ action: a, id: t.id }); };
+  return el;
+}
+function renderTodos() {
+  if (!todoData) return;
+  const el = $("todoList"); el.innerHTML = "";
+  const today = todoData.today || [];
+  const done = today.filter(t => t.done).length;
+  $("todoCount").textContent = today.length ? `${done}/${today.length}` : "";
+  $("todoBar").style.width = today.length ? (100 * done / today.length) + "%" : "0%";
+  const list = { today, tomorrow: todoData.tomorrow || [], someday: todoData.someday || [] }[todoTab];
+  if (todoTab === "today" && (todoData.overdue || []).length) {
+    const h = document.createElement("div"); h.className = "tdsec late";
+    h.innerHTML = `<span>RIMASTE INDIETRO (${todoData.overdue.length})</span><button>Porta a oggi</button>`;
+    h.querySelector("button").onclick = () => todoCall({ action: "carry" });
+    el.appendChild(h);
+    todoData.overdue.forEach(t => el.appendChild(todoRow(t, true)));
+    const s = document.createElement("div"); s.className = "tdsec"; s.textContent = "OGGI"; el.appendChild(s);
+  }
+  const open = list.filter(t => !t.done), closed = list.filter(t => t.done);
+  [...open.filter(t => t.focus), ...open.filter(t => !t.focus), ...closed].forEach(t => el.appendChild(todoRow(t)));
+  if (!list.length) el.insertAdjacentHTML("beforeend", `<div style="color:var(--dim);padding:12px 4px">${todoTab === "today" ? "Niente in lista. Dimmi cosa vuoi fare oggi." : "Niente qui."}</div>`);
+}
+$("todoTabs").onclick = e => {
+  const t = e.target.closest("button")?.dataset.t; if (!t) return;
+  todoTab = t;
+  document.querySelectorAll("#todoTabs button").forEach(b => b.classList.toggle("on", b.dataset.t === t));
+  renderTodos();
+};
+$("todoForm").onsubmit = e => {
+  e.preventDefault();
+  let text = $("todoInput").value.trim(); if (!text) return;
+  if (!text.includes("@")) text += todoTab === "tomorrow" ? " @domani" : todoTab === "someday" ? " @prima o poi" : "";
+  $("todoInput").value = "";
+  todoCall({ action: "add", text });
+};
+$("todoBtn").onclick = () => { todoOpen = true; $("todoSheet").classList.add("show"); todoCall(); };
+$("todoClose").onclick = () => { todoOpen = false; $("todoSheet").classList.remove("show"); };
+
 $("wfBtn").onclick = () => { wfOpen = true; $("wfSheet").classList.add("show"); loadWorkflows(); };
 $("wfClose").onclick = () => { wfOpen = false; $("wfSheet").classList.remove("show"); };
 
 // ---------- Voice out (ElevenLabs via the Mac) ----------
 const audio = new Audio();
-let audioUnlocked = false, speakQueue = Promise.resolve();
+let audioUnlocked = false, speakQueue = Promise.resolve(), speaking = 0;
 function silentWav() {
   // 0.05s of silence, 8 kHz mono 16-bit.
   const n = 400, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
@@ -432,7 +533,8 @@ function unlockAudio() {
   audio.play().catch(() => {});
 }
 function speak(text) {
-  if (!voiceOn || !text) { setState("listening", "pronto"); return; }
+  if (!voiceOn || !text) { if (!speaking) setState("listening", "pronto"); return; }
+  speaking++;
   speakQueue = speakQueue.then(async () => {
     try {
       const r = await fetch("tts", { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token },
@@ -445,7 +547,8 @@ function speak(text) {
       await new Promise(res => { audio.onended = res; audio.onerror = res; });
       URL.revokeObjectURL(url);
     } catch (e) { console.warn("tts", e); }
-    setState("listening", "pronto");
+    speaking--;
+    if (!speaking) setState("listening", "pronto");
   });
 }
 $("voiceToggle").onclick = () => {

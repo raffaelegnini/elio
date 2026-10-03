@@ -1,6 +1,7 @@
 import Foundation
 import ElioCore
 import Network
+import Synchronization
 
 func log(_ message: String) {
     FileHandle.standardError.write(Data("[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n".utf8))
@@ -113,6 +114,9 @@ final class Server: @unchecked Sendable {
             Task { await brain.tasks.control(id, action: action) }
         case .cancelTurn:
             Task { await brain.cancelCurrentTurn() }
+        case .prepare(let id, let text):
+            guard mode == .local else { return }
+            Task { await brain.prepare(id: id, text: text) }
         case .mode(let raw):
             let mode = Attention.Mode(rawValue: raw) ?? .talking
             Attention.set(mode)
@@ -165,10 +169,35 @@ final class Server: @unchecked Sendable {
         }
     }
 
+    /// Reply text waiting for the end of its sentence, per request (phone only).
+    private let pendingText = Mutex<[String: String]>([:])
+
+    /// Appends a delta and returns the complete sentences it closed, if any.
+    private func phoneSentences(_ message: ServerMessage) -> String? {
+        guard let id = message.id, let chunk = message.text else { return nil }
+        return pendingText.withLock { pending -> String? in
+            let text = (pending[id] ?? "") + chunk
+            // Last sentence end: punctuation followed by a space or a newline.
+            guard let r = text.range(of: #"[.!?…:;]\s|\n"#, options: [.regularExpression, .backwards]) else {
+                pending[id] = text
+                return nil
+            }
+            pending[id] = String(text[r.upperBound...])
+            return String(text[..<r.upperBound])
+        }
+    }
+
     private func send(_ message: ServerMessage, on conn: NWConnection) {
         var message = message
         if mode == .remote {
-            if message.type == .delta { return }
+            if message.type == .delta {
+                // The phone speaks the reply sentence by sentence: deltas go out as whole sentences only,
+                // so the secret filter sees complete text (a token split across chunks would slip through).
+                guard let sentences = phoneSentences(message) else { return }
+                message.text = sentences
+            } else if message.type == .done || message.type == .error, let id = message.id {
+                pendingText.withLock { $0[id] = nil }
+            }
             message.text = message.text.map { SecretFilter.redact($0) }
             message.payload = message.payload.map { SecretFilter.redact($0) }
         }

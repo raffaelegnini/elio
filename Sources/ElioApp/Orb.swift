@@ -30,6 +30,8 @@ enum Theme {
 /// (A dashboard animating at 60 fps in the background used ~75% CPU and slowed the whole Mac.)
 extension EnvironmentValues {
     @Entry var animationsLive = true
+    /// Frame rate for continuous animations: full when the window is being looked at, lower otherwise, 0 = paused.
+    @Entry var animationFPS: Double = 30
 }
 
 /// Name and accent of the assistant, editable at runtime from Settings.
@@ -59,24 +61,38 @@ extension Color {
     }
 }
 
+/// The orb bound to the voice loop. Reads the mic level in its own body, so ~12 level updates a
+/// second redraw only the orb, not the view that contains it (the whole dashboard graph before).
+struct LiveOrb: View {
+    let loop: VoiceLoop
+    var body: some View { OrbView(state: loop.state, level: loop.level) }
+}
+
 /// The "brain": a field of neurons orbiting a core, wired to their neighbours.
 /// Energy follows the conversation state; the mic level makes it breathe.
+///
+/// Live it runs on Core Animation at the window's frame rate (60 when you look at it); each frame is a
+/// handful of batched paths (synapses grouped into opacity bands, all neurons in one path).
 struct OrbView: View {
     var state: VoiceLoop.State
     var level: Float
     @Environment(\.animationsLive) private var animationsLive
+    @Environment(\.animationFPS) private var fps
+    @Environment(\.liveLayers) private var liveLayers
 
     private static let neurons: [Neuron] = (0..<64).map { Neuron(seed: $0) }
+    /// Synapse opacity bands: enough steps that the fade reads continuous.
+    private static let bands = 10
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: [.thinking, .speaking, .hearing].contains(state) ? 1.0 / 30 : 1.0 / 8,
-                                paused: !animationsLive)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            Canvas { ctx, size in
-                draw(&ctx, size: size, t: t)
+        if liveLayers {
+            GeometryReader { geo in
+                let size = geo.size
+                VectorLayer(fps: animationsLive ? fps : 0) { t in frame(size: size, t: t) }
             }
+        } else {
+            Canvas { ctx, size in frame(size: size, t: Date().timeIntervalSinceReferenceDate).draw(in: &ctx) }
         }
-        .animation(.easeInOut(duration: 0.4), value: state)
     }
 
     private var energy: Double {
@@ -90,71 +106,72 @@ struct OrbView: View {
         }
     }
 
-    private func draw(_ ctx: inout GraphicsContext, size: CGSize, t: Double) {
+    func frame(size: CGSize, t: Double) -> VectorFrame {
+        var f = VectorFrame()
         let c = CGPoint(x: size.width / 2, y: size.height / 2)
         let r = min(size.width, size.height) / 2
         let tint = Theme.tint(state)
         let lvl = Double(level)
+        let energy = self.energy
         let speed = 0.12 + energy * 0.5
+        func cg(_ o: Double) -> CGColor { Ink(tint, opacity: o).cgColor }
 
         // Halo.
-        let halo = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
-        ctx.fill(halo, with: .radialGradient(
-            Gradient(colors: [tint.opacity(0.22 + lvl * 0.25), tint.opacity(0.04), .clear]),
-            center: c, startRadius: 0, endRadius: r))
+        f.glows.append(Glow(center: c, radius: r, colors: [cg(0.22 + lvl * 0.25), cg(0.04), cg(0)]))
 
         // Neurons.
-        var points: [(CGPoint, Double)] = []
-        for n in Self.neurons {
+        let neurons = Self.neurons
+        var xs = [CGFloat](repeating: 0, count: neurons.count)
+        var ys = [CGFloat](repeating: 0, count: neurons.count)
+        for (i, n) in neurons.enumerated() {
             let angle = n.phase + t * speed * n.speed
             let wobble = sin(t * n.wobbleSpeed + n.phase) * 0.06
             let radius = r * (n.radius + wobble + lvl * 0.08 * n.radius)
-            let p = CGPoint(x: c.x + cos(angle) * radius,
-                            y: c.y + sin(angle) * radius * n.tilt)
-            points.append((p, n.size))
+            xs[i] = c.x + cos(angle) * radius
+            ys[i] = c.y + sin(angle) * radius * n.tilt
         }
 
-        // Synapses between close neurons; firing pulses when thinking.
+        // Synapses between close neurons, one path per opacity band.
         let maxDist = r * (0.38 + energy * 0.12)
-        for i in points.indices {
-            for j in (i + 1)..<points.count {
-                let a = points[i].0, b = points[j].0
-                let d = hypot(a.x - b.x, a.y - b.y)
-                guard d < maxDist else { continue }
-                let strength = 1 - d / maxDist
-                var path = Path()
-                path.move(to: a)
-                path.addLine(to: b)
-                let fire = state == .thinking ? (sin(t * 6 + Double(i * 7 + j)) + 1) / 2 : 0.3
-                ctx.stroke(path, with: .color(tint.opacity(strength * (0.12 + 0.35 * energy * fire))),
-                           lineWidth: 0.7)
+        let maxD2 = maxDist * maxDist
+        let thinking = state == .thinking
+        let top = 0.47
+        let inks = (0..<Self.bands).map { Ink(tint, opacity: (Double($0) + 0.5) / Double(Self.bands) * top, width: 0.7) }
+        for i in 0..<neurons.count {
+            for j in (i + 1)..<neurons.count {
+                let dx = xs[i] - xs[j], dy = ys[i] - ys[j]
+                let d2 = dx * dx + dy * dy
+                guard d2 < maxD2 else { continue }
+                let strength = 1 - sqrt(d2) / maxDist
+                let fire = thinking ? (sin(t * 6 + Double(i * 7 + j)) + 1) / 2 : 0.3
+                let alpha = strength * (0.12 + 0.35 * energy * fire)
+                let band = min(Self.bands - 1, Int(alpha / top * Double(Self.bands)))
+                f.segment(CGPoint(x: xs[i], y: ys[i]), CGPoint(x: xs[j], y: ys[j]), inks[band])
             }
         }
-        for (p, s) in points {
-            let size = s * (1 + lvl * 0.8)
-            let dot = Path(ellipseIn: CGRect(x: p.x - size / 2, y: p.y - size / 2, width: size, height: size))
-            ctx.fill(dot, with: .color(tint.opacity(0.55 + 0.45 * energy)))
-        }
 
-        // HUD rings: rotating tick arcs.
+        let dotInk = Ink(tint, opacity: 0.55 + 0.45 * energy)
+        let grow = 1 + lvl * 0.8
+        for (i, n) in neurons.enumerated() { f.circle(CGPoint(x: xs[i], y: ys[i]), n.size * grow / 2, dotInk) }
+
+        // HUD rings: rotating tick arcs, one path per ring.
         for (k, ring) in [(0.92, 1.0), (0.80, -1.6)].enumerated() {
             let rr = r * ring.0
             let rot = t * speed * ring.1
-            for seg in 0..<(k == 0 ? 3 : 5) {
-                let start = rot + Double(seg) * (2 * .pi / Double(k == 0 ? 3 : 5))
-                var arc = Path()
-                arc.addArc(center: c, radius: rr, startAngle: .radians(start),
-                           endAngle: .radians(start + (k == 0 ? 1.4 : 0.5)), clockwise: false)
-                ctx.stroke(arc, with: .color(tint.opacity(0.35 + 0.3 * energy)), lineWidth: k == 0 ? 1.2 : 2.2)
+            let count = k == 0 ? 3 : 5
+            let arcs = CGMutablePath()
+            for seg in 0..<count {
+                let start = rot + Double(seg) * (2 * .pi / Double(count))
+                arcs.move(to: CGPoint(x: c.x + cos(start) * rr, y: c.y + sin(start) * rr))
+                arcs.addArc(center: c, radius: rr, startAngle: start, endAngle: start + (k == 0 ? 1.4 : 0.5), clockwise: false)
             }
+            f.add(arcs, Ink(tint, opacity: 0.35 + 0.3 * energy, width: k == 0 ? 1.2 : 2.2), .front)
         }
 
         // Core.
         let core = r * (0.16 + lvl * 0.07 + (state == .speaking ? sin(t * 9) * 0.015 : 0))
-        let coreRect = CGRect(x: c.x - core, y: c.y - core, width: core * 2, height: core * 2)
-        ctx.fill(Path(ellipseIn: coreRect), with: .radialGradient(
-            Gradient(colors: [.white.opacity(0.95), tint.opacity(0.9), tint.opacity(0)]),
-            center: c, startRadius: 0, endRadius: core))
+        f.glows.append(Glow(center: c, radius: core, colors: [CGColor(gray: 1, alpha: 0.95), cg(0.9), cg(0)]))
+        return f
     }
 }
 

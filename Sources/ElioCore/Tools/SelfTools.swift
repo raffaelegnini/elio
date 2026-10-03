@@ -35,6 +35,11 @@ public enum SelfTools {
         "tasteReview": ("un revisore controlla il lavoro degli agenti sui gusti dell'utente e fa correggere", false),
         "reviewModel": ("modello per revisioni di gusto e decisioni delegate", false),
         "maxSquadAgents": ("numero massimo di agenti per squadra", false),
+        "squadModel": ("modello degli agenti di squadra, scout e coordinatore (sonnet/opus/haiku)", false),
+        "speechPrep": ("si prepara mentre l'utente parla (sessione veloce di sola lettura)", false),
+        "prepModel": ("modello della preparazione mentre l'utente parla", false),
+        "smartModelRouting": ("modello leggero solo per le micro-modifiche banali (Opus per tutto il resto)", false),
+        "lightModel": ("modello leggero per le micro-modifiche", false),
     ]
 
     static let get = ElioTool(

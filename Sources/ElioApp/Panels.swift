@@ -72,6 +72,8 @@ struct HUDButton: ButtonStyle {
 struct WorkflowRow: View {
     let task: TaskInfo
     var expanded = false
+    /// What it's doing in words (instead of the raw last command).
+    var now: String?
     /// pause / resume / stop
     var control: ((String) -> Void)? = nil
 
@@ -95,9 +97,11 @@ struct WorkflowRow: View {
                     Text(summary).font(.system(size: 11.5)).foregroundStyle(Theme.text.opacity(0.85))
                         .lineLimit(4).padding(.leading, 16)
                 }
-            } else if let last = task.steps.last, task.status == .running || task.status == .waitingConfirmation {
-                Text(last).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.dim)
-                    .lineLimit(1).padding(.leading, 16)
+            } else if let line = now ?? task.steps.last, task.isActive {
+                Text(line).font(.system(size: 11.5)).foregroundStyle(task.status == .waitingConfirmation ? Color(hex: "#FF9F43") : Theme.dim)
+                    .lineLimit(2).padding(.leading, 16)
+            } else if let summary = task.summary, !task.isActive {
+                Text(summary).font(.system(size: 11)).foregroundStyle(Theme.dim).lineLimit(2).padding(.leading, 16)
             }
         }
     }
@@ -405,5 +409,40 @@ struct BusyBar: View {
     private var current: String {
         if let tool = loop.activeTools.first { return Capability.describe(tool: tool) + "…" }
         return loop.state == .speaking ? "Sta parlando" : "Sta lavorando…"
+    }
+}
+
+/// A mission in the dashboard: goal, one line per active agent saying what it's doing, open for the full view.
+struct MissionSummary: View {
+    let loop: VoiceLoop
+    let squad: SquadInfo
+    let open: () -> Void
+
+    var body: some View {
+        let all = loop.tasks.filter { $0.squad == squad.id }
+            .sorted { ($0.startedAt.timeIntervalSince1970, $0.member ?? "") < ($1.startedAt.timeIntervalSince1970, $1.member ?? "") }
+        let active = all.filter(\.isActive)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.3.sequence.fill").font(.system(size: 10)).foregroundStyle(Theme.accent)
+                Text(squad.goal).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                Spacer()
+                Text("APRI ↗").font(Theme.mono).foregroundStyle(Theme.accent)
+            }
+            ForEach(active.prefix(5)) { m in
+                HStack(alignment: .top, spacing: 6) {
+                    Text(m.member ?? "agente").font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(AgentPalette.color(m, in: all)).frame(width: 70, alignment: .leading)
+                    Text(AgentActivity.now(m, log: loop.taskLogs[m.id] ?? []))
+                        .font(.system(size: 11)).foregroundStyle(m.status == .waitingConfirmation ? Color(hex: "#FF9F43") : Theme.text.opacity(0.85))
+                        .lineLimit(1)
+                }
+            }
+            if active.isEmpty { Text("In attesa…").font(.system(size: 11)).foregroundStyle(Theme.dim) }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color.white.opacity(0.05)))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: open)
     }
 }

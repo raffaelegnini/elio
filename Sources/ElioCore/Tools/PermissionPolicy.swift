@@ -26,7 +26,8 @@ public enum PermissionPolicy {
         case "Bash":
             let command = (input["command"] as? String) ?? ""
             // Only destructive or outward-facing commands need an OK; "strict" brings back the safe-list.
-            return onMac || !strictCodeExecution ? decideOperatorBash(command) : decideBash(command)
+            if strictCodeExecution, !onMac { return decideBash(command) }
+            return onMac ? decideOperatorBash(command) : decideDeveloperBash(command, cwd: cwd)
         default:
             if tool.hasPrefix("mcp__elio__") { return .allow }
             // The user asked Elio to drive their browser on its own (Settings → Autonomia).
@@ -124,6 +125,121 @@ public enum PermissionPolicy {
         return .allow
     }
 
+    /// Project agents (code, squads): they work like a developer in their repo. Everything local and
+    /// reversible runs — shells, pipes, loops, inline scripts, tests, builds, flutter, curl GETs, git on
+    /// their branch — because git can undo it. Asked only: what destroys or can't be undone (push, history
+    /// rewrites, recursive deletes of real code, DB wipes), what leaves the Mac (POSTs, ssh, publishing),
+    /// what touches credentials or login items, and what eats disk/CPU (docker, global installs, simulators).
+    public static func decideDeveloperBash(_ command: String, cwd: String) -> Decision {
+        let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cmd.isEmpty { return .allow }
+        // `zsh -lic 'php artisan test'`: judge what's inside, not the wrapper.
+        let text = unwrapShells(cmd)
+        func matches(_ patterns: [String]) -> Bool {
+            patterns.contains { text.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+        }
+        if matches(developerDangerous) { return .confirm(.dangerous) }
+        if hasDestructiveDelete(text, cwd: cwd) { return .confirm(.dangerous) }
+        if matches(developerHeavy + developerOutward) { return .confirm(.normal) }
+        return .allow
+    }
+
+    /// The commands inside `sh -c '…'`, `zsh -lic "…"`, `bash -c …` (nested ones too), joined to the outer text.
+    static func unwrapShells(_ cmd: String) -> String {
+        var text = cmd
+        for _ in 0..<3 {
+            guard let r = text.range(of: #"\b(?:sh|bash|zsh|fish)\s+-[a-zA-Z]*c\s+('([^']*)'|"((?:[^"\\]|\\.)*)")"#,
+                                     options: .regularExpression) else { break }
+            let inner = String(text[r]).replacingOccurrences(of: #"^\S+\s+\S+\s+"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+            text.replaceSubrange(r, with: " ; " + inner + " ; ")
+        }
+        return text
+    }
+
+    /// `rm -r` of anything but generated folders (node_modules, build, dist, caches) or temp files,
+    /// and any delete outside the project. Removing single files in the repo is fine: git has them.
+    static func hasDestructiveDelete(_ text: String, cwd: String) -> Bool {
+        let generated = #"^(\./)?([\w.-]+/)*(node_modules|vendor|build|dist|out|\.next|\.nuxt|coverage|\.cache|cache|tmp|\.dart_tool|\.build|DerivedData|Pods|\.gradle|\.turbo|\.pytest_cache|__pycache__|\.phpunit\.cache|storage/framework/\w+|bootstrap/cache)(/.*)?$|^/tmp/|^/private/tmp/|^\$TMPDIR"#
+        for part in text.splitOutsideQuotes(";|&\n") {
+            let t = tokens(part.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "(){}"))))
+            guard let verb = t.first.map({ ($0 as NSString).lastPathComponent }), ["rm", "rmdir", "unlink", "shred", "srm"].contains(verb) else {
+                // find -delete / -exec rm: only on generated folders.
+                if t.first == "find", t.contains(where: { $0 == "-delete" || $0 == "rm" }) {
+                    let roots = t.dropFirst().prefix { !$0.hasPrefix("-") }
+                    if roots.isEmpty || roots.contains(where: { $0.range(of: generated, options: .regularExpression) == nil }) { return true }
+                }
+                continue
+            }
+            let flags = t.dropFirst().filter { $0.hasPrefix("-") }
+            let recursive = flags.contains { $0.hasPrefix("-") && !$0.hasPrefix("--") && ($0.contains("r") || $0.contains("R")) } || flags.contains("--recursive")
+            let targets = t.dropFirst().filter { !$0.hasPrefix("-") }
+            if verb == "shred" || verb == "srm" { return true }
+            for target in targets {
+                let generatedTarget = target.range(of: generated, options: .regularExpression) != nil
+                if generatedTarget { continue }
+                // Wildcards at the top, home, absolute paths outside the project, parent dirs: never on their own.
+                if target.contains("..") || target == "*" || target == "." || target.hasPrefix("~") || target.contains("$HOME") { return true }
+                if target.hasPrefix("/"), !isInside(target, cwd) { return true }
+                if recursive { return true }
+            }
+        }
+        return false
+    }
+
+    /// Irreversible or outward-facing, for developer agents (always the explicit "confermo").
+    static let developerDangerous: [String] = [
+        #"\bgit\s+push\b"#,
+        #"\bgit\s+(merge|rebase|cherry-pick)\b(?!\s+--abort)"#,
+        #"\bgit\s+reset\s+--hard\b"#,
+        #"\bgit\s+clean\s+-[a-zA-Z]*f"#,
+        #"\bgit\s+branch\s+-[a-zA-Z]*D"#,
+        #"\bgit\s+(checkout|restore)\s+(--\s|\.\s*$|\.\s*[;&|])"#,
+        #"\bgit\s+stash\s+(drop|clear)\b"#,
+        #"\bgit\s+(tag\s+-d|filter-branch|filter-repo|update-ref\s+-d|reflog\s+expire)\b"#,
+        #"\bgit\s+commit\b.*--amend"#,
+        #"\bsudo\b"#,
+        #"\b(killall|pkill)\b"#,
+        #"\bcurl\b.*(-X\s*(POST|PUT|DELETE|PATCH)|--data|\s-d\s|\s-F\s|--form|--upload-file|-T\s)"#,
+        #"\bwget\b.*--post"#,
+        #"(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh)\b"#,
+        #"\b(drop|truncate)\s+(table|database|schema)\b"#,
+        #"\bdelete\s+from\b"#,
+        #"\bmigrate:(fresh|reset|rollback|refresh)\b|\bdb:wipe\b|\bprisma\s+migrate\s+reset\b|\bdropdb\b"#,
+        #"\b(gh|bb|glab)\s+(pr|mr)\s+(create|merge|close)\b|\bgh\s+(release|repo\s+delete)\b"#,
+        #"\b(npm|pnpm|yarn)\s+publish\b|\bcargo\s+publish\b|\bpod\s+trunk\s+push\b|\bflutter\s+pub\s+publish\b|\btwine\s+upload\b"#,
+        #"\b(sendmail|mail)\s"#,
+        #"\bosascript\b.*\b(send|delete|quit)\b"#,
+        #"\bdd\s+if="#,
+        #"\bdiskutil\s+(erase|partition)|\bcsrutil\b|\bnvram\b"#,
+        #"\bchmod\s+-R\s+[0-7]*7[0-7]*\s+/|\bchown\s+-R\b"#,
+        #"\bxargs\b[^|;&]*\b(rm|rmdir|unlink|shred)\b"#,
+        // Inline scripts that delete trees.
+        #"shutil\.rmtree|rmSync\(|rimraf|os\.removedirs|FileUtils\.rm_r|fs\.rm\("#,
+    ]
+
+    /// Heavy on disk/CPU/memory or the Mac's setup: a normal OK.
+    static let developerHeavy: [String] = [
+        #"\b(docker|podman)\s+(build|run|compose|pull|system\s+prune|volume\s+rm|rmi)\b|\bdocker-compose\b"#,
+        #"\bbrew\s+(install|upgrade|reinstall|uninstall|remove)\b"#,
+        #"\b(npm|pnpm)\s+(i|install|add)\s+(-g|--global)\b|\byarn\s+global\s+add\b|\bpip3?\s+install\b(?!.*(-r\s|--requirement|-e\s|\.))|\bgem\s+install\b|\bcargo\s+install\b"#,
+        #"\bxcrun\s+simctl\s+(create|erase|delete)\b|\bflutter\s+emulators\s+--create\b|\bavdmanager\b|\bsdkmanager\b"#,
+        #"\bollama\s+(pull|run)\b|\bhuggingface-cli\s+download\b"#,
+        #"\bgit\s+clone\b"#,
+        #"\b(caffeinate|stress|yes)\b\s*$"#,
+    ]
+
+    /// Leaving the Mac or touching credentials / startup: a normal OK.
+    static let developerOutward: [String] = [
+        #"\b(ssh|scp|sftp|rsync|ftp|telnet|nc|ncat)\s"#,
+        #"\bsecurity\s+(delete|add|import|set|dump)"#,
+        #"\.ssh/|\.aws/|\.gnupg/|Keychains/|\.netrc"#,
+        #"LaunchAgents|LaunchDaemons|crontab|\blaunchctl\s+(load|unload|bootstrap|bootout|remove)"#,
+        #"(>|\btee\s+(-a\s+)?)\s*~?/?(\$HOME/)?\.(zshrc|zprofile|bashrc|bash_profile|profile|gitconfig)\b"#,
+        #"\bgit\s+config\s+--global\b"#,
+        #"\bdefaults\s+(write|delete)\b"#,
+    ]
+
     /// `mv`/`cp` that would replace an existing file (sources expanded for simple globs).
     /// Unparseable forms count as overwriting, to stay on the safe side.
     static func wouldOverwrite(_ part: String) -> Bool {
@@ -181,7 +297,7 @@ public enum PermissionPolicy {
         return rest.reduce(base) { ($0 as NSString).appendingPathComponent($1) }
     }
 
-    private static func isInside(_ path: String, _ dir: String) -> Bool {
+    static func isInside(_ path: String, _ dir: String) -> Bool {
         guard !path.isEmpty, !dir.isEmpty else { return false }
         // Symlinks resolved on both sides (/tmp → /private/tmp), also for files that don't exist yet.
         let p = canonical(URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: dir)).standardizedFileURL.path)

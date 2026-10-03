@@ -151,6 +151,13 @@ public enum ToolRegistry {
         WorkflowTools.report,
         WorkflowTools.list,
         WorkflowTools.listJSON,
+        TodoTools.add,
+        TodoTools.list,
+        TodoTools.done,
+        TodoTools.update,
+        TodoTools.remove,
+        TodoTools.carryOver,
+        TodoTools.board,
     ]
 
     public static func listingJSON() -> String {

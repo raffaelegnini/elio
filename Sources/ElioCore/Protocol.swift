@@ -20,6 +20,8 @@ public enum ClientMessage: Codable, Sendable {
     case cancelTurn
     /// Talking / silent mode while agents work (from the phone too).
     case mode(String)
+    /// Partial transcript of a request still being spoken (`id` = the `say` that will follow).
+    case prepare(id: String, text: String)
 
     private enum CodingKeys: String, CodingKey { case type, id, text, name, args, approved }
 
@@ -37,6 +39,7 @@ public enum ClientMessage: Codable, Sendable {
         case "taskControl": self = .taskControl(id: try c.decode(String.self, forKey: .id), action: try c.decode(String.self, forKey: .text))
         case "cancelTurn": self = .cancelTurn
         case "mode": self = .mode(try c.decode(String.self, forKey: .text))
+        case "prepare": self = .prepare(id: try c.decode(String.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
         case "confirm":
             self = .confirm(id: try c.decode(String.self, forKey: .id), approved: try c.decode(Bool.self, forKey: .approved))
         case let other:
@@ -66,6 +69,8 @@ public enum ClientMessage: Codable, Sendable {
             try c.encode("cancelTurn", forKey: .type)
         case .mode(let mode):
             try c.encode("mode", forKey: .type); try c.encode(mode, forKey: .text)
+        case .prepare(let id, let text):
+            try c.encode("prepare", forKey: .type); try c.encode(id, forKey: .id); try c.encode(text, forKey: .text)
         case .confirm(let id, let approved):
             try c.encode("confirm", forKey: .type); try c.encode(id, forKey: .id); try c.encode(approved, forKey: .approved)
         }
@@ -139,6 +144,10 @@ public struct TaskInfo: Codable, Sendable, Identifiable {
     public var runIds: [String]?
     /// Time spent actually working, all runs together.
     public var activeSeconds: Double?
+    /// The agent's own plan (its TodoWrite list): what it's doing now and what it has done, in its words.
+    public var plan: [PlanStep]?
+    /// Model it runs on (chosen by ModelRouter).
+    public var model: String?
 
     public init(id: String, title: String, project: String?, status: Status, steps: [String] = [],
                 summary: String? = nil, startedAt: Date = Date(), endedAt: Date? = nil) {
@@ -147,6 +156,21 @@ public struct TaskInfo: Codable, Sendable, Identifiable {
     }
 
     public var isActive: Bool { status == .running || status == .waitingConfirmation || status == .paused }
+}
+
+/// One step of an agent's plan.
+public struct PlanStep: Codable, Sendable, Equatable {
+    /// "pending" | "in_progress" | "completed"
+    public var status: String
+    public var text: String
+    /// Present-tense form shown while it runs ("Scrivo i test dell'export").
+    public var active: String?
+    /// When it was seen completed (for the "fatto" feed).
+    public var doneAt: Date?
+
+    public init(status: String, text: String, active: String? = nil, doneAt: Date? = nil) {
+        self.status = status; self.text = text; self.active = active; self.doneAt = doneAt
+    }
 }
 
 /// A message on a squad's board (agent → agent, agent → Elio, Elio → agent).
@@ -172,6 +196,8 @@ public struct SquadInfo: Codable, Sendable, Identifiable {
     public var endedAt: Date?
     /// Coordinated by an Elio lead agent that answers, reviews and reports in the user's place.
     public var hasLead: Bool?
+    /// The scout's map of the codebase, handed to every member.
+    public var brief: String?
 
     public init(id: String, goal: String, project: String, startedAt: Date = Date()) {
         self.id = id; self.goal = goal; self.project = project; self.startedAt = startedAt

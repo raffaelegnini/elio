@@ -291,7 +291,7 @@ public actor TaskRunner {
         publish(id)
     }
 
-    public enum Kind: String, Sendable { case code, mac, squad, lead }
+    public enum Kind: String, Sendable { case code, mac, squad, lead, scout }
 
     /// The user's taste rules, handed to every agent (kept here: prompts are built synchronously).
     private var tasteRules: [TasteRule] = []
@@ -299,7 +299,15 @@ public actor TaskRunner {
 
     public func start(title: String, prompt: String, cwd: String, kind: Kind = .code,
                       squad: String? = nil, member: String? = nil, role: String? = nil,
-                      resume sessionId: String? = nil) throws -> TaskInfo {
+                      resume sessionId: String? = nil, difficulty: String? = nil) throws -> TaskInfo {
+        // Opus unless the job is trivial for both Elio and the router; a resumed agent keeps its model.
+        let previous = sessionId.flatMap { sid in finished.last(where: { $0.sessionId == sid })?.model }
+        let base = [.squad, .lead, .scout].contains(kind) ? config.squadModel : config.agentModel
+        let route = [.lead, .scout].contains(kind)
+            ? ModelRouter.Choice(model: base, light: false, reason: "coordina o esplora")
+            : ModelRouter.pick(title: title, prompt: prompt, difficulty: difficulty, base: base, light: config.lightModel,
+                               enabled: config.smartModelRouting)
+        let model = previous ?? route.model
         let id = String(UUID().uuidString.prefix(8)).lowercased()
         let p = Process()
         p.executableURL = URL(fileURLWithPath: config.claudePath)
@@ -314,8 +322,10 @@ public actor TaskRunner {
             case .mac: fullPrompt = Self.macPrompt(title: title, prompt: prompt)
             case .squad: fullPrompt = Self.memberPrompt(goal: squads[squad ?? ""]?.goal ?? title, name: member ?? "agente",
                                                          role: role ?? "", task: prompt, cwd: cwd,
-                                                         team: members(of: squad ?? "").filter { $0.member != member && $0.kind != Kind.lead.rawValue },
-                                                         hasLead: squads[squad ?? ""]?.hasLead == true) + "\n\n" + taste
+                                                         team: members(of: squad ?? "").filter { $0.member != member && $0.kind != Kind.lead.rawValue && $0.kind != Kind.scout.rawValue },
+                                                         hasLead: squads[squad ?? ""]?.hasLead == true,
+                                                         brief: squads[squad ?? ""]?.brief) + "\n\n" + taste
+            case .scout: fullPrompt = prompt
             case .lead: fullPrompt = Self.leadPrompt(squad: squads[squad ?? ""], user: config.userName,
                                                       team: members(of: squad ?? "").filter { $0.kind != Kind.lead.rawValue },
                                                       maxAgents: config.maxSquadAgents, taste: taste)
@@ -326,15 +336,18 @@ public actor TaskRunner {
         var forbidden = ["mcp__elio__start_task", "mcp__elio__mac_task", "mcp__elio__squad_start", "mcp__elio__schedule_task"]
         var allowed = ["Read", "Grep", "Glob", "TodoWrite", "WebSearch", "WebFetch",
                        "mcp__elio__report_progress", "mcp__elio__squad_post", "mcp__elio__squad_inbox", "mcp__elio__taste_rules"]
-        if kind == .lead {
+        if kind == .lead || kind == .scout {
             forbidden += ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+        }
+        if kind == .lead {
             allowed += ["mcp__elio__squad_send", "mcp__elio__squad_status", "mcp__elio__squad_add"]
         } else {
             forbidden += ["mcp__elio__squad_send", "mcp__elio__squad_add", "mcp__elio__squad_stop"]
         }
         p.arguments = ["-p", fullPrompt] + (sessionId.map { ["--resume", $0] } ?? []) + [
             "--output-format", "stream-json", "--verbose",
-            "--model", config.agentModel,
+            // Squads multiply the cost: their agents run on the (cheaper) squad model.
+            "--model", model,
             "--setting-sources", "project,local",
             "--strict-mcp-config", "--mcp-config", mcpConfig,
             "--permission-prompt-tool", "mcp__elio__approve",
@@ -362,6 +375,7 @@ public actor TaskRunner {
         info.role = role
         info.workflow = squad ?? id
         info.runIds = [id]
+        info.model = model
         let resumed = sessionId.flatMap { sid in finished.last(where: { $0.sessionId == sid }) }
         if let old = resumed {
             // A resumed agent keeps its identity, its workflow and running totals.
@@ -369,6 +383,7 @@ public actor TaskRunner {
             info.workflow = old.workflow ?? info.workflow
             info.runIds = (old.runIds ?? [old.id]) + [id]
             info.activeSeconds = old.activeSeconds
+            info.plan = old.plan
             info.startedAt = old.startedAt
             info.sessionId = old.sessionId
             finished.removeAll { $0.sessionId == sessionId }
@@ -381,7 +396,9 @@ public actor TaskRunner {
                 event(wf, .started, actor: "elio", text: title, data: ["prompt": String(prompt.prefix(2000)), "kind": kind.rawValue])
             }
             event(wf, .agentStarted, actor: Self.actor(info),
-                  text: resumed == nil ? (role ?? title) : "riprende: \(prompt.prefix(400))")
+                  text: resumed == nil ? (role ?? title) : "riprende: \(prompt.prefix(400))",
+                  data: ["model": model, "route": route.reason])
+            if resumed == nil { log("agent \(id) \(info.member ?? title): \(model) (\(route.reason))") }
             saveAgent(info)
         }
 
@@ -496,6 +513,7 @@ public actor TaskRunner {
                 case "tool_use":
                     let name = block["name"] as? String ?? "tool"
                     let input = block["input"] as? [String: Any] ?? [:]
+                    if name == "TodoWrite" { updatePlan(id, input) }
                     addStep(id, Self.step(name, input))
                     logEntry(Self.logEntry(taskId: id, name: name, input: input))
                 default:
@@ -561,6 +579,46 @@ public actor TaskRunner {
         return s
     }
 
+    /// Members waiting for the scout's brief, per squad.
+    public struct QueuedMember: Sendable {
+        public let name: String; public let role: String; public let task: String; public let difficulty: String?
+        public init(name: String, role: String, task: String, difficulty: String? = nil) {
+            self.name = name; self.role = role; self.task = task; self.difficulty = difficulty
+        }
+    }
+    private var waitingForScout: [String: (members: [QueuedMember], lead: Bool)] = [:]
+
+    public func queueAfterScout(squad: String, members: [QueuedMember], lead: Bool) {
+        waitingForScout[squad] = (members, lead)
+    }
+
+    /// The scout is done: everyone starts from its brief.
+    private func launchQueued(_ squad: String, brief: String?) {
+        guard let queued = waitingForScout.removeValue(forKey: squad), let s = squads[squad], s.endedAt == nil else { return }
+        squads[squad]?.brief = brief
+        broadcast?(ServerMessage(type: .event, text: s.goal, kind: "squad", payload: squads[squad]?.jsonString()))
+        if let brief, let memory {
+            let wf = squad
+            Task { await memory.addWorkflowEvent(WorkflowEvent(workflow: wf, kind: .message, actor: "scout", text: brief, data: "{\"brief\":true}")) }
+        }
+        var started: [String] = []
+        for m in queued.members {
+            do {
+                _ = try start(title: "\(m.name): \(m.role)", prompt: m.task, cwd: s.project, kind: .squad, squad: squad,
+                              member: m.name, role: m.role, difficulty: m.difficulty)
+                started.append(m.name)
+            } catch {
+                log("squad member \(m.name) failed to start: \(error)")
+            }
+        }
+        post(squad: squad, from: "elio", to: "tutti",
+             text: "Lo scout ha mappato il codice (brief nel vostro prompt). Al lavoro: \(started.joined(separator: ", ")).")
+        if queued.lead {
+            _ = try? start(title: "elio: coordinatore", prompt: s.goal, cwd: s.project, kind: .lead, squad: squad, member: "elio",
+                           role: "coordinatore (fa le veci di \(config.userName))")
+        }
+    }
+
     /// Members working now (the lead excluded).
     public func runningMembers(of squad: String) -> Int {
         tasks.values.filter { $0.info.squad == squad && $0.info.kind != Kind.lead.rawValue }.count
@@ -587,7 +645,8 @@ public actor TaskRunner {
         broadcast?(ServerMessage(type: .event, text: text, kind: "squadMessage", payload: m.jsonString()))
         event(squad, .message, actor: from, text: text, data: ["to": to])
         // Whatever reaches Elio wakes the lead, who answers in the user's place.
-        if from != "elio", to == "elio" || to == "tutti" { wakeLead(squad) }
+        // ("tutti" doesn't wake it: each wake re-reads its whole context, it reads the board when it works anyway.)
+        if from != "elio", to == "elio" { wakeLead(squad) }
         return m
     }
 
@@ -613,7 +672,7 @@ public actor TaskRunner {
     // MARK: Lead (Elio's proxy inside a squad)
 
     private var wakes: [String: Int] = [:]
-    static let maxWakes = 60
+    static let maxWakes = 30
 
     private func leadRunning(_ squad: String) -> Bool {
         tasks.values.contains { $0.info.squad == squad && $0.info.kind == Kind.lead.rawValue }
@@ -688,6 +747,28 @@ public actor TaskRunner {
         default:
             return TaskLogEntry(taskId: taskId, kind: .info, title: step(name, input))
         }
+    }
+
+    /// The agent rewrote its plan: keep when each step got done, log newly completed ones.
+    private func updatePlan(_ id: String, _ input: [String: Any]) {
+        guard let todos = input["todos"] as? [[String: Any]], tasks[id] != nil else { return }
+        let old = tasks[id]?.info.plan ?? []
+        var plan: [PlanStep] = []
+        for t in todos {
+            let text = (t["content"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            let status = t["status"] as? String ?? "pending"
+            var step = PlanStep(status: status, text: text, active: t["activeForm"] as? String)
+            if status == "completed" {
+                step.doneAt = old.first { $0.text == text && $0.status == "completed" }?.doneAt ?? Date()
+                if step.doneAt.map({ Date().timeIntervalSince($0) < 1 }) == true, let info = tasks[id]?.info, let wf = info.workflow {
+                    event(wf, .progress, actor: Self.actor(info), text: "✓ \(text)", data: ["plan": true])
+                }
+            }
+            plan.append(step)
+        }
+        tasks[id]?.info.plan = plan
+        publish(id)
     }
 
     private func addStep(_ id: String, _ step: String) {
@@ -789,6 +870,9 @@ public actor TaskRunner {
             if info.kind == Kind.lead.rawValue {
                 // Messages may have arrived while it was finishing its turn.
                 wakeLead(squad)
+            } else if info.kind == Kind.scout.rawValue {
+                let brief = info.status == .done ? info.summary : nil
+                launchQueued(squad, brief: brief)
             } else {
                 post(squad: squad, from: info.member ?? "agente", to: "elio",
                      text: "Ho finito (\(info.status.rawValue)): \(String((info.summary ?? "").prefix(600)))")
@@ -877,21 +961,30 @@ public actor TaskRunner {
         Compito: \(title)
         Dettagli: \(prompt)
 
-        Regole:
-        - Se devi modificare codice, crea prima un branch locale `elio/<slug-breve>` e committa lì. Mai su develop/main/master.
-        - Non fare mai push, merge, rebase, né aprire PR: Raffaele rivede il diff nell'app e crea lui la PR.
-        - Non cancellare file e non inviare messaggi a nessuno. Se ti serve davvero, chiedi (la richiesta passa da una conferma).
-        - Per creare o modificare file usa Edit/Write (già autorizzati nel progetto), non printf/echo/cat con > o >>: \
-        quelli chiedono una conferma all'utente e ti bloccano. Comandi git semplici, uno per volta (niente catene con | e &&), \
-        senza `git -C` né `cd`: sei già nella cartella del progetto.
-        - Nei comandi Bash scrivi il campo description in italiano, breve, all'infinito ("aggiornare il repository \
-        da main"): se serve una conferma, è quello che Raffaele sente.
-        - Esegui test/lint pertinenti se esistono.
+        \(workRules)
         - Se ti manca un'informazione o devi scegliere tra opzioni con impatto, chiedi a Raffaele con \
         mcp__elio__ask_user invece di indovinare (una domanda chiara, con le opzioni).
         - Termina con un riassunto in italiano di massimo due frasi, adatto a essere letto a voce, poi una sezione dettagliata.
         """
     }
+
+    /// How every code agent works: visible plan, cheap on tokens, free on commands, careful on what can't be undone.
+    static let workRules = """
+        Come lavori:
+        - PIANO VISIBILE: all'inizio scrivi con TodoWrite un piano di 3-7 passi brevi in italiano (activeForm al presente: \
+        "Scrivo i test dell'export"), e aggiornalo quando inizi e finisci ogni passo. È l'unico modo in cui Raffaele \
+        capisce cosa stai facendo e cosa hai fatto: tienilo sempre vero.
+        - ECONOMIA: ogni token costa. Niente esplorazioni larghe del repo: Grep/Glob mirati, leggi solo i file che ti servono \
+        e solo una volta, comandi con output corto (`| tail -20`, `-q`, `--compact`), test del file o della cartella toccata \
+        invece dell'intera suite (la suite intera una volta alla fine, se serve). Non ripetere lavoro già fatto da altri.
+        - Comandi: usa liberamente la shell (catene, pipe, script, test, build, flutter, curl in lettura). Chiedono conferma \
+        solo push, merge/rebase, reset --hard, cancellazioni ricorsive di codice, migrazioni distruttive, invii verso \
+        l'esterno, installazioni globali e docker: evitali, non servono.
+        - Codice: lavora su un branch locale `elio/<slug-breve>` e committa lì, a piccoli passi. Mai su develop/main/master, \
+        mai push, merge, rebase né PR: Raffaele rivede il diff e crea lui la PR.
+        - Nei comandi Bash scrivi il campo description in italiano, breve, all'infinito ("eseguire i test del login"): \
+        se serve una conferma è quello che Raffaele sente.
+        """
 }
 
 public enum AskTools {
@@ -969,6 +1062,7 @@ public enum TaskTools {
             "title": prop("Titolo breve del task, in italiano"),
             "prompt": prop("Istruzioni complete e autosufficienti per l'agente"),
             "project_path": prop("Percorso assoluto del repository"),
+            "difficulty": prop("trivial SOLO per micro-modifiche (un typo, un testo, un colore, una versione) in 1-2 file: gira su un modello più leggero. Nel dubbio, e per tutto il resto, ometti (Opus)."),
         ],
         required: ["title", "prompt", "project_path"]
     ) { args, ctx in
@@ -978,7 +1072,8 @@ public enum TaskTools {
             throw ToolError("Cartella non trovata: \(path)")
         }
         let info = try await ctx.tasks.start(title: args["title"] as? String ?? "Task",
-                                             prompt: args["prompt"] as? String ?? "", cwd: path)
+                                             prompt: args["prompt"] as? String ?? "", cwd: path,
+                                             difficulty: args["difficulty"] as? String)
         return "Task avviato (id \(info.id)) in \(info.project ?? path)."
     }
 

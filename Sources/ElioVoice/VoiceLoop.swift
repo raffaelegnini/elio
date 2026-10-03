@@ -43,6 +43,8 @@ public final class VoiceLoop {
     public private(set) var activeTools: Set<String> = []
     /// Brief / recap in progress: the network starts dark and lights up tool by tool.
     public private(set) var routineMode = false
+    /// The to-do list as the daemon last published it (dashboard panel).
+    public var todoBoard: TodoBoard?
     /// When each tool first fired during the current routine.
     public private(set) var litTools: [String: Date] = [:]
     private var routineSpeaking = false
@@ -78,6 +80,8 @@ public final class VoiceLoop {
     /// Squads of agents and their message board.
     public private(set) var squads: [SquadInfo] = []
     public private(set) var squadMessages: [SquadMessage] = []
+    /// Timeline of each workflow (decisions, corrections, completed steps…), newest last.
+    public var workflowEvents: [String: [WorkflowEvent]] = [:]
     /// Claude token usage (refreshed by the daemon every minute).
     public private(set) var usage: UsageSnapshot?
 
@@ -109,6 +113,66 @@ public final class VoiceLoop {
     /// Always-on on-device recognizer; the VAD decides where utterances end.
     private var stt: ContinuousTranscriber?
     private var inUtterance = false
+    private var utteranceBegan = Date()
+
+    // MARK: Long requests
+
+    /// A request that may not be over: the user paused mid-sentence ("…e poi"), or a long dictation the VAD
+    /// cut. Held for a moment; if they go on, the next segment is joined to it instead of starting a new turn.
+    private var pendingCommand: String?
+    private var pendingFlush: Task<Void, Never>?
+    /// Id of the request being spoken: partial transcripts go to the daemon under it (it thinks ahead),
+    /// and the final `say` reuses it so the two are joined.
+    private var prepKey: String?
+    private var prepWords = 0
+    private var prepSentAt = Date.distantPast
+
+    /// Partial transcript of a request for Elio: sent ahead every few words so the daemon can get ready.
+    private func sendPrep(_ live: String) {
+        let text = [pendingCommand, WakeWord.strip(live) ?? live].compactMap { $0 }.joined(separator: " ")
+        let words = text.split(separator: " ").count
+        guard words >= 6, words - prepWords >= 4, Date().timeIntervalSince(prepSentAt) > 1.2 else { return }
+        let key = prepKey ?? UUID().uuidString
+        prepKey = key
+        prepWords = words
+        prepSentAt = Date()
+        client.send(.prepare(id: key, text: text))
+    }
+
+    /// Joins this segment to what was held, then either waits for more or sends.
+    private func continueOrSend(_ command: String, cutByLimit: Bool) {
+        pendingFlush?.cancel()
+        let full = [pendingCommand, command].compactMap { $0 }.joined(separator: " ")
+        let wait = EndOfTurn.wait(full, cutByLimit: cutByLimit)
+        guard wait > 0 else {
+            pendingCommand = nil
+            send(full, voice: true)
+            return
+        }
+        VoiceLog.write(String(format: "holding %.1fs for more: '%@'", wait, full))
+        pendingCommand = full
+        partial = full
+        state = .hearing
+        armedUntil = Date().addingTimeInterval(wait + 2)
+        schedulePendingFlush(after: wait)
+    }
+
+    private func schedulePendingFlush(after wait: TimeInterval) {
+        pendingFlush?.cancel()
+        pendingFlush = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(wait))
+            // A segment in progress may be the rest of the request: give it a few seconds to end (its
+            // endUtterance joins it and reschedules), then send what we have anyway — never hold forever.
+            let deadline = Date().addingTimeInterval(6)
+            while !Task.isCancelled, self.inUtterance, !self.speaker.isSpeaking, Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            guard !Task.isCancelled, let text = self.pendingCommand else { return }
+            self.pendingCommand = nil
+            self.partial = ""
+            self.send(text, voice: true)
+        }
+    }
     /// When Elio last stopped talking (its voice may still echo in the room).
     private var lastSpeechEnd = Date.distantPast
     private var emptyWithAEC = 0
@@ -193,9 +257,17 @@ public final class VoiceLoop {
         guard let rest = splitter.flush() else { return }
         replySentences += 1
         if localAckSpoken, replySentences == 1, Acknowledgement.isAcknowledgement(rest) { return }
-        speaker.enqueue(rest)
-        speaker.endUtterance()
+        if replyStreaming {
+            speaker.streamSentence(rest, flush: true)
+        } else {
+            speaker.enqueue(rest)
+            speaker.endUtterance()
+        }
     }
+
+    /// The reply is being built across tool calls ("Slack: due menzioni… Teamwork: tre task…"):
+    /// every sentence is spoken as soon as it's written, on the socket that stays open between tools.
+    private var replyHadTools = false
 
     private func speakReply(_ sentence: String) {
         replySentences += 1
@@ -204,11 +276,16 @@ public final class VoiceLoop {
         guard sentenceBudget > 0 else { return }
         sentenceBudget -= 1
         if replyStreaming {
-            speaker.streamSentence(sentence)
-            // All that will be spoken is in: close now so it's generated in one fluid take.
-            if sentenceBudget == 0 {
-                speaker.endStream()
-                replyStreaming = false
+            if replyHadTools {
+                // Text arrives in bursts between tools: say each sentence now, keep the socket for the next one.
+                speaker.streamSentence(sentence, flush: true)
+            } else {
+                speaker.streamSentence(sentence)
+                // All that will be spoken is in: close now so it's generated in one fluid take.
+                if sentenceBudget == 0 {
+                    speaker.endStream()
+                    replyStreaming = false
+                }
             }
         } else {
             speaker.enqueue(sentence)
@@ -240,6 +317,8 @@ public final class VoiceLoop {
     }
 
     public func start() async {
+        // The on-device model that tells who a sentence is for: loaded now, ready in ~0.5 s when needed.
+        Addressee.prewarm()
         client.onMessage = { [weak self] msg in Task { @MainActor in self?.handle(msg) } }
         client.onConnectionChange = { [weak self] up in Task { @MainActor in self?.connected = up } }
         client.start()
@@ -398,6 +477,88 @@ public final class VoiceLoop {
         return await client.callTool(name, quiet)
     }
 
+    /// Elio's last words end with a question (or ask for something): the user may answer without "Elio".
+    static func invitesReply(_ spoken: String) -> Bool {
+        let t = spoken.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !t.isEmpty else { return false }
+        let tail = String(t.suffix(160))
+        if tail.contains("?") { return true }
+        return tail.range(of: #"(mi dica|mi faccia sapere|me lo conferma|preferisce|vuole che|devo procedere|procedo\b)[^.!]*$"#,
+                          options: .regularExpression) != nil
+    }
+
+    // MARK: Talking over Elio
+
+    /// The user started talking while Elio speaks: its voice is lowered until we know what they want.
+    private var bargeDucked = false
+    /// Things said for Elio while it spoke, taken into account once it has finished.
+    private var pendingRemarks: [String] = []
+
+    private func duckForBarge(_ said: String) {
+        guard !bargeDucked else { return }
+        bargeDucked = true
+        VoiceLog.write("user talking over Elio ('\(said)'): ducking")
+        audio.player.volume = 0.3
+        // If it was nothing (a cough, a word), the voice comes back by itself.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(8))
+            if self.bargeDucked, !self.inUtterance { self.restoreVoice() }
+        }
+    }
+
+    private func restoreVoice() {
+        bargeDucked = false
+        audio.player.volume = 1
+    }
+
+    /// What the user said while Elio was speaking: stop, change course, keep it for later, or ignore it.
+    private func handleSpokenOver(_ said: String) async {
+        let saying = speaker.recentlySpoken(within: 15)
+        if let owner = isOwner(minSeconds: 0.6), !owner {
+            VoiceLog.write("spoken over Elio, not the owner: '\(said)'")
+            restoreVoice()
+            return
+        }
+        let verdict = await Addressee.classify(said: said, elioSaying: saying, wakeWord: WakeWord.strip(said) != nil)
+        VoiceLog.write("spoken over Elio: '\(said)' → \(verdict.target.rawValue)/\(verdict.intent.rawValue)")
+        restoreVoice()
+        guard verdict.target != .other else { return }
+        switch verdict.intent {
+        case .stop:
+            interrupt()
+            if currentRequestId != nil { client.send(.cancelTurn) }
+            state = .listening
+        case .change, .request:
+            let command = WakeWord.strip(said) ?? said
+            if currentRequestId != nil { client.send(.cancelTurn) }
+            speaker.stop()
+            send("[Ti ho interrotto mentre dicevi: «\(String(saying.suffix(300)))»]\n\(command)")
+        case .remark:
+            // Elio finishes its sentence, then takes it into account (now, if it has already finished).
+            pendingRemarks.append(WakeWord.strip(said) ?? said)
+            if !speaker.isSpeaking { deliverRemarks() }
+        case .backchannel:
+            break
+        }
+    }
+
+    /// Elio finished talking: what the user told it meanwhile becomes the next turn.
+    private func deliverRemarks() {
+        guard !pendingRemarks.isEmpty, currentRequestId == nil, !speaker.isSpeaking else { return }
+        let said = pendingRemarks.joined(separator: " ")
+        pendingRemarks = []
+        send("[Mentre parlavi ti ho detto questo: tienine conto, rispondi in breve e poi continua da dove eri, senza ripetere]\n\(said)")
+    }
+
+    /// The user closed the exchange ("grazie", "ok perfetto", "basta"): no follow-up window after the reply.
+    private var lastCommandClosed = false
+
+    static func isClosing(_ text: String) -> Bool {
+        let t = text.lowercased().trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.whitespaces))
+        return t.range(of: #"^(ok(ay)?|va bene|perfetto|grazie( mille)?( elio)?|basta( così)?|a posto|niente|tutto qui|ottimo|bene|fatto)([ ,.!]+(grazie|perfetto|elio|così))*$"#,
+                       options: .regularExpression) != nil
+    }
+
     public func interrupt() {
         speaker.stop()
         currentRequestId = nil
@@ -429,7 +590,13 @@ public final class VoiceLoop {
             // With echo cancellation or headphones, interrupt as soon as real words are recognized
             // (see heard()): a cough or a keystroke must not cut Elio off.
             inUtterance = true
+            utteranceBegan = Date()
             utteranceArmed = isArmed
+            if pendingCommand != nil {
+                // Maybe they're going on: this segment would continue the held request. The flush isn't
+                // cancelled here (Elio's own voice or a noise also "starts speech"); it waits for this segment.
+                utteranceArmed = true
+            }
             wakeSeen = false
             utteranceStart = voiceTap.position
             bargeChecked = false
@@ -471,12 +638,17 @@ public final class VoiceLoop {
                 let stopWord = BargeIn.detect(text, whileSaying: speaker.recentlySpoken())
                 stop = pendingAnswer || stopWord || WakeWord.strip(text) != nil
             }
-            if stop {
+            let said = words.map { String($0) }.joined(separator: " ")
+            if stop, BargeIn.detect(text, whileSaying: speaker.recentlySpoken()) || confirmations.first != nil {
+                // "Basta", "stop", or the answer to its question: no need to wait for the end of the sentence.
                 VoiceLog.write("barge-in on: '\(text)'")
                 interrupt()
                 utteranceArmed = true
                 state = .hearing
                 partial = text
+            } else if stop || (!ownerGateActive && words.count >= 3) {
+                // The user is talking over Elio: lower its voice and listen; what they said decides the rest.
+                duckForBarge(said)
             }
             return
         }
@@ -491,16 +663,24 @@ public final class VoiceLoop {
                 utteranceArmed = true   // what follows "Elio, aspetta…" is a command
                 state = .hearing
                 partial = text
+            } else {
+                // Words that aren't Elio's own: maybe the user talking over it. Listen to the end, then decide.
+                let mine = Echo.remove(from: text, spoken: speaker.recentlySpoken())
+                if mine.split(separator: " ").filter({ $0.count >= 2 }).count >= 3, isOwner(minSeconds: 0.8) != false {
+                    duckForBarge(mine)
+                }
             }
             return
         }
         if utteranceArmed || wakeSeen {
-            partial = text
+            partial = [pendingCommand, text].compactMap { $0 }.joined(separator: " ")
+            sendPrep(text)
         } else if WakeWord.strip(text) != nil {
             wakeSeen = true
             speaker.prewarm()
             partial = text
             if state != .thinking { state = .hearing }
+            sendPrep(text)
         }
     }
 
@@ -528,23 +708,45 @@ public final class VoiceLoop {
         partial = ""
         // Elio's own voice picked up by the mic is never a command.
         if spokeRecently { text = Echo.remove(from: text, spoken: speaker.recentlySpoken()) }
-        if state == .hearing, !isArmed { state = .listening }
-        guard !text.isEmpty else { return }
+        if state == .hearing, !isArmed, pendingCommand == nil { state = .listening }
+        guard !text.isEmpty else {
+            // A noise during the pause: the held request still goes, a moment later.
+            if pendingCommand != nil { schedulePendingFlush(after: 0.4) }
+            return
+        }
         // Answers to a pending confirmation/question always count, even while Elio is talking.
         let awaitingAnswer = !confirmations.isEmpty || !questions.isEmpty
-        if speaker.isSpeaking, !awaitingAnswer { return }  // still talking and no stop word: ignore
+        if (speaker.isSpeaking || bargeDucked), !awaitingAnswer {
+            // Only when we heard the user over Elio (not leftovers of Elio's own voice in the mic).
+            if bargeDucked { await handleSpokenOver(text) }
+            // A held request still goes.
+            if pendingCommand != nil { schedulePendingFlush(after: 0.3) }
+            return
+        }
 
         let command: String
         if isArmed || utteranceArmed || awaitingAnswer {
             command = WakeWord.strip(text) ?? text
+            // Said without "Elio" during a follow-up window: was it for Elio, or for someone nearby?
+            if WakeWord.strip(text) == nil, !awaitingAnswer, pendingCommand == nil {
+                let verdict = await Addressee.classify(said: command, elioSaying: speaker.recentlySpoken(within: 15), wakeWord: false)
+                if verdict.target == .other {
+                    VoiceLog.write("not for Elio: '\(command)'")
+                    if state == .hearing { state = .listening }
+                    return
+                }
+            }
         } else if let afterWake = WakeWord.strip(text) {
             command = afterWake
         } else {
+            prepKey = nil
+            if pendingCommand != nil { schedulePendingFlush(after: 0.3) }
             return  // background speech, not for Elio
         }
         // Only the owner can command Elio (when a voiceprint is enrolled).
         if let owner = isOwner(threshold: awaitingAnswer ? Self.answerThreshold : nil), !owner {
             VoiceLog.write("ignored: not the owner's voice ('\(command)')")
+            prepKey = nil
             partial = ""
             if state == .hearing { state = .listening }
             return
@@ -567,12 +769,12 @@ public final class VoiceLoop {
             speaker.endUtterance()
             return
         }
-        send(command)
+        continueOrSend(command, cutByLimit: Date().timeIntervalSince(utteranceBegan) >= 44)
     }
 
     // MARK: - Daemon
 
-    private func send(_ text: String) {
+    private func send(_ text: String, voice: Bool = false) {
         // "Basta" / "stop" / "fermati": stop talking and stop the work in progress, locally.
         if IntentMatcher().match(text)?.intent == .stop {
             stopEverything()
@@ -580,19 +782,29 @@ public final class VoiceLoop {
         }
         if speaker.isSpeaking { speaker.stop() }
         armedUntil = nil
+        lastCommandClosed = Self.isClosing(text)
         splitter = SentenceSplitter()
         requestStart = Date()
         turns.append(Turn(role: "user", text: text))
         turns.append(Turn(role: "elio", text: ""))
         spokenText = ""
         sentenceBudget = Self.wantsDetail(text) ? 50 : spokenSentences
-        currentRequestId = client.say(text)
+        // A spoken request reuses the id its partial transcripts were sent under (the daemon prepared it).
+        if voice, let key = prepKey {
+            client.say(text, id: key)
+            currentRequestId = key
+        } else {
+            currentRequestId = client.say(text)
+        }
+        prepKey = nil
+        prepWords = 0
         VoiceLog.write("→ daemon: '\(text)'")
         firstDeltaLogged = false
         firstAudioLogged = false
         // Open the TTS socket while Claude is thinking: saves the ~0.4s handshake.
         replyStreaming = speaker.beginStream()
         localAckSpoken = false
+        replyHadTools = false
         replySentences = 0
         scheduleFiller(for: currentRequestId, request: text)
         state = .thinking
@@ -652,7 +864,7 @@ public final class VoiceLoop {
         switch msg.kind {
         case "briefStart", "recapStart":
             let isBrief = msg.kind == "briefStart"
-            if briefOpeningEnabled, isBrief { playOpening() }
+            if briefOpeningEnabled { playOpening(recap: !isBrief) }
             routineMode = true
             litTools = [:]
             routineSpeaking = false
@@ -722,6 +934,13 @@ public final class VoiceLoop {
                 if let i = squads.firstIndex(where: { $0.id == sq.id }) { squads[i] = sq } else { squads.append(sq) }
                 if squads.count > 8 { squads.removeFirst() }
             }
+        case "workflowEvent":
+            if let e = WorkflowEvent.fromJSON(msg.payload) {
+                var list = workflowEvents[e.workflow] ?? []
+                list.append(e)
+                if list.count > 400 { list.removeFirst(list.count - 400) }
+                workflowEvents[e.workflow] = list
+            }
         case "squadMessage":
             if let m = SquadMessage.fromJSON(msg.payload) {
                 squadMessages.append(m)
@@ -742,6 +961,8 @@ public final class VoiceLoop {
             }
         case "confirmResolved":
             confirmations.removeAll { $0.id == msg.id }
+        case "todos":
+            if let board = TodoBoard.fromJSON(msg.payload) { todoBoard = board }
         case "diff":
             if let d = DiffPayload.fromJSON(msg.payload) {
                 diffs.insert(d, at: 0)
@@ -759,12 +980,12 @@ public final class VoiceLoop {
                         NSWorkspace.shared.openApplication(at: chrome, configuration: NSWorkspace.OpenConfiguration())
                     }
                 }
-                if currentRequestId != nil, firstDeltaLogged {
-                    // Text so far was the acknowledgement ("Certo, Signore, controllo…"): say it now,
-                    // and give the real answer its own sentence budget.
-                    if replyStreaming { speaker.endStream(); replyStreaming = false }
+                if currentRequestId != nil {
+                    // Whatever was written before this tool (the acknowledgement, or what the previous tool found)
+                    // is said now; the socket stays open and each step gets its own sentence budget.
+                    replyHadTools = true
                     sentenceBudget = max(sentenceBudget, spokenSentences)
-                    splitterFlushForAck()
+                    if firstDeltaLogged { splitterFlushForAck() }
                 }
                 if routineMode, litTools[name] == nil { litTools[name] = Date() }
                 if routineLive, routineStreaming, let rest = routineSplitter.flush() { speaker.streamSentence(rest, flush: true) }
@@ -876,9 +1097,12 @@ public final class VoiceLoop {
 
     private var opening: AVAudioPlayer?
 
-    /// ~/Library/Application Support/Elio/sounds/brief-opening.m4a, if present.
-    private func playOpening() {
-        let url = ElioPaths.support.appendingPathComponent("sounds/brief-opening.m4a")
+    /// ~/Library/Application Support/Elio/sounds/brief-opening.m4a, if present. The recap uses
+    /// sounds/recap-opening.m4a when there is one, otherwise the same theme.
+    private func playOpening(recap: Bool = false) {
+        let sounds = ElioPaths.support.appendingPathComponent("sounds")
+        let own = sounds.appendingPathComponent("recap-opening.m4a")
+        let url = recap && FileManager.default.fileExists(atPath: own.path) ? own : sounds.appendingPathComponent("brief-opening.m4a")
         guard FileManager.default.fileExists(atPath: url.path),
               let player = try? AVAudioPlayer(contentsOf: url) else { return }
         player.volume = 0.8
@@ -918,9 +1142,20 @@ public final class VoiceLoop {
                 }
             }
             if state == .speaking { state = muted ? .muted : .listening }
-            // Follow-up window: answer without repeating the wake word (never shorten a longer one).
-            let followUp = Date().addingTimeInterval(Self.followUpWindow)
-            armedUntil = max(armedUntil ?? followUp, followUp)
+            if bargeDucked, !inUtterance { restoreVoice() }
+            if !pendingRemarks.isEmpty {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(400))
+                    self.deliverRemarks()
+                }
+            }
+            // Follow-up without the wake word only when Elio asked something (or wants a confirmation):
+            // after a plain answer it goes back to waiting for "Elio", so a chat with someone nearby
+            // isn't taken as a command. Never shortens a longer window (confirmations set their own).
+            if Self.invitesReply(speaker.recentlySpoken(within: 12)), !lastCommandClosed {
+                let followUp = Date().addingTimeInterval(Self.followUpWindow)
+                armedUntil = max(armedUntil ?? followUp, followUp)
+            }
         }
     }
 

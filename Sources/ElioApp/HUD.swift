@@ -81,7 +81,7 @@ struct HUDView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            OrbView(state: loop.state, level: loop.level)
+            LiveOrb(loop: loop)
                 .frame(height: 210)
                 .contentShape(Circle())
                 .onTapGesture { loop.activate() }

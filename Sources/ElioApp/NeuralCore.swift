@@ -3,14 +3,14 @@ import SwiftUI
 
 /// What Elio can do, as nodes around the core. A node lights up while one of its tools runs.
 enum Capability: String, CaseIterable, Identifiable {
-    case agenda, slack, agenti, codice, browser, promemoria, mac, memoria
+    case agenda, integrazioni, agenti, codice, browser, promemoria, mac, memoria
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .agenda: "AGENDA"
-        case .slack: "SLACK"
+        case .integrazioni: "INTEGRAZIONI"
         case .agenti: "AGENTI"
         case .codice: "CODICE"
         case .browser: "BROWSER"
@@ -23,7 +23,7 @@ enum Capability: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .agenda: "calendar"
-        case .slack: "number"
+        case .integrazioni: "puzzlepiece.extension"
         case .agenti: "cpu"
         case .codice: "chevron.left.forwardslash.chevron.right"
         case .browser: "safari"
@@ -36,13 +36,30 @@ enum Capability: String, CaseIterable, Identifiable {
     static func of(tool: String) -> Capability {
         switch tool {
         case "calendar_events", "join_next_meeting": .agenda
-        case let t where t.hasPrefix("slack_"): .slack
+        case let t where integration(of: t) != nil: .integrazioni
         case "start_task", "list_tasks", "cancel_task", "schedule_task", "approve": .agenti
         case "show_diff", "list_projects": .codice
         case let t where t.hasPrefix("mcp__claude-in-chrome__") || t == "WebSearch" || t == "WebFetch": .browser
         case "set_reminder", "list_reminders": .promemoria
         case "open_app", "open_url": .mac
         default: .memoria
+        }
+    }
+
+    /// Which integration a tool belongs to (the leaf that lights up under INTEGRAZIONI).
+    static func integration(of tool: String) -> String? {
+        switch tool {
+        case let t where t.hasPrefix("slack_"): "slack"
+        case let t where t.hasPrefix("mail_"): "mail"
+        case let t where t.hasPrefix("spotify"): "spotify"
+        case "calendar_events": nil   // its own capability (agenda)
+        case "api_request", "integration_propose", "integration_set_secret", "integration_activate", "integration_notes",
+             "integration_list", "integration_sync", "integration_connect", "integration_disconnect", "integrations_native":
+            "*"
+        case let t where t.hasPrefix("mcp__") && !t.hasPrefix("mcp__elio__") && !t.hasPrefix("mcp__claude-in-chrome__"):
+            // mcp__<integration id>__<action>
+            t.dropFirst(5).components(separatedBy: "__").first
+        default: nil
         }
     }
 
@@ -80,6 +97,7 @@ enum Capability: String, CaseIterable, Identifiable {
 /// The orb plus a ring of capability nodes wired to the core.
 struct NeuralCore: View {
     @Environment(\.animationsLive) private var animationsLive
+    @Environment(\.animationFPS) private var fps
     let loop: VoiceLoop
 
     private var active: Set<Capability> { Set(loop.activeTools.map(Capability.of)) }
@@ -93,7 +111,7 @@ struct NeuralCore: View {
 
             ZStack {
                 // Synapses core → node, with a travelling pulse on active ones.
-                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animationsLive)) { timeline in
+                TimelineView(.animation(minimumInterval: 1 / max(fps, 1), paused: !animationsLive || fps <= 0)) { timeline in
                     let t = timeline.date.timeIntervalSinceReferenceDate
                     Canvas { ctx, _ in
                         for (i, cap) in Capability.allCases.enumerated() {
@@ -115,18 +133,21 @@ struct NeuralCore: View {
                         let ring = Path(ellipseIn: CGRect(x: center.x - ringRadius, y: center.y - ringRadius,
                                                           width: ringRadius * 2, height: ringRadius * 2))
                         ctx.stroke(ring, with: .color(tint.opacity(0.10)), lineWidth: 1)
+                        // Ticks in two paths (major, minor) rather than 72 strokes.
+                        var major = Path(), minor = Path()
                         for k in 0..<72 {
                             let a = Double(k) / 72 * 2 * .pi + t * 0.02
                             let r1 = ringRadius + 6, r2 = ringRadius + (k % 6 == 0 ? 14 : 9)
-                            var tick = Path()
-                            tick.move(to: CGPoint(x: center.x + cos(a) * r1, y: center.y + sin(a) * r1))
-                            tick.addLine(to: CGPoint(x: center.x + cos(a) * r2, y: center.y + sin(a) * r2))
-                            ctx.stroke(tick, with: .color(tint.opacity(k % 6 == 0 ? 0.35 : 0.14)), lineWidth: 1)
+                            let from = CGPoint(x: center.x + cos(a) * r1, y: center.y + sin(a) * r1)
+                            let to = CGPoint(x: center.x + cos(a) * r2, y: center.y + sin(a) * r2)
+                            if k % 6 == 0 { major.move(to: from); major.addLine(to: to) } else { minor.move(to: from); minor.addLine(to: to) }
                         }
+                        ctx.stroke(major, with: .color(tint.opacity(0.35)), lineWidth: 1)
+                        ctx.stroke(minor, with: .color(tint.opacity(0.14)), lineWidth: 1)
                     }
                 }
 
-                OrbView(state: loop.state, level: loop.level)
+                LiveOrb(loop: loop)
                     .frame(width: size * 0.62, height: size * 0.62)
                     .position(center)
                     .onTapGesture { loop.activate() }

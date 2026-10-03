@@ -58,7 +58,15 @@ public struct ElioConfig: Codable, Sendable {
     /// Model for taste reviews and delegated decisions.
     public var reviewModel: String = "sonnet"
     /// Most agents a squad may run (coordinator excluded).
-    public var maxSquadAgents: Int = 8
+    public var maxSquadAgents: Int = 4
+    /// Model of squad members, their lead and scout (code work needs Opus; tokens are saved by the scout instead).
+    public var squadModel: String = "opus"
+    /// Opus by default; the light model only for jobs both Elio and the router judge trivial (~5%).
+    public var smartModelRouting: Bool = true
+    public var lightModel: String = "sonnet"
+    /// Thinking ahead while the user talks (a small read-only session), and its model.
+    public var speechPrep: Bool = true
+    public var prepModel: String = "haiku"
 
     public init() {}
 
@@ -106,6 +114,11 @@ public struct ElioConfig: Codable, Sendable {
         tasteReview = try c.decodeIfPresent(Bool.self, forKey: .tasteReview) ?? d.tasteReview
         reviewModel = try c.decodeIfPresent(String.self, forKey: .reviewModel) ?? d.reviewModel
         maxSquadAgents = try c.decodeIfPresent(Int.self, forKey: .maxSquadAgents) ?? d.maxSquadAgents
+        squadModel = try c.decodeIfPresent(String.self, forKey: .squadModel) ?? d.squadModel
+        smartModelRouting = try c.decodeIfPresent(Bool.self, forKey: .smartModelRouting) ?? d.smartModelRouting
+        lightModel = try c.decodeIfPresent(String.self, forKey: .lightModel) ?? d.lightModel
+        speechPrep = try c.decodeIfPresent(Bool.self, forKey: .speechPrep) ?? d.speechPrep
+        prepModel = try c.decodeIfPresent(String.self, forKey: .prepModel) ?? d.prepModel
     }
 
     static func defaultClaudePath() -> String {

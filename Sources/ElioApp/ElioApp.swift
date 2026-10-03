@@ -268,17 +268,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             dashboard = window
             let state = dashboardState
             for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification,
-                         NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
+                         NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                         NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
                 NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { note in
                     MainActor.assumeIsolated {
-                        state.visible = note.name != NSWindow.willCloseNotification && window.isVisible
+                        let closing = note.name == NSWindow.willCloseNotification
+                        state.visible = !closing && window.isVisible
                             && !window.isMiniaturized && window.occlusionState.contains(.visible)
+                        // Being looked at: the dashboard is the window in front.
+                        state.focused = state.visible && window.isKeyWindow
                     }
                 }
             }
         }
         dashboard?.makeKeyAndOrderFront(nil)
         dashboardState.visible = true
+        dashboardState.focused = true
         NSApp.activate()
         // macOS won't let a background app take focus; for briefing/recap show it on top anyway.
         if forceFront { dashboard?.orderFrontRegardless() }
@@ -339,6 +344,8 @@ final class DashboardState {
     var squadMode = false
     /// The dashboard window is actually on screen (not closed, minimised or fully covered).
     var visible = false
+    /// Visible and the key window: animations run at full frame rate.
+    var focused = false
 }
 
 extension Notification.Name {

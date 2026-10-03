@@ -83,6 +83,8 @@ final class WebServer: @unchecked Sendable {
             case "/api/workflows":
                 let json = (try? await WorkflowFeed.json(memory: brain.memory, tasks: brain.tasks)) ?? "{}"
                 send(conn, 200, "application/json", Data(SecretFilter.redact(json).utf8))
+            case "/api/todos":
+                send(conn, 200, "application/json", Data(SecretFilter.redact(await brain.memory.todoBoard().jsonString()).utf8))
             case "/api/workflow":
                 guard let report = await WorkflowReport.build(id: id, memory: brain.memory, tasks: brain.tasks) else {
                     return send(conn, 404, "text/plain", Data("not found".utf8))
@@ -91,6 +93,14 @@ final class WebServer: @unchecked Sendable {
             default:
                 send(conn, 404, "text/plain", Data("not found".utf8))
             }
+        case ("POST", "/api/todos"):
+            // The phone's one-tap actions: toggle, add, remove, focus, tomorrow, today, important, carry.
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            guard let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any] else {
+                return send(conn, 400, "text/plain", Data("bad request".utf8))
+            }
+            try? await TodoTools.quickAction(obj, ctx: await brain.toolContext)
+            send(conn, 200, "application/json", Data(SecretFilter.redact(await brain.memory.todoBoard().jsonString()).utf8))
         case ("GET", "/push/key"):
             send(conn, 200, "application/json", Data("{\"key\":\"\(WebPush.shared.publicKey)\"}".utf8))
         case ("POST", "/push/subscribe"):

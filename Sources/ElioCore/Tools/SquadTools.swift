@@ -29,9 +29,15 @@ extension TaskRunner {
     }
 
     static func memberPrompt(goal: String, name: String, role: String, task: String, cwd: String, team: [TaskInfo],
-                             hasLead: Bool = false) -> String {
+                             hasLead: Bool = false, brief: String? = nil) -> String {
         let others = team.isEmpty ? "(per ora nessun altro)"
             : team.map { "- \($0.member ?? "?"): \($0.role ?? "")" }.joined(separator: "\n")
+        let briefBlock = brief.map { """
+
+            Brief della codebase preparato dallo scout per tutta la squadra. NON riesplorare il repo da capo: parti da qui \
+            e apri solo i file che servono al tuo compito.
+            \($0)
+            """ } ?? ""
         return """
         Sei "\(name)", un agente di una squadra coordinata da Elio, l'assistente personale di Raffaele.
         Obiettivo della squadra: \(goal)
@@ -41,30 +47,47 @@ extension TaskRunner {
 
         Compagni di squadra:
         \(others)
+        \(briefBlock)
+
+        \(workRules)
 
         Come collaborare:
-        - Leggi i messaggi con mcp__elio__squad_inbox all'inizio, prima di decisioni importanti e ogni tanto mentre lavori.
-        - Scrivi con mcp__elio__squad_post: `to` = nome di un compagno, "tutti", oppure "elio" per riferire al coordinatore. \
-        Messaggi brevi e concreti (interfacce concordate, file che tocchi, risultati, blocchi).
-        - Concorda con i compagni chi tocca quali file per non pestarvi i piedi.
-        - A Elio riferisci solo cose utili a Raffaele: progressi importanti, decisioni da prendere, problemi.
-        - Codice: lavora su un branch locale `elio/<slug-breve>` (lo stesso per tutta la squadra, se lavorate sullo stesso repo: \
-        mettetevi d'accordo), committa lì. Mai push, merge, rebase né PR: Raffaele rivede il diff e crea lui la PR.
-        - Per creare o modificare file usa Edit/Write (già autorizzati nel progetto), non printf/echo/cat con > o >>: \
-        quelli chiedono una conferma a Raffaele e vi bloccano. Comandi git semplici, uno per volta, senza `git -C` né `cd`: \
-        siete già nella cartella del progetto.
-        - Nei comandi Bash scrivi il campo description in italiano, breve, all'infinito ("aggiornare il repository \
-        da main"): se serve una conferma, è quello che Raffaele sente.
-        - Non cancellare file e non inviare messaggi fuori dalla squadra senza conferma.
+        - Bacheca: leggi mcp__elio__squad_inbox all'inizio, prima di toccare file che potrebbero toccare altri, e quando \
+        aspetti una risposta; non a ogni passo. Scrivi con mcp__elio__squad_post (`to` = un compagno, "tutti" o "elio"): \
+        messaggi brevi e concreti (interfacce concordate, file che tocchi, risultati, blocchi).
+        - Concorda chi tocca quali file. Se lavorate sullo stesso repo usate lo stesso branch: mettetevi d'accordo all'inizio.
         - Se ti manca un'informazione che solo Raffaele ha, chiedi con mcp__elio__ask_user: per le scelte piccole \
         risponde Elio al suo posto, conoscendo i suoi gusti.\(hasLead ? """
 
         - Elio coordina la squadra di persona (membro "elio" sulla bacheca): fa le veci di Raffaele, risponde ai dubbi, \
-        rivede il lavoro e può chiederti correzioni. Per dubbi di implementazione scrivi a "elio" e intanto prosegui sul resto; \
-        controlla la inbox per la risposta. Se ti chiede una correzione, falla prima di chiudere.
+        rivede il lavoro e può chiederti correzioni. Per dubbi di implementazione scrivi a "elio" e intanto prosegui sul resto. \
+        Se ti chiede una correzione, falla prima di chiudere.
         """ : "")
         - Il tuo lavoro viene controllato sui gusti di Raffaele (sotto): rispettali da subito, così non devi rifarlo.
         - Termina con un riassunto di massimo due frasi del tuo lavoro.
+        """
+    }
+
+    /// The scout explores once for everyone: members start from its brief instead of each mapping the repo.
+    static func scoutPrompt(goal: String, cwd: String, members: [(name: String, role: String, task: String)]) -> String {
+        let tasks = members.map { "- \($0.name) (\($0.role)): \($0.task)" }.joined(separator: "\n")
+        return """
+        Sei lo scout di una squadra di agenti coordinata da Elio, l'assistente di Raffaele. Progetto: \(cwd)
+        Obiettivo della squadra: \(goal)
+        Dopo di te partiranno questi agenti, in parallelo:
+        \(tasks)
+
+        Il tuo unico compito: esplorare il codice UNA volta per tutti, così loro non devono rifarlo (ogni esplorazione \
+        ripetuta costa crediti). Non modificare nulla, non creare branch.
+        - In fretta e mirato: struttura delle cartelle, stack e versioni, come si lanciano test/build/lint (comandi esatti), \
+        convenzioni (naming, pattern, stile), e per OGNI compito i file e i punti esatti da cui partire, le dipendenze tra \
+        i compiti e i rischi di conflitto (file toccati da più agenti).
+        - Usa TodoWrite per un piano di 3-4 passi, come gli altri.
+        - Al massimo 10-15 minuti di lavoro: non leggere file interi se basta una ricerca.
+
+        Termina con il BRIEF (massimo 600 parole, in italiano, in markdown compatto), con queste sezioni: \
+        Stack e comandi · Struttura · Convenzioni · Per ciascun agente (file e punti di partenza) · Rischi e coordinamento. \
+        Prima del brief, una frase di riassunto.
         """
     }
 
@@ -95,6 +118,8 @@ extension TaskRunner {
         - Tieni informato \(user) solo sull'essenziale con mcp__elio__report_progress: una frase parlata. Usa important: true \
         SOLO per problemi seri o blocchi (è l'unica cosa che sente in modalità silenziosa).
         - Non scrivi codice tu: coordini, decidi e rivedi. Non fare push, merge o PR.
+        - Sii economico: ogni risveglio rilegge il tuo contesto. Rispondi in poche righe, rivedi con `git diff --stat` e solo \
+        i file chiave (mai l'intero repo: c'è il brief dello scout), non chiamare squad_status se la bacheca basta.
 
         Lavori a turni: all'inizio dai il via (messaggio a "tutti" con le regole d'ingaggio se servono), poi chiudi il turno \
         con una frase di stato. Verrai risvegliato con i nuovi messaggi della bacheca. Quando tutti hanno finito e il \
@@ -121,6 +146,7 @@ public enum SquadTools {
             "title": prop("Titolo breve, in italiano (es. \"Sposto Progetti in Archivio\")"),
             "prompt": prop("Istruzioni complete e autosufficienti per l'agente"),
             "directory": prop("Cartella di lavoro (default: la home)"),
+            "difficulty": prop("trivial SOLO per micro-modifiche (un typo, un testo, un colore, una versione) in 1-2 file: gira su un modello più leggero. Nel dubbio, e per tutto il resto, ometti (Opus)."),
         ],
         required: ["title", "prompt"]
     ) { args, ctx in
@@ -130,7 +156,8 @@ public enum SquadTools {
             throw ToolError("Cartella non trovata: \(dir)")
         }
         let info = try await ctx.tasks.start(title: args["title"] as? String ?? "Lavoro sul Mac",
-                                             prompt: args["prompt"] as? String ?? "", cwd: dir, kind: .mac)
+                                             prompt: args["prompt"] as? String ?? "", cwd: dir, kind: .mac,
+                                             difficulty: args["difficulty"] as? String)
         return "Agente avviato (id \(info.id)). Riferirà a voce: non serve aspettarlo, rispondi a Raffaele con una frase."
     }
 
@@ -163,7 +190,7 @@ public enum SquadTools {
         name: "squad_start",
         description: """
         Modalità squadra: avvia più agenti Claude in parallelo che collaborano su un obiettivo di codice \
-        (es. backend + frontend + test, oppure analisi di più repository). Gli agenti si parlano tra loro con una bacheca. \
+        (es. backend + frontend + test, oppure analisi di più repository). COSTA MOLTO: ogni agente consuma una sessione intera di crediti: usala solo per lavori grandi e davvero parallelizzabili, altrimenti start_task (un agente). Di solito 2-3 agenti, su compiti che non toccano gli stessi file; prima parte uno scout che esplora il codice una volta per tutti. Gli agenti si parlano tra loro con una bacheca. \
         Di default un agente coordinatore (Elio in persona, lead: true) fa le veci di Raffaele: risponde ai dubbi, rivede il \
         lavoro sui suoi gusti, fa correggere e può aggiungere agenti. Quanti agenti servono davvero (fino al massimo \
         configurato), ruoli distinti, compiti parallelizzabili e autosufficienti. Raffaele vede tutto nella dashboard e sul \
@@ -177,11 +204,13 @@ public enum SquadTools {
                 "description": "Gli agenti: nome breve (es. \"backend\"), ruolo, compito dettagliato e autosufficiente",
                 "items": [
                     "type": "object",
-                    "properties": ["name": prop("Nome breve"), "role": prop("Ruolo"), "task": prop("Compito dettagliato")],
+                    "properties": ["name": prop("Nome breve"), "role": prop("Ruolo"), "task": prop("Compito dettagliato"),
+                                   "difficulty": prop("trivial SOLO per micro-modifiche (un typo, un testo, un colore, una versione) in 1-2 file: gira su un modello più leggero. Nel dubbio, e per tutto il resto, ometti (Opus).")],
                     "required": ["name", "role", "task"],
                 ] as [String: any Sendable],
             ] as [String: any Sendable],
             "lead": prop("Coordinatore Elio che fa le veci di Raffaele (default true)", type: "boolean"),
+            "scout": prop("Uno scout esplora il codice una volta per tutti prima che partano gli altri (default true con 2+ agenti sullo stesso repo)", type: "boolean"),
         ],
         required: ["goal", "project_path", "members"]
     ) { args, ctx in
@@ -194,13 +223,29 @@ public enum SquadTools {
         guard members.count >= 1 else { throw ToolError("Servono degli agenti") }
         let goal = args["goal"] as? String ?? "Squadra"
         let lead = args["lead"] as? Bool ?? true
+        let scout = args["scout"] as? Bool ?? (members.count >= 2)
         let squad = await ctx.tasks.createSquad(goal: goal, project: path, lead: lead)
+        if scout {
+            // One exploration for everyone: members and lead start when the scout's brief is ready.
+            let queued = members.map { m in
+                TaskRunner.QueuedMember(name: (m["name"] as? String ?? "agente").lowercased().replacingOccurrences(of: " ", with: "-"),
+                                        role: m["role"] as? String ?? "", task: m["task"] as? String ?? "",
+                                        difficulty: m["difficulty"] as? String)
+            }
+            await ctx.tasks.queueAfterScout(squad: squad.id, members: queued, lead: lead)
+            _ = try await ctx.tasks.start(title: "scout: mappa il codice", prompt: TaskRunner.scoutPrompt(
+                goal: goal, cwd: path, members: queued.map { ($0.name, $0.role, $0.task) }), cwd: path, kind: .scout,
+                squad: squad.id, member: "scout", role: "esplora il codice una volta per tutti")
+            ctx.broadcast(ServerMessage(type: .event, kind: "openView", payload: "{\"view\":\"squad\"}"))
+            return "Squadra \(squad.id): prima uno scout mappa il codice (pochi minuti), poi partono \(queued.map(\.name).joined(separator: ", "))\(lead ? " con il coordinatore" : "") partendo dal suo brief. Report con workflow_report."
+        }
         // Register everyone first so each prompt lists the whole team.
         var started: [String] = []
         for m in members {
             let name = (m["name"] as? String ?? "agente").lowercased().replacingOccurrences(of: " ", with: "-")
             _ = try await ctx.tasks.start(title: "\(name): \(m["role"] as? String ?? "")", prompt: m["task"] as? String ?? "",
-                                          cwd: path, kind: .squad, squad: squad.id, member: name, role: m["role"] as? String)
+                                          cwd: path, kind: .squad, squad: squad.id, member: name, role: m["role"] as? String,
+                                          difficulty: m["difficulty"] as? String)
             started.append(name)
         }
         await ctx.tasks.post(squad: squad.id, from: "elio", to: "tutti",
@@ -218,7 +263,8 @@ public enum SquadTools {
         name: "squad_add",
         description: "Aggiunge un agente a una squadra già al lavoro (più forza lavoro, un ruolo che mancava, un revisore).",
         properties: ["squad": prop("Id della squadra (per il coordinatore: opzionale)"), "name": prop("Nome breve"),
-                     "role": prop("Ruolo"), "task": prop("Compito dettagliato e autosufficiente")],
+                     "role": prop("Ruolo"), "task": prop("Compito dettagliato e autosufficiente"),
+                     "difficulty": prop("trivial SOLO per micro-modifiche (typo, testo, colore, versione); altrimenti ometti")],
         required: ["name", "role", "task"]
     ) { args, ctx in
         var id = args["squad"] as? String ?? ""
@@ -232,7 +278,7 @@ public enum SquadTools {
         guard !(await ctx.tasks.members(of: id).contains { $0.member == name }) else { throw ToolError("Nome già usato: \(name)") }
         let role = args["role"] as? String ?? ""
         _ = try await ctx.tasks.start(title: "\(name): \(role)", prompt: args["task"] as? String ?? "", cwd: squad.project,
-                                      kind: .squad, squad: id, member: name, role: role)
+                                      kind: .squad, squad: id, member: name, role: role, difficulty: args["difficulty"] as? String)
         await ctx.tasks.post(squad: id, from: "elio", to: "tutti", text: "Nuovo membro: \(name) (\(role)).")
         return "\(name) aggiunto alla squadra."
     }

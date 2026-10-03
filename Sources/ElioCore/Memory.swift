@@ -96,6 +96,7 @@ public actor Memory {
             );
             """)
         try Self.exec(handle, Self.workflowSchema)
+        try Self.exec(handle, Self.todoSchema)
     }
 
     deinit { sqlite3_close(db) }

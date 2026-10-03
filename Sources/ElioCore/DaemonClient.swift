@@ -51,6 +51,11 @@ public final class DaemonClient: @unchecked Sendable {
         socket?.cancel(with: .goingAway, reason: nil)
     }
 
+    /// Same id as the `prepare` messages sent while the user was talking: the daemon joins them.
+    public func say(_ text: String, id: String) {
+        send(.say(id: id, text: text))
+    }
+
     @discardableResult
     public func say(_ text: String) -> String {
         let id = UUID().uuidString

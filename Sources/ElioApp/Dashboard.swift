@@ -107,6 +107,8 @@ struct DashboardView: View {
         }
         .preferredColorScheme(.dark)
         .environment(\.animationsLive, state.visible)
+        // Smooth when you're looking at it, light when it's just on screen behind something else.
+        .environment(\.animationFPS, state.focused ? 60 : state.visible ? 24 : 0)
         .task { await refreshLoop() }
     }
 
@@ -139,7 +141,7 @@ struct DashboardView: View {
                 RoutineButton(title: "Briefing", icon: "sunrise") { loop.submit(text: "briefing") }
                 RoutineButton(title: "Recap", icon: "moon.stars") { loop.submit(text: "recap della giornata") }
                 Rectangle().fill(Theme.line).frame(width: 1, height: 22).padding(.horizontal, 4)
-                HeaderButton(icon: "person.3", help: "Squadra di agenti") {
+                HeaderButton(icon: "person.3", help: "Missione: squadra di agenti al lavoro") {
                     withAnimation(.spring(duration: 0.35)) { state.squadMode.toggle() }
                 }
                 .overlay(alignment: .topTrailing) {
@@ -187,6 +189,7 @@ struct DashboardView: View {
                     }
                 }
             }
+            Movable(id: "todo") { TodoPanel(loop: loop) }
             Movable(id: "promemoria", dormant: off(.promemoria)) {
                 GlassPanel(title: "PROMEMORIA", trailing: reminders.isEmpty ? nil : "\(reminders.count)") {
                     if reminders.isEmpty {
@@ -252,8 +255,13 @@ struct DashboardView: View {
                 if loop.tasks.isEmpty {
                     Text("Nessun agente al lavoro").font(.system(size: 12)).foregroundStyle(Theme.dim)
                 }
-                ForEach(loop.tasks.reversed().prefix(4)) { t in
-                    WorkflowRow(task: t, expanded: true, control: { loop.controlTask(t.id, $0) })
+                // A mission in progress is one card (details in Missione), not a row per agent.
+                if let mission = activeMission {
+                    MissionSummary(loop: loop, squad: mission) { state.squadMode = true }
+                }
+                ForEach(loop.tasks.filter { $0.squad == nil }.reversed().prefix(activeMission == nil ? 4 : 2)) { t in
+                    WorkflowRow(task: t, expanded: false, now: AgentActivity.now(t, log: loop.taskLogs[t.id] ?? []),
+                                control: { loop.controlTask(t.id, $0) })
                         .contentShape(Rectangle())
                         .onTapGesture { state.theater = t.id }
                 }
@@ -309,9 +317,12 @@ struct DashboardView: View {
         loop.routineMode && !loop.litTools.keys.contains { Capability.of(tool: $0) == cap }
     }
 
+    /// The live strip shows a single background agent; a mission has its own view.
     private var runningTask: TaskInfo? {
-        loop.tasks.last { $0.status == .running || $0.status == .waitingConfirmation }
+        loop.tasks.last { ($0.status == .running || $0.status == .waitingConfirmation) && $0.squad == nil }
     }
+
+    private var activeMission: SquadInfo? { loop.squads.last { $0.endedAt == nil } }
 
     private var runningCount: Int {
         loop.tasks.filter { $0.status == .running || $0.status == .waitingConfirmation }.count

@@ -70,3 +70,40 @@ struct WorkflowTests {
         #expect(m == "silent")
     }
 }
+
+struct TodoTests {
+    private func tempMemory() throws -> Memory {
+        try Memory(path: FileManager.default.temporaryDirectory.appendingPathComponent("elio-todo-\(UUID().uuidString).sqlite"))
+    }
+
+    @Test func boardCarryOverAndRecurring() async throws {
+        let memory = try tempMemory()
+        let today = TodoDay.key()
+        let yesterday = TodoDay.key(Date().addingTimeInterval(-86400))
+        _ = await memory.addTodo(TodoItem(text: "Mail a Rosario", day: yesterday))
+        let done = await memory.addTodo(TodoItem(text: "Standup", day: yesterday))
+        var d = try #require(await memory.todo(done)); d.done = true; await memory.updateTodo(d)
+        _ = await memory.addTodo(TodoItem(text: "Leggere il report", day: nil))
+        _ = await memory.addTodo(TodoItem(text: "Timbrare", day: nil, recurring: "daily"))
+
+        var board = await memory.todoBoard()
+        #expect(board.overdue.map(\.text) == ["Mail a Rosario"])
+        #expect(board.someday.map(\.text) == ["Leggere il report"])
+        #expect(board.today.map(\.text) == ["Timbrare"])          // recurring instance created once
+        board = await memory.todoBoard()
+        #expect(board.today.count == 1)
+
+        #expect(await memory.carryOverTodos(to: today) == 1)
+        board = await memory.todoBoard()
+        #expect(board.overdue.isEmpty)
+        #expect(Set(board.today.map(\.text)) == ["Timbrare", "Mail a Rosario"])
+        #expect(await memory.findTodos("ho scritto la mail a rosario").first?.text == "Mail a Rosario")
+    }
+
+    @Test func parsesDays() {
+        #expect(TodoDay.parse("oggi") == .some(TodoDay.key()))
+        #expect(TodoDay.parse("prima o poi") == .some(nil))
+        #expect(TodoDay.parse("2026-12-24") == .some("2026-12-24"))
+        #expect(TodoDay.parse("boh") == nil)
+    }
+}

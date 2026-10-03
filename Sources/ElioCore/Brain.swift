@@ -13,6 +13,7 @@ public actor Brain {
     public let tasks: TaskRunner
     public let routines: Routines
     public let sync: SyncEngine
+    public let prep: SpeechPrep
 
     public init(config: ElioConfig, memory: Memory, executablePath: String) async {
         self.config = config
@@ -23,6 +24,7 @@ public actor Brain {
         tasks = TaskRunner(config: config, mcpConfig: mcp, memory: memory)
         routines = Routines(config: config, memory: memory)
         sync = SyncEngine(memory: memory, config: config)
+        prep = SpeechPrep(config: config, mcpConfig: mcp)
         var options = ClaudeBridge.Options(
             claudePath: config.claudePath,
             model: config.claudeModel,
@@ -45,6 +47,8 @@ public actor Brain {
         await gate.setAddressAs(config.addressAs)
         await tasks.setBroadcast(send)
         await tasks.setTaste(await memory.tasteRules())
+        // The speech-prep session is spawned now, so thinking ahead never pays a cold start.
+        if config.speechPrep { await prep.warm() }
         await scheduler.attach(tasks: tasks)
         await scheduler.setRepeatReminders(config.repeatReminders)
         await scheduler.start(broadcast: send)
@@ -183,6 +187,12 @@ public actor Brain {
         }
     }
 
+    /// Partial transcript of a request being spoken: the prep session starts working on it.
+    public func prepare(id: String, text: String) async {
+        guard config.speechPrep else { return }
+        await prep.update(key: id, text: text)
+    }
+
     private func process(id: String, text: String, _ out: AsyncStream<ServerMessage>.Continuation) async {
         let start = Date()
         let elapsed = { Int(Date().timeIntervalSince(start) * 1000) }
@@ -192,6 +202,7 @@ public actor Brain {
             let reply = matched.lang == .it ? Self.addressing(raw, config.addressAs) : raw
             await memory.log(role: "assistant", text: reply, route: Route.local.rawValue)
             out.yield(ServerMessage(type: .done, id: id, text: reply, route: .local, lang: matched.lang, latencyMs: elapsed()))
+            _ = await prep.take(key: id)
             return
         }
 
@@ -203,6 +214,7 @@ public actor Brain {
             log("fast path done in \(elapsed()) ms")
             await memory.log(role: "assistant", text: reply, route: Route.local.rawValue)
             out.yield(ServerMessage(type: .done, id: id, text: reply, route: .local, lang: .it, latencyMs: elapsed()))
+            _ = await prep.take(key: id)
             return
         }
 
@@ -227,7 +239,12 @@ public actor Brain {
 
         var firstDeltaMs: Int?
         do {
-            for try await event in await claude.ask(Self.withContext(text, ackGiven: ackOn)) {
+            // What the prep session found while the user was talking (empty for short requests).
+            var prompt = Self.withContext(text, ackGiven: ackOn)
+            if let notes = await prep.take(key: id), notes != "-" {
+                prompt += "\n\n[preparato mentre parlava — appunti di una ricerca veloce, verificali se serve, non citarli:\n\(notes)\n]"
+            }
+            for try await event in await claude.ask(prompt) {
                 switch event {
                 case .tool(let name, let toolId, let started):
                     broadcast(ServerMessage(type: .event, id: toolId, text: name, kind: "tool",
@@ -321,7 +338,7 @@ public actor Brain {
         f.dateFormat = "EEEE d MMMM yyyy, HH:mm"
         // A short reminder every turn keeps replies spoken-length (the system prompt alone wasn't enough).
         let ack = ackGiven ? " La frase di riscontro l'ha già detta l'app: niente \"Certo, Signore…\", entra subito nel merito, ma rivolgiti comunque a lui con \"Signore\"." : ""
-        return "[contesto: \(f.string(from: Date())). Rispondi in massimo due frasi, salvo richiesta di dettagli.\(ack)]\n\(text)"
+        return "[contesto: \(f.string(from: Date())). Rispondi in massimo due frasi, salvo richiesta di dettagli. Se ti servono più fonti (es. Slack e Teamwork), interrogale una alla volta, prima la più veloce, e dopo ciascuna dì subito in una frase cosa hai trovato, poi passa alla successiva: non aspettare di avere tutto.\(ack)]\n\(text)"
     }
 
     /// Personality and speaking style, editable in Settings (the rest of the prompt is how the app works).
@@ -346,8 +363,13 @@ public actor Brain {
         niente riepiloghi di cosa hai fatto, niente domande di cortesia alla fine. \
         Elenchi, dettagli e numeri lunghi vanno a schermo con show_on_screen; a voce solo il succo.
         - Fai eccezione solo se l'utente chiede esplicitamente di spiegare o approfondire.
+        - Risposte che richiedono più strumenti si costruiscono parlando: chiama le fonti una alla volta (mai in \
+        parallelo, la più rapida per prima) e dopo ognuna dì subito in una frase cosa hai trovato, così {utente} sente \
+        la risposta crescere invece di aspettare in silenzio. Alla fine, se serve, una frase che tira le somme.
         - Niente markdown, elenchi puntati, emoji, codice o URL: se servono dettagli, offri di mostrarli a schermo.
         - Numeri e orari scritti come si dicono.
+        - A voce non leggere hash di commit, id, token o percorsi: di' "l'ultimo commit", "il branch del login", \
+        il nome del file; i codici esatti mettili a schermo. Se servono davvero, solo le prime cifre.
         """
 
     public static func persona(_ config: ElioConfig) -> String {
@@ -446,6 +468,14 @@ public actor Brain {
         chiara e verificabile con taste_learn (con esempi bad/good se li dà), senza chiedere, e confermalo in una frase. \
         Gli agenti ricevono questi gusti, un revisore controlla il loro lavoro e li fa correggere, e tu li usi per decidere \
         le cose piccole al suo posto. taste_list per elencarli, taste_forget per toglierne uno.
+
+        To-do list di \(userName) (todo_add, todo_list, todo_done, todo_update, todo_remove, todo_carry_over): \
+        è in dashboard e sul telefono, spuntabile. Quando dice cosa vuole fare ("oggi devo…", "segnati…", "mettimi in lista…") \
+        aggiungilo tu, una voce per azione, all'infinito. Al mattino, se ti racconta i piani, aiutalo a organizzarli: \
+        spezza le cose grandi, segna le importanti, stima i tempi, metti un orario a quelle legate a un momento, \
+        tieni conto dell'agenda e proponi un ordine; poi riepiloga in una frase. Quando dice di aver fatto qualcosa, \
+        spuntala (todo_done con query). "Su cosa lavoro?" → la prossima importante non fatta, e mettila in focus. \
+        Se una voce è un lavoro da agente (codice, ricerche, sistemare il Mac), offri di delegarla.
 
         Memoria:
         - Hai una memoria a lungo termine (sotto). Quando l'utente dice "ricordati che…" o emerge un'informazione \

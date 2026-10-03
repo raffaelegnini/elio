@@ -26,6 +26,11 @@ public actor ClaudeBridge {
         public var browser = false
         /// Claude account (config dir) the process runs as.
         public var account = ClaudeAccount(dir: "")
+        /// Restricted sessions (speech prep): their own tool set, no permission prompts (anything not
+        /// pre-approved is denied), extra readable folders. Nil = the conversation's defaults.
+        public var tools: [String]?
+        public var allowedTools: [String]?
+        public var addDirs: [String] = []
 
         public init(claudePath: String, model: String, systemPrompt: String, workingDirectory: URL) {
             self.claudePath = claudePath
@@ -172,10 +177,15 @@ public actor ClaudeBridge {
             "--strict-mcp-config",
             // No shell or file edits in the conversational session: web research plus Elio
             // tools. Code work goes to background agents behind the confirmation gate.
-            "--tools", "WebSearch", "WebFetch", "Read", "Write", "Edit", "Glob", "Grep", "Bash", "Skill",
+            "--tools"] + (options.tools ?? ["WebSearch", "WebFetch", "Read", "Write", "Edit", "Glob", "Grep", "Bash", "Skill"]) + [
             "--system-prompt", options.systemPrompt,
         ]
-        if let mcp = options.mcpConfig {
+        if let allowed = options.allowedTools {
+            // Restricted session: read-only tools pre-approved, everything else denied (no prompt tool).
+            if let mcp = options.mcpConfig { args += ["--mcp-config", mcp] }
+            args += ["--allowedTools"] + allowed
+            for dir in options.addDirs { args += ["--add-dir", dir] }
+        } else if let mcp = options.mcpConfig {
             // Integration MCP tools are not pre-approved: they go through PermissionPolicy via `approve`.
             args += ["--mcp-config", mcp, "--allowedTools", "mcp__elio", "WebSearch", "WebFetch", "Read", "Glob", "Grep", "Skill",
                      "--add-dir", ElioPaths.outputDir.path]

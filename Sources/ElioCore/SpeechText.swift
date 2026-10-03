@@ -117,6 +117,10 @@ public enum Speakable {
     public static func clean(_ text: String) -> String {
         var t = SecretFilter.speakable(text)
         t = t.replacingOccurrences(of: #"https?://\S+"#, with: "", options: .regularExpression)
+        // Before the symbols go: "1.0.1", "10:30", "#42", "50%" must become words the voice can say.
+        t = SpeechNormalizer.italian(t)
+        // snake_case reads as two words, not one glued word.
+        t = t.replacingOccurrences(of: #"(?<=\w)_(?=\w)"#, with: " ", options: .regularExpression)
         t = t.replacingOccurrences(of: #"[*_#`>|~]+"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -132,7 +136,8 @@ public struct VoiceActivityDetector {
     public var endMarginDb: Float = 7          // below this (over the floor) counts as silence
     public var startDuration: TimeInterval = 0.15
     public var endSilence: TimeInterval = 0.8
-    public var maxUtterance: TimeInterval = 15
+    /// Long dictations are cut here, then stitched back together by the app (continuation window).
+    public var maxUtterance: TimeInterval = 45
     /// Extra start margin while Elio is talking, so its own voice doesn't trigger barge-in.
     public var extraMarginDb: Float = 0
 
@@ -284,5 +289,109 @@ public enum ConfirmationAnswer: Equatable {
         if has(soft) { return risk == .dangerous && words > 6 ? .needsExplicit : .approve }
         if t.trimmingCharacters(in: .whitespaces) == "no" { return .deny }
         return .unrelated
+    }
+}
+
+/// Did the user finish their request, or did they just pause? Words like "e", "poi", "che" or a trailing comma
+/// mean more is coming; long dictations usually go on too. The app holds the request that long before sending.
+public enum EndOfTurn {
+    static let connectives: Set<String> = [
+        "e", "ed", "che", "per", "di", "del", "della", "dei", "delle", "a", "al", "alla", "ai", "in", "con", "su", "poi",
+        "quindi", "allora", "ma", "però", "cioè", "tipo", "oppure", "o", "se", "come", "anche", "dove", "quando", "mentre",
+        "perché", "un", "una", "uno", "il", "lo", "la", "i", "gli", "le", "da", "dal", "dalla", "nel", "nella", "sul",
+        "sulla", "questo", "questa", "quello", "quella", "sia", "eh", "ehm", "uhm", "mmm", "dunque", "inoltre",
+        "praticamente", "insomma", "comunque", "and", "the", "to", "of", "then", "so", "but", "or", "with",
+    ]
+
+    /// How long to wait for the rest of a request (0 = it's complete, go).
+    public static func wait(_ text: String, cutByLimit: Bool) -> TimeInterval {
+        if cutByLimit { return 1.8 }
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if t.hasSuffix(",") || t.hasSuffix(":") || t.hasSuffix("…") || t.hasSuffix("...") || t.hasSuffix(";") { return 1.6 }
+        let words = t.split(whereSeparator: { $0 == " " })
+        let last = words.last.map { String($0).trimmingCharacters(in: .punctuationCharacters) } ?? ""
+        if connectives.contains(last) { return 1.6 }
+        let closed = t.hasSuffix(".") || t.hasSuffix("?") || t.hasSuffix("!")
+        if words.count >= 25 { return closed ? 0.9 : 1.3 }   // a long dictation usually goes on
+        if words.count >= 12, !closed { return 0.8 }
+        return 0
+    }
+
+}
+
+/// Turns what a voice can't read into what a person would say (Italian): "1.0.1" → "1 punto 0 punto 1",
+/// "v2.3" → "versione 2 punto 3", "10:30" → "10 e 30", "50%" → "50 per cento", "#42" → "numero 42",
+/// "3-5" → "da 3 a 5", "1920x1080" → "1920 per 1080", "app.swift" → "app punto swift", "->" → pause.
+/// ElevenLabs otherwise reads the dots as a stop and makes odd sounds on symbols.
+public enum SpeechNormalizer {
+    static let letterNames: [Character: String] = [
+        "a": "a", "b": "bi", "c": "ci", "d": "di", "e": "e", "f": "effe", "g": "gi", "h": "acca", "i": "i", "j": "i lunga",
+        "k": "cappa", "l": "elle", "m": "emme", "n": "enne", "o": "o", "p": "pi", "q": "cu", "r": "erre", "s": "esse",
+        "t": "ti", "u": "u", "v": "vu", "w": "doppia vu", "x": "ics", "y": "ipsilon", "z": "zeta",
+    ]
+    static let digitNames: [Character: String] = [
+        "0": "zero", "1": "uno", "2": "due", "3": "tre", "4": "quattro", "5": "cinque", "6": "sei", "7": "sette", "8": "otto", "9": "nove",
+    ]
+
+    /// "85f3b61" → "otto cinque effe tre bi sei uno": hashes (7+ hex chars, shortened to 7) and other codes of
+    /// 5+ characters mixing letters and digits. Short tech names (H264, UTF8, B2B, iPhone15) stay as they are.
+    static func spellCodes(_ text: String) -> String {
+        let pattern = #"\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{5,}\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        var out = text
+        for m in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            guard let r = Range(m.range, in: out) else { continue }
+            let token = String(out[r])
+            let lower = token.lowercased()
+            // Git hashes are lowercase hex; uppercase codes (tickets, ids) are spelled in full.
+            let isHash = token == lower && lower.count >= 7 && lower.allSatisfy { $0.isHexDigit }
+            let digits = token.filter(\.isNumber).count, letters = token.count - digits
+            // A word with a number glued on ("build14", "iPhone15") reads fine; a code alternates.
+            let alternations = zip(token, token.dropFirst()).filter { $0.0.isNumber != $0.1.isNumber }.count
+            guard isHash || (digits >= 2 && letters >= 2 && alternations >= 3) else { continue }
+            let chars = isHash ? Array(lower.prefix(7)) : Array(lower.prefix(12))
+            let spelled = chars.compactMap { digitNames[$0] ?? letterNames[$0] }.joined(separator: " ")
+            out.replaceSubrange(r, with: spelled)
+        }
+        return out
+    }
+
+    static let extensions = "swift|js|mjs|ts|tsx|jsx|php|py|rb|go|rs|kt|java|dart|vue|json|md|html|css|scss|yml|yaml|toml|xml|env|sh|zsh|sql|txt|pdf|csv|xlsx|docx|pptx|png|jpg|jpeg|svg|gif|zip|plist|lock|log|ini|conf"
+
+    public static func italian(_ text: String) -> String {
+        var t = text
+        func sub(_ pattern: String, _ template: String) {
+            t = t.replacingOccurrences(of: pattern, with: template, options: [.regularExpression, .caseInsensitive])
+        }
+        // Codes mixing letters and digits (commit hashes, ids): spelled out, the way a person reads them.
+        t = spellCodes(t)
+        // Versions: "v2.3.1", "1.0.1", "8.2" (a single dot followed by 1–2 digits; "1.200" is a thousand).
+        sub(#"\bv(\d+(?:\.\d+)*)\b"#, "versione $1")
+        for _ in 0..<4 { sub(#"(\d)\.(\d)(?=\d*\.\d)"#, "$1 punto $2") }      // all but the last dot of a chain
+        sub(#"(\d+) punto (\d+)\.(\d+)"#, "$1 punto $2 punto $3")
+        sub(#"\b(\d+)\.(\d{1,2})\b(?!\.\d)"#, "$1 punto $2")
+        // File names and extensions: "app.swift", ".env".
+        sub(#"(\w)\.(\#(extensions))\b"#, "$1 punto $2")
+        sub(#"(^|\s)\.(\#(extensions))\b"#, "$1punto $2")
+        // Times: "10:30" → "10 e 30", "9:00" → "9", "10:05" → "10 e 5".
+        sub(#"\b([01]?\d|2[0-3]):00\b"#, "$1")
+        sub(#"\b([01]?\d|2[0-3]):0(\d)\b"#, "$1 e $2")
+        sub(#"\b([01]?\d|2[0-3]):([1-5]\d)\b"#, "$1 e $2")
+        // Numbers with symbols.
+        sub(#"(\d)\s?%"#, "$1 per cento")
+        sub(#"(\d)\s?°C?"#, "$1 gradi")
+        sub(#"(\d)\s?x\s?(\d)"#, "$1 per $2")
+        sub(#"(\d)\s?\+\s?(\d)"#, "$1 più $2")
+        sub(#"(\d)\s?=\s?(\d)"#, "$1 uguale $2")
+        sub(#"\b(\d+)\s?[-–]\s?(\d+)\b(?!\s*[-–/]\s*\d)"#, "da $1 a $2")
+        sub(#"#(\d+)"#, "numero $1")
+        sub(#"(\d)/(\d)"#, "$1 su $2")
+        // Words joined by symbols.
+        sub(#"\s*(->|=>|→|⟶)\s*"#, ", ")
+        sub(#"\s&\s|(?<=\w)&(?=\w)"#, " e ")
+        sub(#"(?<=[A-Za-zÀ-ÿ])/(?=[A-Za-zÀ-ÿ])"#, " slash ")
+        sub(#"@(?=\w)"#, "")
+        sub(#"\.{3}"#, "…")
+        return t
     }
 }

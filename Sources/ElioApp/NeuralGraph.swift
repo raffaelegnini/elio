@@ -21,6 +21,8 @@ final class GraphModel {
         var stack: String?
         /// Fixed place in a laid-out tree: the node glides there and stays (no physics).
         var target: CGPoint?
+        /// Shown but not in use (an integration that isn't connected).
+        var dim = false
 
         /// group: a folder of projects (dev → DNA → magento…), between a capability and its leaves.
         enum Kind { case core, capability, group, leaf }
@@ -48,25 +50,39 @@ final class GraphModel {
     }
 
     /// Replaces the leaves of one capability, keeping positions of nodes that survive.
-    func setLeaves(_ cap: Capability, _ items: [(id: String, label: String, detail: String)]) {
+    func setLeaves(_ cap: Capability, _ items: [(id: String, label: String, detail: String)], dimmed: Set<String> = []) {
         let prefix = "\(cap.rawValue):"
         let keep = Set(items.map { prefix + $0.id })
         for id in nodes.keys where id.hasPrefix(prefix) && !keep.contains(id) {
             nodes[id] = nil
             edges = edges.filter { $0.a != id && $0.b != id }
         }
-        guard let parent = nodes[cap.rawValue] else { return }
-        for item in items {
+        guard nodes[cap.rawValue] != nil else { return }
+        // Like CODICE: the capability stays on its ring, pinned, and its leaves fan outwards, away from the core
+        // (free physics pulled them towards the centre, over the core and the other branches).
+        let home = Self.homePosition(cap)
+        nodes[cap.rawValue]?.pos = home
+        nodes[cap.rawValue]?.pinned = true
+        let direction = atan2(home.y, home.x)
+        // Wider fan with more leaves, never past ~100°: neighbouring branches keep their own sector.
+        let cone = min(Double.pi * 0.55, 1.0 + Double(items.count) * 0.08)
+        let golden = 2.39996323
+        for (i, item) in items.enumerated() {
             let id = prefix + item.id
-            if nodes[id] != nil {
-                nodes[id]?.label = item.label
-                nodes[id]?.detail = item.detail
-                continue
+            // Sunflower spiral folded into the cone: evenly spaced, organic, stable per leaf.
+            let j = Self.noise(id)
+            let dist = 62 + 24 * sqrt(Double(i) + 1) + (j - 0.5) * 10
+            let u = (Double(i) * golden / (2 * .pi)).truncatingRemainder(dividingBy: 1)
+            let a = direction + (u - 0.5) * cone
+            let target = CGPoint(x: home.x + cos(a) * dist, y: home.y + sin(a) * dist)
+            if nodes[id] == nil {
+                nodes[id] = Node(id: id, label: item.label, detail: item.detail, kind: .leaf, capability: cap, pos: home)
+                edges.insert(Edge(a: cap.rawValue, b: id))
             }
-            let jitter = CGPoint(x: .random(in: -40...40), y: .random(in: -40...40))
-            nodes[id] = Node(id: id, label: item.label, detail: item.detail, kind: .leaf, capability: cap,
-                             pos: CGPoint(x: parent.pos.x * 1.4 + jitter.x, y: parent.pos.y * 1.4 + jitter.y))
-            edges.insert(Edge(a: cap.rawValue, b: id))
+            nodes[id]?.label = item.label
+            nodes[id]?.detail = item.detail
+            nodes[id]?.dim = dimmed.contains(item.id)
+            nodes[id]?.target = target
         }
     }
 
@@ -172,55 +188,70 @@ final class GraphModel {
     }
 
     /// One physics step: repulsion, springs, gentle drift ("breathing").
+    /// Works on flat arrays (no dictionary lookups or Node copies in the O(n²) loop): it runs every frame.
     func step(dt: CGFloat, time: Double) {
         let ids = Array(nodes.keys)
-        var force: [String: CGVector] = [:]
-        for id in ids { force[id] = .zero }
+        let count = ids.count
+        var index: [String: Int] = [:]
+        index.reserveCapacity(count)
+        var px = [CGFloat](repeating: 0, count: count), py = px
+        var leaf = [Bool](repeating: false, count: count), free = leaf
+        var kinds = [Node.Kind](repeating: .leaf, count: count)
+        for (i, id) in ids.enumerated() {
+            let n = nodes[id]!
+            index[id] = i
+            px[i] = n.pos.x; py[i] = n.pos.y
+            leaf[i] = n.kind == .leaf
+            free[i] = n.target == nil
+            kinds[i] = n.kind
+        }
+        var fx = [CGFloat](repeating: 0, count: count), fy = fx
 
-        for i in 0..<ids.count {
-            guard let a = nodes[ids[i]], a.target == nil else { continue }
-            for j in (i + 1)..<ids.count {
-                guard let b = nodes[ids[j]], b.target == nil else { continue }
-                var dx = a.pos.x - b.pos.x, dy = a.pos.y - b.pos.y
+        let freeIdx = (0..<count).filter { free[$0] }
+        for a in 0..<freeIdx.count {
+            let i = freeIdx[a]
+            for b in (a + 1)..<freeIdx.count {
+                let j = freeIdx[b]
+                var dx = px[i] - px[j], dy = py[i] - py[j]
                 var d2 = dx * dx + dy * dy
                 if d2 < 1 { dx = .random(in: -1...1); dy = .random(in: -1...1); d2 = 1 }
-                let strength: CGFloat = (a.kind == .leaf && b.kind == .leaf) ? 500
-                    : (a.kind == .leaf || b.kind == .leaf) ? 1800 : 5200
-                let f = strength / d2
+                let strength: CGFloat = (leaf[i] && leaf[j]) ? 500 : (leaf[i] || leaf[j]) ? 1800 : 5200
                 let d = sqrt(d2)
-                force[ids[i]]!.dx += dx / d * f; force[ids[i]]!.dy += dy / d * f
-                force[ids[j]]!.dx -= dx / d * f; force[ids[j]]!.dy -= dy / d * f
+                let f = strength / d2 / d
+                fx[i] += dx * f; fy[i] += dy * f
+                fx[j] -= dx * f; fy[j] -= dy * f
             }
         }
         for e in edges {
-            guard let a = nodes[e.a], let b = nodes[e.b], a.target == nil, b.target == nil else { continue }
-            let rest: CGFloat = (a.kind == .core || b.kind == .core) ? 170
-                : b.kind == .group ? 75 : a.kind == .group ? 42 : 70
-            let dx = b.pos.x - a.pos.x, dy = b.pos.y - a.pos.y
+            guard let i = index[e.a], let j = index[e.b], free[i], free[j] else { continue }
+            let rest: CGFloat = (kinds[i] == .core || kinds[j] == .core) ? 170
+                : kinds[j] == .group ? 75 : kinds[i] == .group ? 42 : 70
+            let dx = px[j] - px[i], dy = py[j] - py[i]
             let d = max(sqrt(dx * dx + dy * dy), 0.1)
-            let f = (d - rest) * 0.06
-            force[e.a]!.dx += dx / d * f; force[e.a]!.dy += dy / d * f
-            force[e.b]!.dx -= dx / d * f; force[e.b]!.dy -= dy / d * f
+            let f = (d - rest) * 0.06 / d
+            fx[i] += dx * f; fy[i] += dy * f
+            fx[j] -= dx * f; fy[j] -= dy * f
         }
-        for id in ids {
-            if var n = nodes[id], let target = n.target, !n.pinned {
+        let ease = min(1, 0.12 * dt * 8)
+        for (i, id) in ids.enumerated() {
+            guard var n = nodes[id], !n.pinned else { continue }
+            if let target = n.target {
                 // Laid-out tree: ease towards the slot, with a slow individual drift so it feels alive.
                 let ph = Self.noise(id) * 6.28
                 let wob = n.kind == .leaf ? 3.0 : 1.6
                 let tx = target.x + CGFloat(sin(time * 0.6 + ph) * wob)
                 let ty = target.y + CGFloat(cos(time * 0.5 + ph * 1.3) * wob)
-                n.pos.x += (tx - n.pos.x) * min(1, 0.12 * dt * 8)
-                n.pos.y += (ty - n.pos.y) * min(1, 0.12 * dt * 8)
+                n.pos.x += (tx - n.pos.x) * ease
+                n.pos.y += (ty - n.pos.y) * ease
                 nodes[id] = n
                 continue
             }
-            guard var n = nodes[id], !n.pinned else { continue }
-            var f = force[id]!
             // Weak gravity to the centre and a slow swirl so the network never freezes.
-            f.dx += -n.pos.x * 0.004 + CGFloat(sin(time * 0.3 + Double(id.hashValue % 97))) * 0.25
-            f.dy += -n.pos.y * 0.004 + CGFloat(cos(time * 0.27 + Double(id.hashValue % 89))) * 0.25
-            n.vel.dx = (n.vel.dx + f.dx * dt) * 0.86
-            n.vel.dy = (n.vel.dy + f.dy * dt) * 0.86
+            let seed = Self.noise(id)
+            let gx = fx[i] - n.pos.x * 0.004 + CGFloat(sin(time * 0.3 + seed * 97)) * 0.25
+            let gy = fy[i] - n.pos.y * 0.004 + CGFloat(cos(time * 0.27 + seed * 89)) * 0.25
+            n.vel.dx = (n.vel.dx + gx * dt) * 0.86
+            n.vel.dy = (n.vel.dy + gy * dt) * 0.86
             let speed = hypot(n.vel.dx, n.vel.dy)
             if speed > 40 { n.vel.dx *= 40 / speed; n.vel.dy *= 40 / speed }
             n.pos.x += n.vel.dx * dt
@@ -248,7 +279,7 @@ final class GraphModel {
     static func capabilityDetail(_ cap: Capability) -> String {
         switch cap {
         case .agenda: "Calendari Google e iCloud, Google Meet"
-        case .slack: "Clock in, menzioni, DM, messaggi (con conferma)"
+        case .integrazioni: "Slack, posta, Spotify e i servizi che hai collegato (API e MCP)"
         case .agenti: "Agenti Claude in background sui tuoi progetti"
         case .codice: "Repository locali, diff da revisionare"
         case .promemoria: "Promemoria a voce e notifiche"
@@ -269,12 +300,8 @@ struct NeuralGraphView: View {
     @State private var model = GraphModel()
     @Environment(\.animationsLive) private var animationsLive
 
-    /// Calm network: 12 fps is plenty for slow drifting; 30 fps while Elio works or you interact.
-    private var frameInterval: Double {
-        let busy = loop.state == .thinking || loop.state == .speaking || loop.state == .hearing
-            || !loop.activeTools.isEmpty || hovered != nil || dragging != nil || loop.routineMode
-        return busy ? 1.0 / 30 : 1.0 / 8
-    }
+    @Environment(\.animationFPS) private var fps
+    @Environment(\.liveLayers) private var liveLayers
     @State private var offset: CGSize = .zero
     @State private var dragStartOffset: CGSize = .zero
     @State private var scale: CGFloat = 1
@@ -286,6 +313,15 @@ struct NeuralGraphView: View {
     @State private var hoverStart = Date()
 
     private var active: Set<Capability> { Set(loop.activeTools.map(Capability.of)) }
+    /// Integrations in use right now ("mail" lights Gmail and Mail).
+    private var activeIntegrations: Set<String> {
+        var out = Set<String>()
+        for tool in loop.activeTools {
+            guard let id = Capability.integration(of: tool) else { continue }
+            if id == "mail" { out.formUnion(["gmail", "applemail"]) } else { out.insert(id) }
+        }
+        return out
+    }
 
     /// During a brief/recap: capability → when it lit up. Unlit capabilities are drawn dark.
     private var litAt: [Capability: Date] {
@@ -301,13 +337,11 @@ struct NeuralGraphView: View {
         GeometryReader { geo in
             let center = CGPoint(x: geo.size.width / 2 + offset.width, y: geo.size.height / 2 + offset.height)
             ZStack(alignment: .topLeading) {
-                TimelineView(.animation(minimumInterval: frameInterval, paused: !animationsLive)) { timeline in
-                    let t = timeline.date.timeIntervalSinceReferenceDate
-                    Canvas { ctx, _ in
-                        let dt = CGFloat(min(timeline.date.timeIntervalSince(model.lastTick), 1.0 / 30))
-                        model.lastTick = timeline.date
-                        model.step(dt: max(dt, 1.0 / 120) * 8, time: t)
-                        draw(&ctx, center: center, t: t)
+                Group {
+                    if liveLayers {
+                        VectorLayer(fps: animationsLive ? fps : 0) { t in frame(center: center, t: t, step: true) }
+                    } else {
+                        Canvas { ctx, _ in frame(center: center, t: Date().timeIntervalSinceReferenceDate, step: false).draw(in: &ctx) }
                     }
                 }
                 .contentShape(Rectangle())
@@ -337,7 +371,7 @@ struct NeuralGraphView: View {
                 }
 
                 // The living orb sits on the core.
-                OrbView(state: loop.state, level: loop.level)
+                LiveOrb(loop: loop)
                     .frame(width: 120 * scale, height: 120 * scale)
                     .position(center)
                     .allowsHitTesting(false)
@@ -380,11 +414,20 @@ struct NeuralGraphView: View {
 
     // MARK: - Drawing
 
-    private func draw(_ ctx: inout GraphicsContext, center: CGPoint, t: Double) {
+    /// One frame of the network: physics step, then everything as batched paths, glows and cached images.
+    private func frame(center: CGPoint, t: Double, step: Bool) -> VectorFrame {
+        if step {
+            let now = Date(timeIntervalSinceReferenceDate: t)
+            let dt = CGFloat(min(now.timeIntervalSince(model.lastTick), 1.0 / 30))
+            model.lastTick = now
+            model.step(dt: max(dt, 1.0 / 120) * 8, time: t)
+        }
+        var f = VectorFrame()
         let tint = Theme.tint(loop.state)
         let dark = loop.routineMode
         let lit = litAt
         let offColor = Color(hex: "#3A3935")
+        let now = Date()
         func isOff(_ n: GraphModel.Node) -> Bool {
             guard dark, let cap = n.capability else { return false }
             return lit[cap] == nil
@@ -392,18 +435,31 @@ struct NeuralGraphView: View {
         /// 0…1 flash right after a capability lights up.
         func flash(_ n: GraphModel.Node) -> Double {
             guard dark, let cap = n.capability, let at = lit[cap] else { return 0 }
-            let dt = Date().timeIntervalSince(at)
+            let dt = now.timeIntervalSince(at)
             return dt < 1.6 ? 1 - dt / 1.6 : 0
         }
         func screen(_ p: CGPoint) -> CGPoint { CGPoint(x: center.x + p.x * scale, y: center.y + p.y * scale) }
+        let active = self.active, integrations = activeIntegrations
+        /// A node is lit while its capability works; an integration only while that integration is used.
+        func isOn(_ n: GraphModel.Node) -> Bool {
+            guard let cap = n.capability, active.contains(cap) else { return false }
+            if cap == .integrazioni, n.kind == .leaf {
+                return integrations.contains(String(n.id.dropFirst("integrazioni:".count)))
+            }
+            return true
+        }
+        // Quantised paints: alpha to 1%, width to 0.1 pt; invisible steps, few batches.
+        func ink(_ c: Color, _ alpha: Double, width: CGFloat = 0) -> Ink {
+            Ink(c, opacity: (alpha * 100).rounded() / 100, width: width)
+        }
 
+        // Synapses.
         for e in model.edges {
             guard let a = model.nodes[e.a], let b = model.nodes[e.b] else { continue }
             // Synapses of the hovered neuron light up too.
-            let on = (a.capability.map(active.contains) ?? false) || (b.capability.map(active.contains) ?? false)
-                || (hovered != nil && (e.a == hovered || e.b == hovered))
+            let on = isOn(b) || (hovered != nil && (e.a == hovered || e.b == hovered))
             let pa = screen(a.pos), pb = screen(b.pos)
-            var path = Path()
+            let path = CGMutablePath()
             path.move(to: pa)
             if b.target != nil {
                 // Tree synapses bend slightly, each its own way.
@@ -413,111 +469,116 @@ struct NeuralGraphView: View {
             } else {
                 path.addLine(to: pb)
             }
-            let base = b.kind == .leaf ? 0.10 : 0.22
             if isOff(b) {
-                ctx.stroke(path, with: .color(offColor.opacity(0.35)), lineWidth: 0.6)
+                f.add(path, ink(offColor, 0.35, width: 0.6), .back)
                 continue
             }
-            let f = flash(b)
-            ctx.stroke(path, with: .color(tint.opacity(on ? 0.75 : base + f * 0.6)), lineWidth: on ? 1.6 : (b.kind == .leaf ? 0.6 : 1) + f * 1.5)
+            let base = b.kind == .leaf ? (b.dim ? 0.05 : 0.10) : 0.22
+            let fl = flash(b)
+            f.add(path, ink(tint, on ? 0.75 : base + fl * 0.6, width: on ? 1.6 : (b.kind == .leaf ? 0.6 : 1) + fl * 1.5), .back)
             if on {
                 // Signal travelling along the synapse.
-                let k = (t * 1.4 + Double(abs(e.b.hashValue % 100)) / 100).truncatingRemainder(dividingBy: 1)
-                let q = CGPoint(x: pa.x + (pb.x - pa.x) * k, y: pa.y + (pb.y - pa.y) * k)
-                ctx.fill(Path(ellipseIn: CGRect(x: q.x - 2.5, y: q.y - 2.5, width: 5, height: 5)), with: .color(.white))
+                let k = (t * 1.4 + GraphModel.noise(e.b)).truncatingRemainder(dividingBy: 1)
+                f.circle(CGPoint(x: pa.x + (pb.x - pa.x) * k, y: pa.y + (pb.y - pa.y) * k), 2.5, Ink(.white), .front)
             }
         }
 
-        // Labels are collected and drawn last, without overlaps: hovered first, then capabilities,
-        // folders, projects; a label that would cover another one is skipped.
-        var labels: [(priority: Int, text: Text, at: CGPoint, anchor: UnitPoint)] = []
+        // Neurons. Labels are collected and placed last, without overlaps: hovered first, then
+        // capabilities, folders, projects; a label that would cover another one is skipped.
+        var labels: [(priority: Int, spec: ImageSpec, at: CGPoint, anchor: UnitPoint)] = []
         for node in model.nodes.values where node.kind != .core {
             let p = screen(node.pos)
             if isOff(node) {
                 // Dormant neuron: dark, no glow, no label for leaves.
                 let r = node.radius * zoomFactor(node)
-                let rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
-                ctx.fill(Path(ellipseIn: rect), with: .color(node.kind == .leaf ? offColor : Theme.bg))
+                f.circle(p, r, Ink(node.kind == .leaf ? offColor : Theme.bg))
                 if node.kind == .capability {
-                    ctx.stroke(Path(ellipseIn: rect), with: .color(offColor), lineWidth: 1)
-                    let text = Text(node.label).font(.system(size: 9.5, weight: .semibold, design: .monospaced)).foregroundStyle(offColor)
-                    ctx.draw(text, at: CGPoint(x: p.x, y: p.y + r + 9))
+                    f.circle(p, r, Ink(offColor, width: 1), .front)
+                    f.images.append(PlacedImage(spec: labelSpec(node, color: offColor), point: CGPoint(x: p.x, y: p.y + r + 9)))
                 }
                 continue
             }
-            let f = flash(node)
-            if f > 0 {
+            let fl = flash(node)
+            if fl > 0 {
                 // Ignition: an expanding ring as the neuron comes alive.
-                let ring = node.radius * zoomFactor(node) * (1 + (1 - f) * 3)
-                ctx.stroke(Path(ellipseIn: CGRect(x: p.x - ring, y: p.y - ring, width: ring * 2, height: ring * 2)),
-                           with: .color(tint.opacity(f)), lineWidth: 2)
+                f.circle(p, node.radius * zoomFactor(node) * (1 + (1 - fl) * 3), ink(tint, fl, width: 2), .front)
             }
-            let on = node.capability.map(active.contains) ?? false
-            let fresh = Date().timeIntervalSince(node.born) < 3
+            let on = isOn(node)
+            let fresh = now.timeIntervalSince(node.born) < 3
             let isHovered = node.id == hovered
             let isSelected = node.id == selected || isHovered
             // Hover: the neuron swells smoothly and glows.
-            let grow = isHovered ? 1 + 0.3 * min(1, Date().timeIntervalSince(hoverStart) / 0.15) : 1
+            let grow = isHovered ? 1 + 0.3 * min(1, now.timeIntervalSince(hoverStart) / 0.15) : 1
             let r = node.radius * zoomFactor(node) * grow * (on && node.kind == .capability ? 1.15 + 0.08 * sin(t * 8) : 1)
             let rect = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
 
-            // Glow.
             if on || fresh || isSelected || node.kind == .capability {
                 let g = r * (on || fresh || isHovered ? 3.2 : 2.2)
-                ctx.fill(Path(ellipseIn: CGRect(x: p.x - g, y: p.y - g, width: g * 2, height: g * 2)),
-                         with: .radialGradient(Gradient(colors: [tint.opacity(on || fresh ? 0.45 : isHovered ? 0.35 : 0.12), .clear]),
-                                               center: p, startRadius: 0, endRadius: g))
+                let alpha = on || fresh ? 0.45 : isHovered ? 0.35 : 0.12
+                f.glows.append(Glow(center: p, radius: g, colors: [Ink(tint, opacity: alpha).cgColor, Ink(tint, opacity: 0).cgColor]))
             }
             let leafColor = node.stack != nil && Brand.shared.stackColors ? StackBadge.rawColor(node.stack) : tint
-            ctx.fill(Path(ellipseIn: rect), with: .color(node.kind == .leaf ? leafColor.opacity(on || isHovered ? 1 : 0.8) : Theme.bg))
+            if node.kind == .leaf {
+                f.circle(p, r, node.dim && !on && !isHovered ? ink(Theme.dim, 0.45) : ink(leafColor, on || isHovered ? 1 : 0.8))
+            } else {
+                f.circle(p, r, Ink(Theme.bg))
+            }
             if node.kind == .group {
                 // Folder: ring + small folder glyph.
-                ctx.stroke(Path(ellipseIn: rect), with: .color(tint.opacity(isSelected ? 1 : 0.55)), lineWidth: isSelected ? 1.8 : 1)
-                var icon = ctx.resolve(Image(systemName: "folder.fill"))
-                icon.shading = .color(tint.opacity(0.9))
-                ctx.draw(icon, in: rect.insetBy(dx: r * 0.45, dy: r * 0.45))
+                f.circle(p, r, ink(tint, isSelected ? 1 : 0.55, width: isSelected ? 1.8 : 1), .front)
+                f.images.append(PlacedImage(spec: ImageSpec(key: "I|folder.fill|\(tint.description)",
+                                                             content: .symbol("folder.fill", color: NSColor(tint.opacity(0.9)))),
+                                            rect: rect.insetBy(dx: r * 0.45, dy: r * 0.45), stratum: .icons))
             }
             if node.kind == .capability {
-                ctx.stroke(Path(ellipseIn: rect), with: .color(tint.opacity(on ? 1 : 0.6)), lineWidth: isSelected ? 2.2 : 1.2)
+                f.circle(p, r, ink(tint, on ? 1 : 0.6, width: isSelected ? 2.2 : 1.2), .front)
                 if let cap = node.capability {
-                    var icon = ctx.resolve(Image(systemName: cap.icon))
-                    icon.shading = .color(on ? .white : tint)
-                    ctx.draw(icon, in: rect.insetBy(dx: r * 0.42, dy: r * 0.42))
+                    let color: Color = on ? .white : tint
+                    f.images.append(PlacedImage(spec: ImageSpec(key: "I|\(cap.icon)|\(color.description)", content: .symbol(cap.icon, color: NSColor(color))),
+                                                rect: rect.insetBy(dx: r * 0.42, dy: r * 0.42), stratum: .icons))
                 }
             }
-            if isSelected {
-                ctx.stroke(Path(ellipseIn: rect.insetBy(dx: -5, dy: -5)), with: .color(.white.opacity(0.8)), lineWidth: 1)
-            }
+            if isSelected { f.circle(p, r + 5, Ink(.white, opacity: 0.8, width: 1), .front) }
 
-            // Labels: capabilities and folders always, projects when zoomed in or hovered (if there's room).
-            if node.kind == .capability || node.kind == .group || scale > 1.25 || isSelected {
+            if labelled(node) {
                 let priority = isSelected ? 0 : node.kind == .capability ? 1 : node.kind == .group ? 2 : 3
-                let text = Text(node.kind == .capability ? node.label : String(node.label.prefix(28)))
-                    .font(.system(size: node.kind == .capability ? 9.5 : node.kind == .group ? 8.5 : 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(on || isSelected ? Theme.text : Theme.dim)
+                let spec = labelSpec(node, color: on || isSelected ? Theme.text : Theme.dim)
                 // Folder names sit on the side facing the core: their projects fan out the other way.
                 if node.kind == .group {
                     let len = max(hypot(node.pos.x, node.pos.y), 1)
                     let ux = node.pos.x / len, uy = node.pos.y / len
-                    labels.append((priority, text, CGPoint(x: p.x - ux * (r + 5), y: p.y - uy * (r + 5)),
+                    labels.append((priority, spec, CGPoint(x: p.x - ux * (r + 5), y: p.y - uy * (r + 5)),
                                    UnitPoint(x: 0.5 + 0.5 * ux, y: 0.5 + 0.5 * uy)))
                 } else {
-                    labels.append((priority, text, CGPoint(x: p.x, y: p.y + r + 9), .center))
+                    labels.append((priority, spec, CGPoint(x: p.x, y: p.y + r + 9), .center))
                 }
             }
         }
         var taken: [CGRect] = []
         for label in labels.sorted(by: { $0.priority < $1.priority }) {
-            let resolved = ctx.resolve(label.text)
-            let size = resolved.measure(in: CGSize(width: 400, height: 40))
             if label.priority > 0, taken.count > 60 { break }   // enough labels on screen
+            let size = ImageCache.shared.size(label.spec)
             let rect = CGRect(x: label.at.x - size.width * label.anchor.x, y: label.at.y - size.height * label.anchor.y,
                               width: size.width, height: size.height).insetBy(dx: -3, dy: -1)
             if label.priority > 0, taken.contains(where: { $0.intersects(rect) }) { continue }
             taken.append(rect)
-            ctx.draw(resolved, at: label.at, anchor: label.anchor)
+            f.images.append(PlacedImage(spec: label.spec, point: label.at, anchor: label.anchor))
         }
+        return f
     }
+
+    private func labelSpec(_ node: GraphModel.Node, color: Color) -> ImageSpec {
+        let string = node.kind == .capability ? node.label : String(node.label.prefix(28))
+        let size: CGFloat = node.kind == .capability ? 9.5 : node.kind == .group ? 8.5 : 9
+        return ImageSpec(key: "L|\(size)|\(color.description)|\(string)", content: .text(string, size: size, color: NSColor(color)))
+    }
+
+    /// Capabilities, folders and integrations always; projects and memories when zoomed in or pointed at.
+    private func labelled(_ node: GraphModel.Node) -> Bool {
+        node.kind == .capability || node.kind == .group || node.capability == .integrazioni
+            || scale > 1.25 || node.id == hovered || node.id == selected
+    }
+
 
     /// Dots of projects stay small when zooming in, so zooming separates them instead of merging them.
     private func zoomFactor(_ n: GraphModel.Node) -> CGFloat {
@@ -627,14 +688,46 @@ struct NeuralGraphView: View {
                 return (body, body.components(separatedBy: ": ").dropFirst().joined(separator: ": "), body)
             })
         }
+        await refreshIntegrations()
         model.setLeaves(.agenti, loop.tasks.suffix(8).map { t in
             (t.id, t.title, "\(t.status.rawValue) · \(t.project ?? "")\n\(t.summary ?? t.steps.last ?? "")")
         })
     }
 
+    @State private var nativeIntegrations: (at: Date, list: [NativeIntegrations.Status])?
+
+    /// INTEGRAZIONI branches out to every integration: the built-in ones (Slack, Gmail, Mail, Spotify; the
+    /// calendar is AGENDA) and the APIs / MCP servers added over time. Not connected = dimmed.
+    private func refreshIntegrations() async {
+        // The native status checks Slack over the network: every 10 minutes is plenty.
+        if nativeIntegrations == nil || Date().timeIntervalSince(nativeIntegrations!.at) > 600 {
+            let (json, err) = await loop.callTool("integrations_native")
+            if !err, let list = [NativeIntegrations.Status].fromJSON(json) { nativeIntegrations = (Date(), list) }
+        }
+        var items: [(id: String, label: String, detail: String)] = []
+        var dimmed = Set<String>()
+        for n in nativeIntegrations?.list ?? [] where n.id != "calendar" {
+            items.append((n.id, n.name, n.detail))
+            if !n.connected { dimmed.insert(n.id) }
+        }
+        for i in IntegrationStore.load() {
+            // `enabled` only: readiness needs the Keychain, which belongs to the daemon.
+            items.append((i.id, i.name, "\(i.kind == .mcp ? "Server MCP" : "API REST")\(i.enabled ? "" : " · disattivata")\(i.notes.isEmpty ? "" : "\n" + String(i.notes.prefix(200)))"))
+            if !i.enabled { dimmed.insert(i.id) }
+        }
+        model.setLeaves(.integrazioni, items, dimmed: dimmed)
+    }
+
     private func lines(_ s: String) -> [String] {
         s.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
+}
+
+/// Style key for batching synapses (alpha in %, width in tenths of a point).
+private struct EdgeStyle: Hashable {
+    let off: Bool
+    let alpha: Int
+    let width: Int
 }
 
 private struct Inspector: View {

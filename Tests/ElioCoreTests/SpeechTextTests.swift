@@ -170,3 +170,47 @@ struct ConfirmationAnswerTests {
         #expect(ConfirmationAnswer.parse("che ore sono", risk: .dangerous) == .unrelated)
     }
 }
+
+struct EndOfTurnTests {
+    @Test func completeRequestsGoRightAway() {
+        #expect(EndOfTurn.wait("che ore sono?", cutByLimit: false) == 0)
+        #expect(EndOfTurn.wait("metti un po' di musica", cutByLimit: false) == 0)
+    }
+
+    @Test func pausesMidSentenceWait() {
+        #expect(EndOfTurn.wait("manda un messaggio ad Antonio Vitale e", cutByLimit: false) > 1)
+        #expect(EndOfTurn.wait("nel repo comitiva devo fare tre modifiche:", cutByLimit: false) > 1)
+        #expect(EndOfTurn.wait("la prima è sul login, poi", cutByLimit: false) > 1)
+        #expect(EndOfTurn.wait("breve", cutByLimit: true) > 1)
+        let long = Array(repeating: "parola", count: 30).joined(separator: " ")
+        #expect(EndOfTurn.wait(long, cutByLimit: false) > 1)
+    }
+}
+
+struct SpeechNormalizerTests {
+    @Test(arguments: [
+        ("Ho rilasciato la 1.0.1.", "Ho rilasciato la 1 punto 0 punto 1."),
+        ("Aggiorna a v2.3", "Aggiorna a versione 2 punto 3"),
+        ("Usa PHP 8.2 e Laravel 11", "Usa PHP 8 punto 2 e Laravel 11"),
+        ("Costa 1.200 euro", "Costa 1.200 euro"),
+        ("Alle 10:30 e alle 9:00", "Alle 10 e 30 e alle 9"),
+        ("Il 50% dei test", "Il 50 per cento dei test"),
+        ("Chiusa la PR #42", "Chiusa la PR numero 42"),
+        ("Ci vogliono 3-5 minuti", "Ci vogliono da 3 a 5 minuti"),
+        ("Schermo 1920x1080", "Schermo 1920 per 1080"),
+        ("Ho modificato app.swift e .env", "Ho modificato app punto swift e punto env"),
+        ("login -> dashboard", "login, dashboard"),
+        ("frontend/backend", "frontend slash backend"),
+        ("Master è passato da 85f3b61 a 6b0e2a4", "Master è passato da otto cinque effe tre bi sei uno a sei bi zero e due a quattro"),
+        ("commit 9c1d2e3f4a5b6c7d8e9f", "commit nove ci uno di due e tre"),
+        ("il ticket AB12CD34", "il ticket a bi uno due ci di tre quattro"),
+        ("video H264 in UTF8 su iPhone15 per la build14", "video H264 in UTF8 su iPhone15 per la build14"),
+    ])
+    func saysItLikeAPerson(input: String, expected: String) {
+        #expect(SpeechNormalizer.italian(input) == expected, "\(input)")
+    }
+
+    @Test func snakeCaseIsTwoWords() {
+        #expect(Speakable.clean("Il campo user_id è vuoto") == "Il campo user id è vuoto")
+    }
+}
