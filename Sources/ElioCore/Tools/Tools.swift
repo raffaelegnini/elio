@@ -151,6 +151,7 @@ public enum ToolRegistry {
         WorkflowTools.report,
         WorkflowTools.list,
         WorkflowTools.listJSON,
+        WorkflowTools.reportJSON,
         TodoTools.add,
         TodoTools.list,
         TodoTools.done,
@@ -158,6 +159,9 @@ public enum ToolRegistry {
         TodoTools.remove,
         TodoTools.carryOver,
         TodoTools.board,
+        TaskTools.message,
+        IDETools.open,
+        IDETools.selfUpdate,
     ]
 
     public static func listingJSON() -> String {
@@ -180,7 +184,8 @@ public enum ToolRegistry {
         case "slack_clock_in", "slack_send", "integration_activate": 150   // waits for the user's confirmation
         case "slack_mentions", "slack_dms": 45
         case "start_task", "mac_task", "squad_start", "squad_send", "squad_add": 60
-        case "workflow_report", "workflow_list_json": 45
+        case "workflow_report", "workflow_list_json", "workflow_report_json": 45
+        case "self_update": 150
         case "spotify_login", "integration_connect": 180
         case "mail_send": 200
         case "watch_create": 200

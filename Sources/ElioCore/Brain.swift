@@ -198,6 +198,14 @@ public actor Brain {
         let elapsed = { Int(Date().timeIntervalSince(start) * 1000) }
         await memory.log(role: "user", text: text)
 
+        // An answer to a pending confirmation or question (said on the phone, typed…) goes to it, not to Claude.
+        if let reply = await gate.answerFromSpeech(text) {
+            await memory.log(role: "assistant", text: reply, route: Route.local.rawValue)
+            out.yield(ServerMessage(type: .done, id: id, text: reply, route: .local, lang: .it, latencyMs: elapsed()))
+            _ = await prep.take(key: id)
+            return
+        }
+
         if let matched = matcher.match(text), let raw = await runLocal(matched) {
             let reply = matched.lang == .it ? Self.addressing(raw, config.addressAs) : raw
             await memory.log(role: "assistant", text: reply, route: Route.local.rawValue)
@@ -462,6 +470,11 @@ public actor Brain {
 
         Velocità: per persone, canali, progetti e dati delle integrazioni usa PRIMA lookup (rubrica locale, istantanea). \
         Chiama le API solo per dati che cambiano spesso (messaggi, task di oggi) o se lookup non trova.
+
+        IDE e te stesso: hai un IDE (open_ide) per i progetti di \(userName) (path o nome del progetto) e anche per il \
+        tuo stesso codice ("elio"). Puoi migliorarti: se \(userName) ti chiede una funzione nuova o un fix su di te, \
+        avvia un agente (start_task) sul tuo repository (\(ElioPaths.selfSource ?? "non trovato su questo Mac")), \
+        poi, quando ha finito e il diff è a posto, self_update (test + reinstallazione, chiede conferma, ti riavvia).
 
         Gusti di \(userName) ("diventare lui"): quando esprime come vuole il lavoro ("non mi piace…", "lo voglio così", \
         "questo è AI slop", "niente…", "i commit li scrivo…") o boccia qualcosa fatto da un agente, salva subito una regola \

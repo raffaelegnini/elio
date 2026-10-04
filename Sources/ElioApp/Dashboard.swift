@@ -77,16 +77,9 @@ struct DashboardView: View {
             .animation(.easeInOut(duration: 0.3), value: runningTask?.id)
 
             if let id = state.theater {
-                VStack(spacing: 0) {
-                    HStack {
-                        Text("AGENTE · LIVE").font(Theme.mono).tracking(3).foregroundStyle(Theme.accent)
-                        Spacer()
-                        Button("Chiudi") { state.theater = nil }.buttonStyle(HUDButton(color: Theme.dim))
-                    }
-                    .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 8)
-                    AgentTheater(loop: loop, taskId: id)
-                }
-                .glassCard()
+                AgentDetailView(loop: loop, taskId: id) { state.theater = nil }
+                    .background(RoundedRectangle(cornerRadius: 16).fill(Theme.bg.opacity(0.9)))
+                    .glassCard()
                 .padding(.horizontal, 80).padding(.top, 100).padding(.bottom, 40)
                 .transition(.scale(scale: 0.96).combined(with: .opacity))
             }
@@ -141,6 +134,9 @@ struct DashboardView: View {
                 RoutineButton(title: "Briefing", icon: "sunrise") { loop.submit(text: "briefing") }
                 RoutineButton(title: "Recap", icon: "moon.stars") { loop.submit(text: "recap della giornata") }
                 Rectangle().fill(Theme.line).frame(width: 1, height: 22).padding(.horizontal, 4)
+                HeaderButton(icon: "chevron.left.forwardslash.chevron.right", help: "IDE (⌥⌘I)") {
+                    IDEWindowController.shared.show(loop: loop)
+                }
                 HeaderButton(icon: "person.3", help: "Missione: squadra di agenti al lavoro") {
                     withAnimation(.spring(duration: 0.35)) { state.squadMode.toggle() }
                 }

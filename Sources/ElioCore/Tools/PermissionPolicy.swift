@@ -140,6 +140,7 @@ public enum PermissionPolicy {
         }
         if matches(developerDangerous) { return .confirm(.dangerous) }
         if hasDestructiveDelete(text, cwd: cwd) { return .confirm(.dangerous) }
+        if killsSomethingElse(text) || sendsDataOutside(text) { return .confirm(.dangerous) }
         if matches(developerHeavy + developerOutward) { return .confirm(.normal) }
         return .allow
     }
@@ -194,13 +195,13 @@ public enum PermissionPolicy {
         #"\bgit\s+reset\s+--hard\b"#,
         #"\bgit\s+clean\s+-[a-zA-Z]*f"#,
         #"\bgit\s+branch\s+-[a-zA-Z]*D"#,
-        #"\bgit\s+(checkout|restore)\s+(--\s|\.\s*$|\.\s*[;&|])"#,
+        // Discarding all local changes; one named file or folder is fine (git has the committed version).
+        #"\bgit\s+(checkout|restore)\s+(--\s+)?\.(\s*$|\s*[;&|)])|\bgit\s+(checkout|restore)\s+--\s*($|[;&|])"#,
         #"\bgit\s+stash\s+(drop|clear)\b"#,
         #"\bgit\s+(tag\s+-d|filter-branch|filter-repo|update-ref\s+-d|reflog\s+expire)\b"#,
         #"\bgit\s+commit\b.*--amend"#,
         #"\bsudo\b"#,
-        #"\b(killall|pkill)\b"#,
-        #"\bcurl\b.*(-X\s*(POST|PUT|DELETE|PATCH)|--data|\s-d\s|\s-F\s|--form|--upload-file|-T\s)"#,
+
         #"\bwget\b.*--post"#,
         #"(curl|wget)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh)\b"#,
         #"\b(drop|truncate)\s+(table|database|schema)\b"#,
@@ -217,6 +218,29 @@ public enum PermissionPolicy {
         // Inline scripts that delete trees.
         #"shutil\.rmtree|rmSync\(|rimraf|os\.removedirs|FileUtils\.rm_r|fs\.rm\("#,
     ]
+
+    /// `pkill`/`killall` of anything but a dev server the agent itself started (artisan serve, vite, node…).
+    static func killsSomethingElse(_ text: String) -> Bool {
+        let dev = #"artisan|php\s+-S|vite|next|nuxt|node|npm|pnpm|yarn|bun|deno|flutter|dart|webpack|esbuild|tsx|nodemon|uvicorn|gunicorn|rails|puma|django|manage\.py|127\.0\.0\.1|localhost|0\.0\.0\.0|:\d{4,5}\b|serve"#
+        for part in text.splitOutsideQuotes(";|&\n") {
+            let t = part.trimmingCharacters(in: .whitespaces)
+            guard t.range(of: #"^(sudo\s+)?(pkill|killall)\b"#, options: .regularExpression) != nil else { continue }
+            if t.range(of: dev, options: [.regularExpression, .caseInsensitive]) == nil { return true }
+        }
+        return false
+    }
+
+    /// curl/wget that send data (POST, upload…) to a host that isn't this Mac's dev environment.
+    /// Testing your own API on 127.0.0.1, localhost or a Herd/Valet `.test` domain is just development.
+    static func sendsDataOutside(_ text: String) -> Bool {
+        let writes = #"\bcurl\b.*(-X\s*(POST|PUT|DELETE|PATCH)|--data|\s-d\s|\s-F\s|--form|--upload-file|\s-T\s)|\bwget\b.*--post"#
+        guard text.range(of: writes, options: [.regularExpression, .caseInsensitive]) != nil else { return false }
+        let urls = text.matches(of: #/https?://([^/\s'"$:]+)/#).map { String($0.output.1).lowercased() }
+        // No literal URL (it's in a variable we can't see): ask.
+        guard !urls.isEmpty else { return true }
+        let local = #"^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|[\w.-]+\.(test|local|localhost|internal))$"#
+        return urls.contains { $0.range(of: local, options: .regularExpression) == nil }
+    }
 
     /// Heavy on disk/CPU/memory or the Mac's setup: a normal OK.
     static let developerHeavy: [String] = [

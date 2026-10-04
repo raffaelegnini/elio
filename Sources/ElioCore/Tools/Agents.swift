@@ -22,6 +22,30 @@ public actor ConfirmationGate {
         return await withCheckedContinuation { questions[q.id] = $0 }
     }
 
+    /// What the user said (from any device: phone, typed, Mac) answers what Elio is waiting for: the oldest
+    /// confirmation first, then a pending question. Returns what to say back, or nil if it wasn't an answer.
+    public func answerFromSpeech(_ text: String) -> String? {
+        if let req = pending.values.first {
+            switch ConfirmationAnswer.parse(text, risk: req.risk) {
+            case .approve:
+                answer(id: req.id, approved: true)
+                return "Grazie, \(addressAs), procedo."
+            case .deny:
+                answer(id: req.id, approved: false)
+                return "Va bene, \(addressAs), mi fermo."
+            case .needsExplicit:
+                return "È un'azione delicata, \(addressAs): mi serve un \"confermo\" esplicito."
+            case .unrelated:
+                break
+            }
+        }
+        if let id = questions.keys.first {
+            reply(id: id, text: text)
+            return "Grazie, \(addressAs), ne tengo conto."
+        }
+        return nil
+    }
+
     public func reply(id: String, text: String?) {
         guard let c = questions.removeValue(forKey: id) else { return }
         broadcast?(ServerMessage(type: .event, id: id, text: text ?? "", kind: "questionResolved"))
@@ -376,6 +400,8 @@ public actor TaskRunner {
         info.workflow = squad ?? id
         info.runIds = [id]
         info.model = model
+        info.cwd = cwd
+        info.task = kind == .scout ? "Mappare il codice per la squadra" : String(prompt.prefix(4000))
         let resumed = sessionId.flatMap { sid in finished.last(where: { $0.sessionId == sid }) }
         if let old = resumed {
             // A resumed agent keeps its identity, its workflow and running totals.
@@ -384,6 +410,7 @@ public actor TaskRunner {
             info.runIds = (old.runIds ?? [old.id]) + [id]
             info.activeSeconds = old.activeSeconds
             info.plan = old.plan
+            info.task = old.task
             info.startedAt = old.startedAt
             info.sessionId = old.sessionId
             finished.removeAll { $0.sessionId == sessionId }
@@ -778,7 +805,48 @@ public actor TaskRunner {
         publish(id)
     }
 
+    // MARK: Messages from the user (the agent's terminal in the IDE)
+
+    /// Text the user typed to a running agent: it's stopped where it is and resumed with the message.
+    private var interjections: [String: String] = [:]
+
+    /// The user writes to an agent. Running: interrupted and resumed with the message (claude -p has no
+    /// input while it works). Finished: woken up with it. Same session, same memory.
+    public func message(agent id: String, text: String) throws -> String {
+        let note = "Messaggio di \(config.userName) (scritto nel tuo terminale): \(text)\nTienine conto e continua il lavoro."
+        if let running = tasks[id] {
+            interjections[id] = note
+            if running.info.status == .paused { kill(running.process.processIdentifier, SIGCONT) }
+            running.process.interrupt()
+            if let wf = running.info.workflow {
+                event(wf, .message, actor: "utente", text: text, data: ["to": Self.actor(running.info)])
+            }
+            return "Interrompo l'agente e gli passo il messaggio."
+        }
+        guard let old = finished.last(where: { $0.id == id || $0.runIds?.contains(id) == true }), let sid = old.sessionId,
+              let cwd = old.cwd else { return "Agente non trovato o senza sessione da riprendere." }
+        _ = try start(title: old.title, prompt: note, cwd: cwd, kind: Kind(rawValue: old.kind ?? "") ?? .code,
+                      squad: old.squad, member: old.member, role: old.role, resume: sid)
+        return "Ho risvegliato l'agente con il messaggio."
+    }
+
     private func exited(_ id: String, code: Int32) {
+        if let note = interjections.removeValue(forKey: id), var t = tasks.removeValue(forKey: id) {
+            // Stopped on purpose to hear the user: straight back to work, with the message.
+            t.info.endedAt = Date()
+            t.info.activeSeconds = (t.info.activeSeconds ?? 0) + Date().timeIntervalSince(t.runStart)
+            finished.append(t.info)
+            if let sid = t.info.sessionId {
+                do {
+                    _ = try start(title: t.info.title, prompt: note, cwd: t.cwd, kind: Kind(rawValue: t.info.kind ?? "") ?? .code,
+                                  squad: t.info.squad, member: t.info.member, role: t.info.role, resume: sid)
+                    return
+                } catch {
+                    log("resume after interjection failed: \(error)")
+                }
+            }
+            tasks[id] = t
+        }
         guard var t = tasks.removeValue(forKey: id) else { return }
         if t.info.status == .running || t.info.status == .waitingConfirmation {
             t.info.status = code == 0 ? .done : .failed
@@ -1086,6 +1154,17 @@ public enum TaskTools {
         return all.map { t in
             "- [\(t.status.rawValue)] \(t.title) (id \(t.id), \(t.project ?? "")): \(t.summary.map { String($0.prefix(200)) } ?? t.steps.last ?? "")"
         }.joined(separator: "\n")
+    }
+
+    static let message = ElioTool(
+        name: "agent_message",
+        description: "Scrive a un agente in background (dal suo terminale nell'IDE o a voce): se sta lavorando lo interrompe e riparte con il messaggio, se ha finito lo risveglia.",
+        properties: ["id": prop("Id del task"), "text": prop("Il messaggio")],
+        required: ["id", "text"]
+    ) { args, ctx in
+        let text = (args["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw ToolError("Messaggio vuoto") }
+        return try await ctx.tasks.message(agent: args["id"] as? String ?? "", text: text)
     }
 
     static let control = ElioTool(

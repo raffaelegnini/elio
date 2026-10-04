@@ -45,6 +45,9 @@ struct SquadView: View {
     @State private var selected: String?
     @State private var sideTab: SideTab = .board
     @State private var showBrief = false
+    @State private var mainTab: MainTab = .live
+
+    enum MainTab: String, CaseIterable { case live = "Live", report = "Report" }
 
     enum SideTab: String, CaseIterable { case board = "Bacheca", decisions = "Decisioni", costs = "Costi" }
 
@@ -75,9 +78,13 @@ struct SquadView: View {
             if let s = squad {
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 14) {
-                        hero(s)
-                        if let brief = s.brief { briefCard(brief) }
-                        agents(s)
+                        if mainTab == .live {
+                            hero(s)
+                            if let brief = s.brief { briefCard(brief) }
+                            agents(s)
+                        } else {
+                            MissionReportView(loop: loop, workflowId: s.id)
+                        }
                     }
                     side(s).frame(width: 340)
                 }
@@ -93,6 +100,8 @@ struct SquadView: View {
     private var header: some View {
         HStack(spacing: 12) {
             Text("MISSIONE").font(Theme.mono).tracking(3).foregroundStyle(Theme.accent)
+            Picker("", selection: $mainTab) { ForEach(MainTab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+                .pickerStyle(.segmented).frame(width: 150).labelsHidden()
             if let s = squad {
                 Text(s.goal).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
                 pill(s.endedAt == nil ? "IN CORSO" : "FINITA", s.endedAt == nil ? .green : Theme.dim)
@@ -495,6 +504,10 @@ private struct AgentCard: View {
                 Label(UsageMeter.format((member.tokensIn ?? 0) + (member.tokensOut ?? 0)), systemImage: "bolt.fill")
                 if let c = member.costUSD { Text(String(format: "$%.2f", c)) }
                 Spacer()
+                Button { IDEWindowController.shared.showAgent(loop: loop, taskId: member.id, cwd: member.cwd) } label: {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                }
+                .buttonStyle(.plain).help("Apri nell'IDE: il codice e il suo terminale")
                 if member.status == .running || member.status == .waitingConfirmation {
                     Button { loop.controlTask(member.id, "pause") } label: { Image(systemName: "pause.fill") }.buttonStyle(.plain).help("Pausa")
                     Button { loop.controlTask(member.id, "stop") } label: { Image(systemName: "stop.fill") }.buttonStyle(.plain).help("Ferma")

@@ -64,6 +64,10 @@ public struct ElioConfig: Codable, Sendable {
     /// Opus by default; the light model only for jobs both Elio and the router judge trivial (~5%).
     public var smartModelRouting: Bool = true
     public var lightModel: String = "sonnet"
+    /// A normal app (Dock icon, ⌘-Tab) instead of only the menu bar icon.
+    public var showInDock: Bool = true
+    /// Where Elio's own source is (empty = the repository it was built from).
+    public var selfSourcePath: String = ""
     /// Thinking ahead while the user talks (a small read-only session), and its model.
     public var speechPrep: Bool = true
     public var prepModel: String = "haiku"
@@ -117,6 +121,8 @@ public struct ElioConfig: Codable, Sendable {
         squadModel = try c.decodeIfPresent(String.self, forKey: .squadModel) ?? d.squadModel
         smartModelRouting = try c.decodeIfPresent(Bool.self, forKey: .smartModelRouting) ?? d.smartModelRouting
         lightModel = try c.decodeIfPresent(String.self, forKey: .lightModel) ?? d.lightModel
+        showInDock = try c.decodeIfPresent(Bool.self, forKey: .showInDock) ?? d.showInDock
+        selfSourcePath = try c.decodeIfPresent(String.self, forKey: .selfSourcePath) ?? d.selfSourcePath
         speechPrep = try c.decodeIfPresent(Bool.self, forKey: .speechPrep) ?? d.speechPrep
         prepModel = try c.decodeIfPresent(String.self, forKey: .prepModel) ?? d.prepModel
     }
@@ -201,6 +207,16 @@ extension ElioConfig {
 }
 
 public enum ElioPaths {
+    /// Elio's own source code (the repository it was built from), when it's on this Mac: Elio can open it
+    /// in its IDE, put agents on it and rebuild itself.
+    public static var selfSource: String? {
+        let configured = ElioConfig.load().selfSourcePath
+        let candidates = (configured.isEmpty ? [] : [(configured as NSString).expandingTildeInPath])
+            + [URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path]
+        return candidates.first { FileManager.default.fileExists(atPath: ($0 as NSString).appendingPathComponent("Package.swift"))
+            && FileManager.default.fileExists(atPath: ($0 as NSString).appendingPathComponent("Sources/ElioCore")) }
+    }
+
     public static var support: URL {
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Elio", isDirectory: true)

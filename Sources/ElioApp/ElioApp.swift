@@ -51,6 +51,7 @@ struct MenuContent: View {
             Button("Mostra HUD") { delegate.hud.show(pinned: true) }
             Button("Dashboard  ⌥⌘D") { delegate.showDashboard() }
             Button("Archivio  ⌥⌘A") { delegate.showArchive() }
+            Button("IDE  ⌥⌘I") { delegate.showIDE() }
             Button("Impostazioni…") { delegate.showSettings() }.keyboardShortcut(",")
             if !loop.diffs.isEmpty {
                 Button("Revisione ultimo diff") { delegate.showDashboard(review: loop.diffs.first) }
@@ -112,6 +113,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var hotKey: HotKey?
     private var dashboardKey: HotKey?
     private var muteKey: HotKey?
+    private var ideKey: HotKey?
+
+    func showIDE(path: String? = nil) {
+        IDEWindowController.shared.show(loop: loop, path: path)
+    }
+
+    /// Clicking the Dock icon with no window open shows the dashboard.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { showDashboard() }
+        return true
+    }
+
+    /// A regular app needs its menu: ⌘C/⌘V/⌘Z reach the editor through it, ⌘Q quits, ⌘W closes.
+    private func installMainMenu() {
+        let main = NSMenu()
+        func item(_ title: String, _ action: Selector?, _ key: String, _ mods: NSEvent.ModifierFlags = .command) -> NSMenuItem {
+            let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            i.keyEquivalentModifierMask = mods
+            return i
+        }
+        let app = NSMenu()
+        app.addItem(item("Informazioni su \(Brand.shared.name)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""))
+        app.addItem(.separator())
+        let settings = item("Impostazioni…", #selector(openSettingsFromMenu), ",")
+        settings.target = self
+        app.addItem(settings)
+        app.addItem(.separator())
+        app.addItem(item("Nascondi \(Brand.shared.name)", #selector(NSApplication.hide(_:)), "h"))
+        app.addItem(item("Nascondi altre", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]))
+        app.addItem(.separator())
+        app.addItem(item("Esci da \(Brand.shared.name)", #selector(NSApplication.terminate(_:)), "q"))
+        let appItem = NSMenuItem(); appItem.submenu = app; main.addItem(appItem)
+
+        let edit = NSMenu(title: "Modifica")
+        edit.addItem(item("Annulla", Selector(("undo:")), "z"))
+        edit.addItem(item("Ripeti", Selector(("redo:")), "z", [.command, .shift]))
+        edit.addItem(.separator())
+        edit.addItem(item("Taglia", #selector(NSText.cut(_:)), "x"))
+        edit.addItem(item("Copia", #selector(NSText.copy(_:)), "c"))
+        edit.addItem(item("Incolla", #selector(NSText.paste(_:)), "v"))
+        edit.addItem(item("Seleziona tutto", #selector(NSText.selectAll(_:)), "a"))
+        let editItem = NSMenuItem(); editItem.submenu = edit; main.addItem(editItem)
+
+        let view = NSMenu(title: "Vista")
+        for (title, sel, key) in [("Dashboard", #selector(openDashboardFromMenu), "d"), ("IDE", #selector(openIDEFromMenu), "i"),
+                                  ("Archivio", #selector(openArchiveFromMenu), "a")] {
+            let i = item(title, sel, key, [.command, .option]); i.target = self; view.addItem(i)
+        }
+        let viewItem = NSMenuItem(); viewItem.submenu = view; main.addItem(viewItem)
+
+        let window = NSMenu(title: "Finestra")
+        window.addItem(item("Riduci", #selector(NSWindow.performMiniaturize(_:)), "m"))
+        window.addItem(item("Chiudi", #selector(NSWindow.performClose(_:)), "w"))
+        window.addItem(.separator())
+        window.addItem(item("Porta tutto in primo piano", #selector(NSApplication.arrangeInFront(_:)), ""))
+        let windowItem = NSMenuItem(); windowItem.submenu = window; main.addItem(windowItem)
+        NSApp.windowsMenu = window
+        NSApp.mainMenu = main
+    }
+
+    @objc private func openSettingsFromMenu() { showSettings() }
+    @objc private func openDashboardFromMenu() { showDashboard() }
+    @objc private func openIDEFromMenu() { showIDE() }
+    @objc private func openArchiveFromMenu() { showArchive() }
 
     private static var launchedAtLogin: Bool {
         let event = NSAppleEventManager.shared().currentAppleEvent
@@ -132,7 +197,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        // In the Dock and in ⌘-Tab like any app (the IDE needs it); menu bar only if the user prefers.
+        let dock = ElioConfig.load().showInDock
+        NSApp.setActivationPolicy(dock ? .regular : .accessory)
+        if dock { installMainMenu() }
         if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
             Snapshots.render(to: CommandLine.arguments[i + 1])
             exit(0)
@@ -175,6 +243,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             default: self?.showDashboard()
             }
         }
+        loop.onOpenIDE = { [weak self] path, line in
+            IDEWindowController.shared.show(loop: self?.loop, path: path, line: line)
+        }
+        ideKey = HotKey(keyCode: 34 /* I */, modifiers: [.option, .command]) { [weak self] in self?.showIDE() }
         island.attach(loop, openDashboard: { [weak self] in self?.showDashboard(forceFront: true) },
                       openSettings: { [weak self] in self?.showSettings() })
         hud.attach(loop, openReview: { [weak self] diff in self?.showDashboard(review: diff) })
@@ -203,6 +275,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if !Self.launchedAtLogin, !CommandLine.arguments.contains("--background") { showDashboard() }
         Task { await loop.start() }
         observeState(loop)
+        if let i = CommandLine.arguments.firstIndex(of: "--ide") {
+            let next = CommandLine.arguments.dropFirst(i + 1).first
+            showIDE(path: next.flatMap { $0.hasPrefix("-") ? nil : $0 })
+        }
     }
 
     func activate() {

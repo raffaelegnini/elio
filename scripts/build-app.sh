@@ -8,6 +8,7 @@ APP="$HOME/Applications/Elio.app"
 IDENTITY="${ELIO_SIGN_IDENTITY:-Apple Development}"
 
 "$ROOT/scripts/fetch-onnxruntime.sh"
+"$ROOT/scripts/fetch-ide.sh"
 swift build -c release --package-path "$ROOT" --product ElioApp
 
 pkill -x ElioApp 2>/dev/null || true
@@ -15,6 +16,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/.build/release/ElioApp" "$APP/Contents/MacOS/ElioApp"
 swift "$ROOT/scripts/make-app-icon.swift" "$APP/Contents/Resources/AppIcon.icns"
+# The IDE (Monaco + xterm.js and the page around them).
+cp -R "$ROOT/ide" "$APP/Contents/Resources/ide"
 
 # Speaker verification: ship the official, self-contained ONNX Runtime inside the app
 # (Homebrew's build depends on other Homebrew libraries macOS refuses to load in a signed app).

@@ -144,6 +144,7 @@
     <button id="bell" class="icon-btn" title="Notifiche">🔔</button>
     <button id="todoBtn" class="icon-btn" title="To do">☑</button>
     <button id="wfBtn" class="icon-btn" title="Workflow">▦</button>
+    <button id="earBtn" class="icon-btn" title="Ascolto continuo">👂</button>
     <button id="voiceToggle" class="icon-btn" title="Voce">🔊</button>
   </header>
   <div id="orbWrap"><canvas id="orb"></canvas><div id="state">connessione…</div></div>
@@ -259,6 +260,12 @@ function handle(m) {
     speak((m.text || "").trim());
     current.spoken = current.text.length;
   } else if (m.type === "done") {
+    if (current.ambient && !m.text && !current.text) {
+      // Not for Elio: nothing to show.
+      current.el.remove(); current.userEl && current.userEl.remove(); current = null;
+      setState("listening", "pronto");
+      return;
+    }
     const text = m.route === "local" ? (m.text || "") : (m.text || current.text || "");
     current.el.querySelector(".text").textContent = text;
     current.el.querySelector(".meta").textContent = ` ${m.route || ""} ${m.latencyMs ?? ""}ms`;
@@ -339,7 +346,10 @@ function handleEvent(m) {
       try { todoData = JSON.parse(m.payload || "null"); if (todoOpen) renderTodos(); } catch {}
       break;
   }
-  if (m.speak && m.text) { addMsg("event", m.text); speak(m.text); }
+  // The device the user is on speaks; the other one still shows what matters.
+  const shown = new Set(["confirm", "question", "taskDone", "squadDone", "workflowAlert", "reminder", "autoDecision", "progress", "tasteFix"]);
+  if (m.text && (m.speak || shown.has(m.kind)) && m.kind !== "confirm" && m.kind !== "question") addMsg("event", m.text);
+  if (m.speak && m.text) speak(m.text);
 }
 
 function renderTasks() {
@@ -532,30 +542,46 @@ function unlockAudio() {
   audio.src = silentWav();
   audio.play().catch(() => {});
 }
-function speak(text) {
-  if (!voiceOn || !text) { if (!speaking) setState("listening", "pronto"); return; }
-  speaking++;
-  speakQueue = speakQueue.then(async () => {
-    try {
-      const r = await fetch("tts", { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token },
-                                      body: JSON.stringify({ text }) });
-      if (!r.ok) throw new Error(r.status);
-      const url = URL.createObjectURL(await r.blob());
-      setState("speaking", "parlo");
-      audio.src = url;
-      await audio.play();
-      await new Promise(res => { audio.onended = res; audio.onerror = res; });
-      URL.revokeObjectURL(url);
-    } catch (e) { console.warn("tts", e); }
-    speaking--;
-    if (!speaking) setState("listening", "pronto");
-  });
+// Each sentence is spoken as soon as it arrives: the first one streams (plays on its first bytes),
+// the next ones are fetched while the current one plays, so there's no gap between them.
+const ttsQueue = [];
+let ttsPlaying = false;
+// The pairing token never goes in a URL: the stream is opened with a one-shot ticket (the text stays on the Mac).
+async function ttsUrl(text) {
+  const r = await fetch("tts/ticket", { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token },
+                                         body: JSON.stringify({ text }) });
+  if (!r.ok) throw new Error(r.status);
+  return "tts/stream?k=" + (await r.json()).ticket;
 }
+function speak(text) {
+  if (!voiceOn || !text) { if (!ttsPlaying) setState("listening", "pronto"); return; }
+  const item = { text, blob: null };
+  if (ttsPlaying || ttsQueue.length) item.blob = fetch("tts", { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token },
+                                                               body: JSON.stringify({ text }) }).then(r => r.ok ? r.blob() : null).catch(() => null);
+  ttsQueue.push(item);
+  if (!ttsPlaying) playNext();
+}
+async function playNext() {
+  const item = ttsQueue.shift();
+  if (!item) { ttsPlaying = false; setState("listening", "pronto"); return; }
+  ttsPlaying = true;
+  setState("speaking", "parlo");
+  const blob = item.blob ? await item.blob : null;
+  const url = blob ? URL.createObjectURL(blob) : null;
+  try {
+    audio.src = url || await ttsUrl(item.text);
+    await audio.play();
+    await new Promise(res => { audio.onended = res; audio.onerror = res; });
+  } catch (e) { console.warn("tts", e); }
+  if (url) URL.revokeObjectURL(url);
+  playNext();
+}
+function stopSpeaking() { ttsQueue.length = 0; audio.pause(); ttsPlaying = false; }
 $("voiceToggle").onclick = () => {
   voiceOn = !voiceOn;
   try { localStorage.setItem("elio.voice", voiceOn ? "on" : "off"); } catch {}
   $("voiceToggle").textContent = voiceOn ? "🔊" : "🔇";
-  if (!voiceOn) audio.pause();
+  if (!voiceOn) stopSpeaking();
 };
 
 // ---------- Voice in: record here, transcribe on the Mac ----------
@@ -564,7 +590,7 @@ let recorder = null, chunks = [], stream = null, analyser = null, downAt = 0, he
 function toast(text, ms = 3500) { const t = $("toast"); t.textContent = text; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), ms); }
 async function startRec() {
   unlockAudio();
-  audio.pause();
+  stopSpeaking();
   try {
     stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
   } catch { toast("Serve il permesso del microfono: Impostazioni → Safari/Elio → Microfono."); return; }
@@ -617,6 +643,95 @@ $("mic").addEventListener("pointerup", e => {
 $("mic").addEventListener("pointercancel", () => { held = false; stopRec(); });
 
 $("form").onsubmit = e => { e.preventDefault(); say($("input").value); $("input").value = ""; $("input").blur(); };
+
+// ---------- Always listening while the app is open ----------
+// Energy-based voice detection in the page: a segment is recorded only while you speak, transcribed on the Mac
+// and sent as "ambient" — Elio answers only if it was meant for it (not a chat with someone next to you).
+let ambientOn = true;
+try { ambientOn = localStorage.getItem("elio.ambient") !== "off"; } catch {}
+const amb = { ctx: null, an: null, timer: null, floor: -55, inSpeech: false, loud: 0, silence: 0, rec: null, chunks: [], began: 0 };
+function refreshAmbientUI() {
+  $("earBtn").classList.toggle("hot", ambientOn);
+  $("earBtn").title = ambientOn ? "Ascolto continuo: attivo" : "Ascolto continuo: spento";
+  if (!(recorder && recorder.state === "recording"))
+    $("hint").textContent = ambientOn ? (amb.timer ? "TI ASCOLTO SEMPRE · PARLA QUANDO VUOI" : "TOCCA LO SCHERMO PER ATTIVARE L'ASCOLTO") : "TIENI PREMUTO O TOCCA PER PARLARE";
+}
+async function startAmbient() {
+  if (!ambientOn || amb.timer) return;
+  try {
+    stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch { toast("Serve il permesso del microfono per l'ascolto continuo."); return; }
+  amb.ctx = amb.ctx || new (window.AudioContext || window.webkitAudioContext)();
+  if (amb.ctx.state === "suspended") await amb.ctx.resume();
+  amb.an = amb.ctx.createAnalyser(); amb.an.fftSize = 1024;
+  amb.ctx.createMediaStreamSource(stream).connect(amb.an);
+  const buf = new Float32Array(amb.an.fftSize);
+  amb.timer = setInterval(() => {
+    // Paused while Elio speaks (its voice isn't a command), while push-to-talk records, or in background.
+    const busy = ttsPlaying || (recorder && recorder.state === "recording") || document.hidden || state === "thinking";
+    amb.an.getFloatTimeDomainData(buf);
+    let sum = 0; for (const v of buf) sum += v * v;
+    const db = 10 * Math.log10(sum / buf.length + 1e-10);
+    if (!amb.inSpeech) amb.floor += (db - amb.floor) * (db < amb.floor ? 0.2 : 0.02);
+    if (busy) { if (amb.inSpeech) endSegment(false); amb.loud = 0; return; }
+    if (!amb.inSpeech) {
+      amb.loud = db > amb.floor + 14 ? amb.loud + 50 : 0;
+      if (amb.loud >= 120) beginSegment();
+    } else {
+      amb.silence = db > amb.floor + 7 ? 0 : amb.silence + 50;
+      level = Math.min(1, Math.max(0, (db - amb.floor) / 30));
+      if (amb.silence >= 950 || Date.now() - amb.began > 30000) endSegment(true);
+    }
+  }, 50);
+  refreshAmbientUI();
+}
+function stopAmbient() {
+  clearInterval(amb.timer); amb.timer = null;
+  if (amb.inSpeech) endSegment(false);
+  refreshAmbientUI();
+}
+function beginSegment() {
+  const type = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+  amb.chunks = []; amb.inSpeech = true; amb.silence = 0; amb.began = Date.now();
+  amb.rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+  amb.rec.ondataavailable = e => { if (e.data.size) amb.chunks.push(e.data); };
+  amb.rec.start();
+  setState("hearing", "ti ascolto");
+}
+function endSegment(send) {
+  amb.inSpeech = false; amb.loud = 0;
+  const rec = amb.rec; amb.rec = null;
+  if (!rec || rec.state === "inactive") return;
+  rec.onstop = async () => {
+    const blob = new Blob(amb.chunks, { type: rec.mimeType || "audio/mp4" });
+    if (!send || blob.size < 6000) { if (state === "hearing") setState("listening", "pronto"); return; }
+    setState("thinking", "trascrivo");
+    try {
+      const r = await fetch("stt", { method: "POST", headers: { "Content-Type": blob.type, "X-Elio-Token": token }, body: blob });
+      const { text } = await r.json();
+      if (text && text.split(/\s+/).length >= 2) sayAmbient(text); else setState("listening", "pronto");
+    } catch { setState("listening", "pronto"); }
+  };
+  rec.stop();
+}
+function sayAmbient(text) {
+  unlockAudio();
+  const id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
+  const userEl = addMsg("user", text);
+  current = { id, text: "", el: addMsg("elio", "…"), ambient: true, userEl };
+  setState("thinking", "elaboro");
+  send({ type: "ambient", id, text });
+}
+$("earBtn").onclick = () => {
+  ambientOn = !ambientOn;
+  try { localStorage.setItem("elio.ambient", ambientOn ? "on" : "off"); } catch {}
+  ambientOn ? startAmbient() : stopAmbient();
+  refreshAmbientUI();
+};
+// iOS lets the mic and audio start only after a touch: the first one turns the listening on.
+document.addEventListener("pointerdown", () => { unlockAudio(); if (ambientOn && !amb.timer) startAmbient(); }, { capture: true });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && ambientOn && amb.ctx && amb.ctx.state === "suspended") amb.ctx.resume(); });
+refreshAmbientUI();
 
 // ---------- Notifications (Web Push) ----------
 $("pairBtn").onclick = () => { if (!pairWith($("pairInput").value)) $("pairErr").textContent = "Link non valido."; };

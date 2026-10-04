@@ -19,7 +19,7 @@ public actor ClaudeBridge {
         /// Silence after which a turn is considered stuck and the process is restarted.
         public var turnTimeout: TimeInterval = 120
         /// Hard cap per turn: tool heartbeats keep `lastActivity` fresh, so silence alone isn't enough.
-        public var maxTurnDuration: TimeInterval = 900
+        public var maxTurnDuration: TimeInterval = 1800
         /// MCP servers (JSON) available to the session; their tools are pre-approved.
         public var mcpConfig: String?
         /// Claude in Chrome: the user's real browser (already logged in everywhere).
@@ -57,6 +57,9 @@ public actor ClaudeBridge {
     private var currentStart = Date()
     private var lastActivity = Date()
     private var turnInFlight = false
+    /// A tool is running (a confirmation or a question can wait for the user for minutes): the silence
+    /// timeout doesn't apply then, only the hard cap. Killing the turn there gave "Claude non risponde".
+    private var waitingOnTool = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     public init(options: Options, resumeSessionId: String? = nil) {
@@ -122,6 +125,7 @@ public actor ClaudeBridge {
             currentText = ""
             currentStart = Date()
             lastActivity = Date()
+            waitingOnTool = false
 
             let message: [String: Any] = [
                 "type": "user",
@@ -134,7 +138,7 @@ public actor ClaudeBridge {
             // Wait until the reader finishes the turn, watching for a stuck process.
             while current != nil {
                 try await Task.sleep(for: .milliseconds(200))
-                if Date().timeIntervalSince(lastActivity) > options.turnTimeout
+                if (!waitingOnTool && Date().timeIntervalSince(lastActivity) > options.turnTimeout)
                     || Date().timeIntervalSince(currentStart) > options.maxTurnDuration {
                     finishTurn(error: ElioError.claudeTimeout)
                     restart()
@@ -264,9 +268,12 @@ public actor ClaudeBridge {
                 sessionId = id
                 onSessionId?(id)
             }
+        case "user":
+            waitingOnTool = false   // tool results arrived
         case "stream_event":
             if let inner = event["event"] as? [String: Any], inner["type"] as? String == "content_block_start",
                let block = inner["content_block"] as? [String: Any] {
+                waitingOnTool = block["type"] as? String == "tool_use"
                 // Any new block means the previous external tool has finished.
                 if let open = openTool { current?.yield(.tool(name: open.name, id: open.id, started: false)); openTool = nil }
                 if block["type"] as? String == "tool_use", let name = block["name"] as? String, !name.hasPrefix("mcp__elio__") {

@@ -103,6 +103,7 @@ final class Server: @unchecked Sendable {
         case .ping:
             send(ServerMessage(type: .pong), on: conn)
         case .say(let id, let text):
+            Presence.noteRequest(remote: mode == .remote)
             Task {
                 for await reply in await brain.handle(id: id, text: text) {
                     self.send(reply, on: conn)
@@ -114,6 +115,25 @@ final class Server: @unchecked Sendable {
             Task { await brain.tasks.control(id, action: action) }
         case .cancelTurn:
             Task { await brain.cancelCurrentTurn() }
+        case .ambient(let id, let text):
+            // Always-on mic: answers to a pending question/confirmation, the wake word, or anything the
+            // classifier says is for Elio; a chat with someone else is dropped.
+            Presence.noteRequest(remote: mode == .remote)
+            Task {
+                let wake = WakeWord.strip(text)
+                let command = wake ?? text
+                var forElio = wake != nil
+                if !forElio {
+                    let verdict = await Addressee.classify(said: text, elioSaying: nil, wakeWord: false)
+                    forElio = verdict.target != .other && verdict.intent != .backchannel
+                }
+                guard forElio, !command.isEmpty else {
+                    log("ambient: not for Elio (\(text.count) chars)")
+                    self.send(ServerMessage(type: .done, id: id, text: "", route: .local), on: conn)
+                    return
+                }
+                for await reply in await brain.handle(id: id, text: command) { self.send(reply, on: conn) }
+            }
         case .prepare(let id, let text):
             guard mode == .local else { return }
             Task { await brain.prepare(id: id, text: text) }
@@ -187,8 +207,21 @@ final class Server: @unchecked Sendable {
         }
     }
 
+    /// Live briefing text the Mac would read aloud as it streams.
+    static let spokenStreamKinds: Set<String> = ["routineDelta", "briefStart", "recapStart"]
+
     private func send(_ message: ServerMessage, on conn: NWConnection) {
         var message = message
+        // Spoken events go to the device the user is on (see Presence); the other one just shows them.
+        if message.type == .event {
+            let onPhone = Presence.onPhone
+            if mode == .local, onPhone {
+                if let k = message.kind, Self.spokenStreamKinds.contains(k) { return }
+                message.speak = message.speak == true ? false : message.speak
+            } else if mode == .remote, !onPhone, message.speak == true {
+                message.speak = false
+            }
+        }
         if mode == .remote {
             if message.type == .delta {
                 // The phone speaks the reply sentence by sentence: deltas go out as whole sentences only,

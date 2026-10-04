@@ -416,6 +416,19 @@ public enum WorkflowTools {
         return all.map { "- [\($0.status)] \($0.title) (id \($0.id), \($0.kind), \(f.string(from: $0.startedAt)))" }.joined(separator: "\n")
     }
 
+    /// For the app's mission view: the full report data as JSON (same as the HTML report).
+    static let reportJSON = ElioTool(
+        name: "workflow_report_json",
+        description: "Uso interno dell'app.",
+        properties: ["id": prop("Id del workflow")],
+        required: ["id"]
+    ) { args, ctx in
+        guard let r = await WorkflowReport.build(id: args["id"] as? String ?? "", memory: ctx.memory, tasks: ctx.tasks) else {
+            throw ToolError("Workflow non trovato")
+        }
+        return r.jsonString()
+    }
+
     /// For the app and the phone: recent workflows with live agents, as JSON.
     static let listJSON = ElioTool(
         name: "workflow_list_json",

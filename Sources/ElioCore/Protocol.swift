@@ -22,6 +22,8 @@ public enum ClientMessage: Codable, Sendable {
     case mode(String)
     /// Partial transcript of a request still being spoken (`id` = the `say` that will follow).
     case prepare(id: String, text: String)
+    /// Heard by an always-on mic (the phone app): handled only if it's meant for Elio.
+    case ambient(id: String, text: String)
 
     private enum CodingKeys: String, CodingKey { case type, id, text, name, args, approved }
 
@@ -40,6 +42,7 @@ public enum ClientMessage: Codable, Sendable {
         case "cancelTurn": self = .cancelTurn
         case "mode": self = .mode(try c.decode(String.self, forKey: .text))
         case "prepare": self = .prepare(id: try c.decode(String.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
+        case "ambient": self = .ambient(id: try c.decode(String.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
         case "confirm":
             self = .confirm(id: try c.decode(String.self, forKey: .id), approved: try c.decode(Bool.self, forKey: .approved))
         case let other:
@@ -71,6 +74,8 @@ public enum ClientMessage: Codable, Sendable {
             try c.encode("mode", forKey: .type); try c.encode(mode, forKey: .text)
         case .prepare(let id, let text):
             try c.encode("prepare", forKey: .type); try c.encode(id, forKey: .id); try c.encode(text, forKey: .text)
+        case .ambient(let id, let text):
+            try c.encode("ambient", forKey: .type); try c.encode(id, forKey: .id); try c.encode(text, forKey: .text)
         case .confirm(let id, let approved):
             try c.encode("confirm", forKey: .type); try c.encode(id, forKey: .id); try c.encode(approved, forKey: .approved)
         }
@@ -148,6 +153,10 @@ public struct TaskInfo: Codable, Sendable, Identifiable {
     public var plan: [PlanStep]?
     /// Model it runs on (chosen by ModelRouter).
     public var model: String?
+    /// Folder it works in (the IDE opens it there).
+    public var cwd: String?
+    /// What it was asked to do (the task as given, without the rules around it).
+    public var task: String?
 
     public init(id: String, title: String, project: String?, status: Status, steps: [String] = [],
                 summary: String? = nil, startedAt: Date = Date(), endedAt: Date? = nil) {

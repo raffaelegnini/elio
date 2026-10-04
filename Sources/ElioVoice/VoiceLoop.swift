@@ -430,6 +430,8 @@ public final class VoiceLoop {
     /// A card to keep on screen (the app opens it in its own window).
     public var onCard: ((CardPayload) -> Void)?
     public var onOpenView: ((String, String, String) -> Void)?
+    /// "Aprimi il controller del login": the IDE on a path (and line).
+    public var onOpenIDE: ((String, Int) -> Void)?
     private var spokenSentences = 3
     private var briefOpeningEnabled = true
 
@@ -923,6 +925,10 @@ public final class VoiceLoop {
             let cfg = ElioConfig.load()
             applySettings(cfg)
             onSettingsChanged?(cfg)
+        case "openIDE":
+            if let p = msg.payload, let obj = try? JSONSerialization.jsonObject(with: Data(p.utf8)) as? [String: Any] {
+                onOpenIDE?(obj["path"] as? String ?? "", obj["line"] as? Int ?? 0)
+            }
         case "openView":
             if let p = msg.payload, let obj = try? JSONSerialization.jsonObject(with: Data(p.utf8)) as? [String: String] {
                 onOpenView?(obj["view"] ?? "dashboard", obj["tab"] ?? "", obj["integration"] ?? "")
