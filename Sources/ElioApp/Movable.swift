@@ -63,18 +63,18 @@ struct Movable<Content: View>: View {
 
     private var handles: some View {
         GeometryReader { g in
-            let w = g.size.width, h = g.size.height, e: CGFloat = 6, c: CGFloat = 14
+            let w = g.size.width, h = g.size.height, e: CGFloat = 10, c: CGFloat = 22
             ZStack(alignment: .topLeading) {
-                // Edges (between the corners).
-                handle(Grip(x: 0, y: -1)).frame(width: max(0, w - 2 * c), height: e).offset(x: c, y: -e / 2)
-                handle(Grip(x: 0, y: 1)).frame(width: max(0, w - 2 * c), height: e).offset(x: c, y: h - e / 2)
-                handle(Grip(x: -1, y: 0)).frame(width: e, height: max(0, h - 2 * c)).offset(x: -e / 2, y: c)
-                handle(Grip(x: 1, y: 0)).frame(width: e, height: max(0, h - 2 * c)).offset(x: w - e / 2, y: c)
-                // Corners.
-                handle(Grip(x: -1, y: -1)).frame(width: c, height: c).offset(x: -c / 2, y: -c / 2)
-                handle(Grip(x: 1, y: -1)).frame(width: c, height: c).offset(x: w - c / 2, y: -c / 2)
-                handle(Grip(x: -1, y: 1)).frame(width: c, height: c).offset(x: -c / 2, y: h - c / 2)
-                handle(Grip(x: 1, y: 1)).frame(width: c, height: c).offset(x: w - c / 2, y: h - c / 2)
+                // Edges (between the corners), half inside half outside the card.
+                grip(Grip(x: 0, y: -1)).frame(width: max(0, w - c), height: e).offset(x: c / 2, y: -e / 2)
+                grip(Grip(x: 0, y: 1)).frame(width: max(0, w - c), height: e).offset(x: c / 2, y: h - e / 2)
+                grip(Grip(x: -1, y: 0)).frame(width: e, height: max(0, h - c)).offset(x: -e / 2, y: c / 2)
+                grip(Grip(x: 1, y: 0)).frame(width: e, height: max(0, h - c)).offset(x: w - e / 2, y: c / 2)
+                // Corners, generous: diagonal resizing is what people reach for.
+                grip(Grip(x: -1, y: -1)).frame(width: c, height: c).offset(x: -c / 2, y: -c / 2)
+                grip(Grip(x: 1, y: -1)).frame(width: c, height: c).offset(x: w - c / 2, y: -c / 2)
+                grip(Grip(x: -1, y: 1)).frame(width: c, height: c).offset(x: -c / 2, y: h - c / 2)
+                grip(Grip(x: 1, y: 1)).frame(width: c, height: c).offset(x: w - c / 2, y: h - c / 2)
             }
         }
     }
@@ -93,37 +93,36 @@ struct Movable<Content: View>: View {
         return NSCursor.frameResize(position: position, directions: .all)
     }
 
-    private func handle(_ grip: Grip) -> some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .onHover { inside in if inside { cursor(grip).push() } else { NSCursor.pop() } }
-            .highPriorityGesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                .onChanged { v in
-                    if resizeStart == nil {
-                        let current = size ?? measured
-                        if base == nil { base = measured }   // freeze the layout footprint
-                        resizeStart = (current, offset)
-                    }
-                    guard let start = resizeStart else { return }
-                    var w = start.size.width, h = start.size.height
-                    var o = start.offset
-                    if grip.x == 1 { w = max(Self.minSize.width, start.size.width + v.translation.width) }
-                    if grip.x == -1 {
-                        w = max(Self.minSize.width, start.size.width - v.translation.width)
-                        o.width = start.offset.width + (start.size.width - w)
-                    }
-                    if grip.y == 1 { h = max(Self.minSize.height, start.size.height + v.translation.height) }
-                    if grip.y == -1 {
-                        h = max(Self.minSize.height, start.size.height - v.translation.height)
-                        o.height = start.offset.height + (start.size.height - h)
-                    }
-                    size = CGSize(width: w, height: h)
-                    offset = o
-                }
-                .onEnded { _ in
-                    resizeStart = nil
-                    save()
-                })
+    /// An AppKit grip: it gets the mouse before the card's own scroll views and gestures (SwiftUI drag
+    /// handles lost the drag over scrolling content, so some edges and corners didn't respond or stopped).
+    private func grip(_ grip: Grip) -> some View {
+        ResizeGrip(cursor: cursor(grip), onDrag: { t in resize(grip, by: t) }, onEnd: {
+            resizeStart = nil
+            save()
+        })
+    }
+
+    private func resize(_ grip: Grip, by t: CGSize) {
+        if resizeStart == nil {
+            let current = size ?? measured
+            if base == nil { base = measured }   // freeze the layout footprint
+            resizeStart = (current, offset)
+        }
+        guard let start = resizeStart else { return }
+        var w = start.size.width, h = start.size.height
+        var o = start.offset
+        if grip.x == 1 { w = max(Self.minSize.width, start.size.width + t.width) }
+        if grip.x == -1 {
+            w = max(Self.minSize.width, start.size.width - t.width)
+            o.width = start.offset.width + (start.size.width - w)
+        }
+        if grip.y == 1 { h = max(Self.minSize.height, start.size.height + t.height) }
+        if grip.y == -1 {
+            h = max(Self.minSize.height, start.size.height - t.height)
+            o.height = start.offset.height + (start.size.height - h)
+        }
+        size = CGSize(width: w, height: h)
+        offset = o
     }
 
     // MARK: Persistence
@@ -142,6 +141,44 @@ struct Movable<Content: View>: View {
         if let v = UserDefaults.standard.array(forKey: Self.sizeKey(id)) as? [Double], v.count == 4 {
             size = CGSize(width: v[0], height: v[1])
             base = CGSize(width: v[2], height: v[3])
+        }
+    }
+}
+
+/// Invisible resize handle backed by an NSView: its own cursor rect and mouse tracking, so it works over
+/// scroll views and never leaves the cursor stuck. Reports the drag as a translation (y grows downwards).
+struct ResizeGrip: NSViewRepresentable {
+    let cursor: NSCursor
+    let onDrag: (CGSize) -> Void
+    let onEnd: () -> Void
+
+    func makeNSView(context: Context) -> GripView { GripView() }
+
+    func updateNSView(_ view: GripView, context: Context) {
+        view.cursor = cursor
+        view.onDrag = onDrag
+        view.onEnd = onEnd
+        view.window?.invalidateCursorRects(for: view)
+    }
+
+    final class GripView: NSView {
+        var cursor = NSCursor.arrow
+        var onDrag: ((CGSize) -> Void)?
+        var onEnd: (() -> Void)?
+        private var start: NSPoint?
+
+        override func resetCursorRects() { addCursorRect(bounds, cursor: cursor) }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) { start = event.locationInWindow }
+        override func mouseDragged(with event: NSEvent) {
+            guard let start else { return }
+            let p = event.locationInWindow
+            onDrag?(CGSize(width: p.x - start.x, height: start.y - p.y))
+        }
+        override func mouseUp(with event: NSEvent) {
+            guard start != nil else { return }
+            start = nil
+            onEnd?()
         }
     }
 }

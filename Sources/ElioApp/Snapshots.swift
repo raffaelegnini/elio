@@ -92,7 +92,7 @@ enum Snapshots {
         saveLayers(CGSize(width: 300, height: 120), "\(dir)/labels-live.png") { _ in labelled }
 
         loop.loadSample(tasks: [], squads: [], messages: [], usage: usage, routine: false, lit: [], state: .thinking)
-        save(IslandView(loop: loop, openDashboard: {}, openSettings: {}).background(Color.gray), "\(dir)/island.png")
+        save(StatusOrbView(loop: loop).background(Color.gray), "\(dir)/island.png")
     }
 
     static func saveLayers(_ size: CGSize, _ path: String, _ frame: @escaping (Double) -> VectorFrame) {

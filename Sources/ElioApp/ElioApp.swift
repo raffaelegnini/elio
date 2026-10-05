@@ -18,24 +18,13 @@ struct ElioApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuContent(delegate: delegate)
-        } label: {
-            MenuIcon(delegate: delegate)
-        }
+        // The menu bar item is the StatusOrb (an NSStatusItem), created once the voice loop exists.
+        Settings { EmptyView() }
     }
 }
 
-/// Both views observe the delegate: `loop` is created after the first render,
+/// Observes the delegate: `loop` is created after the first render,
 /// and a plain `let` would leave the menu stuck on its initial (empty) state.
-struct MenuIcon: View {
-    @ObservedObject var delegate: AppDelegate
-
-    var body: some View {
-        Image(systemName: delegate.menuIcon)
-    }
-}
-
 struct MenuContent: View {
     @ObservedObject var delegate: AppDelegate
 
@@ -103,7 +92,7 @@ struct MenuContent: View {
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private(set) var loop: VoiceLoop?
     let hud = HUDController()
-    let island = NotchIsland()
+    let orb = StatusOrb()
     let dashboardState = DashboardState()
     private var dashboard: NSWindow?
     private var settingsWindow: NSWindow?
@@ -125,58 +114,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         return true
     }
 
-    /// A regular app needs its menu: ⌘C/⌘V/⌘Z reach the editor through it, ⌘Q quits, ⌘W closes.
-    private func installMainMenu() {
-        let main = NSMenu()
-        func item(_ title: String, _ action: Selector?, _ key: String, _ mods: NSEvent.ModifierFlags = .command) -> NSMenuItem {
-            let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
-            i.keyEquivalentModifierMask = mods
-            return i
-        }
-        let app = NSMenu()
-        app.addItem(item("Informazioni su \(Brand.shared.name)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""))
-        app.addItem(.separator())
-        let settings = item("Impostazioni…", #selector(openSettingsFromMenu), ",")
-        settings.target = self
-        app.addItem(settings)
-        app.addItem(.separator())
-        app.addItem(item("Nascondi \(Brand.shared.name)", #selector(NSApplication.hide(_:)), "h"))
-        app.addItem(item("Nascondi altre", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]))
-        app.addItem(.separator())
-        app.addItem(item("Esci da \(Brand.shared.name)", #selector(NSApplication.terminate(_:)), "q"))
-        let appItem = NSMenuItem(); appItem.submenu = app; main.addItem(appItem)
-
-        let edit = NSMenu(title: "Modifica")
-        edit.addItem(item("Annulla", Selector(("undo:")), "z"))
-        edit.addItem(item("Ripeti", Selector(("redo:")), "z", [.command, .shift]))
-        edit.addItem(.separator())
-        edit.addItem(item("Taglia", #selector(NSText.cut(_:)), "x"))
-        edit.addItem(item("Copia", #selector(NSText.copy(_:)), "c"))
-        edit.addItem(item("Incolla", #selector(NSText.paste(_:)), "v"))
-        edit.addItem(item("Seleziona tutto", #selector(NSText.selectAll(_:)), "a"))
-        let editItem = NSMenuItem(); editItem.submenu = edit; main.addItem(editItem)
-
-        let view = NSMenu(title: "Vista")
-        for (title, sel, key) in [("Dashboard", #selector(openDashboardFromMenu), "d"), ("IDE", #selector(openIDEFromMenu), "i"),
-                                  ("Archivio", #selector(openArchiveFromMenu), "a")] {
-            let i = item(title, sel, key, [.command, .option]); i.target = self; view.addItem(i)
-        }
-        let viewItem = NSMenuItem(); viewItem.submenu = view; main.addItem(viewItem)
-
-        let window = NSMenu(title: "Finestra")
-        window.addItem(item("Riduci", #selector(NSWindow.performMiniaturize(_:)), "m"))
-        window.addItem(item("Chiudi", #selector(NSWindow.performClose(_:)), "w"))
-        window.addItem(.separator())
-        window.addItem(item("Porta tutto in primo piano", #selector(NSApplication.arrangeInFront(_:)), ""))
-        let windowItem = NSMenuItem(); windowItem.submenu = window; main.addItem(windowItem)
-        NSApp.windowsMenu = window
-        NSApp.mainMenu = main
-    }
-
-    @objc private func openSettingsFromMenu() { showSettings() }
-    @objc private func openDashboardFromMenu() { showDashboard() }
-    @objc private func openIDEFromMenu() { showIDE() }
-    @objc private func openArchiveFromMenu() { showArchive() }
+    private lazy var mainMenu = MainMenu(app: self)
+    private func installMainMenu() { mainMenu.install() }
 
     private static var launchedAtLogin: Bool {
         let event = NSAppleEventManager.shared().currentAppleEvent
@@ -184,17 +123,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
     }
     private var observer: Task<Void, Never>?
-
-    var menuIcon: String {
-        switch loop?.state {
-        case .speaking: "waveform.circle.fill"
-        case .thinking: "brain.head.profile"
-        case .hearing: "ear.fill"
-        case .muted: "mic.slash.circle"
-        case .off, nil: "circle.slash"
-        default: "circle.hexagongrid.circle"
-        }
-    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // In the Dock and in ⌘-Tab like any app (the IDE needs it); menu bar only if the user prefers.
@@ -247,8 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             IDEWindowController.shared.show(loop: self?.loop, path: path, line: line)
         }
         ideKey = HotKey(keyCode: 34 /* I */, modifiers: [.option, .command]) { [weak self] in self?.showIDE() }
-        island.attach(loop, openDashboard: { [weak self] in self?.showDashboard(forceFront: true) },
-                      openSettings: { [weak self] in self?.showSettings() })
+        orb.attach(loop, menu: MenuContent(delegate: self), openDashboard: { [weak self] in self?.showDashboard(forceFront: true) })
         hud.attach(loop, openReview: { [weak self] diff in self?.showDashboard(review: diff) })
 
         hotKey = HotKey(keyCode: 38 /* J */, modifiers: [.option, .command]) { [weak self] in
@@ -382,7 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     // Shown in the drop-down under the menu bar orb.
                     self.hud.hide()
                 } else {
-                    // Listening/thinking/speaking show in the notch island; the HUD stays out of the way.
+                    // Listening/thinking/speaking show in the menu bar orb; the HUD stays out of the way.
                     switch loop.state {
                     case .listening, .idle, .muted: self.hud.scheduleHide(after: 4)
                     default: break

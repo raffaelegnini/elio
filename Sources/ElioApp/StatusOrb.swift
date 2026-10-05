@@ -3,43 +3,74 @@ import ElioCore
 import ElioVoice
 import SwiftUI
 
-/// A small orb in the menu bar, just right of the notch (the notch itself is left to apps like
-/// boring.notch). It glows and pulses with Elio's state: listening, hearing, thinking, speaking,
-/// waiting for an answer, muted. Click → dashboard, right-click → quick actions, hover → what's happening.
+/// Elio's menu bar item: a small orb that glows and pulses with Elio's state (listening, hearing,
+/// thinking, speaking, waiting for an answer, muted). A real status item, so it never fights the notch
+/// or notch apps like boring.notch. Click → dashboard, right-click → full menu, hover → what's happening.
 @MainActor
-final class NotchIsland {
-    private var panel: NSPanel?
-    private var observer: Any?
+final class StatusOrb {
+    private var item: NSStatusItem?
     private var popover: KeyablePanel?
     private weak var loop: VoiceLoop?
-    static let size: CGFloat = 26
-    /// Transparent room around the orb so its glow isn't clipped into a square by the window edge.
-    static let canvas: CGFloat = 44
+    private var openDashboard: () -> Void = {}
+    private var menu: NSMenu?
+    private let target = ClickTarget()
+    static let size: CGFloat = 18
+    static let width: CGFloat = 28
+    /// Above the menu bar and notch apps (boring.notch sits at .mainMenu + 3), below pop-up menus.
+    static let level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue - 1)
 
-    func attach(_ loop: VoiceLoop, openDashboard: @escaping () -> Void, openSettings: @escaping () -> Void) {
-        let s = Self.canvas
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: s, height: s),
-                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        // Above the menu bar so the status items can't cover it.
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        panel.hidesOnDeactivate = false
-        panel.isMovable = false
-        let host = NSHostingView(rootView: IslandView(loop: loop, openDashboard: openDashboard, openSettings: openSettings))
-        host.wantsLayer = true
-        host.layer?.backgroundColor = .clear
-        panel.contentView = host
-        self.panel = panel
-        position()
-        panel.orderFrontRegardless()
+    func attach<Menu: View>(_ loop: VoiceLoop, menu: Menu, openDashboard: @escaping () -> Void) {
+        // New status items land leftmost, which on a MacBook is behind the notch: start next to the clock.
+        // ⌘-drag moves it and macOS remembers the new spot under the same key.
+        let positionKey = "NSStatusItem Preferred Position ElioOrb"
+        if UserDefaults.standard.object(forKey: positionKey) == nil {
+            UserDefaults.standard.set(200, forKey: positionKey)
+        }
+        let item = NSStatusBar.system.statusItem(withLength: Self.width)
+        item.autosaveName = "ElioOrb"
+        self.item = item
         self.loop = loop
+        self.openDashboard = openDashboard
+        self.menu = NSHostingMenu(rootView: menu)
+        if let button = item.button {
+            let host = PassthroughHostingView(rootView: StatusOrbView(loop: loop))
+            host.translatesAutoresizingMaskIntoConstraints = false
+            button.addSubview(host)
+            NSLayoutConstraint.activate([
+                host.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                host.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                host.widthAnchor.constraint(equalToConstant: Self.width),
+                host.heightAnchor.constraint(equalToConstant: Self.width),
+            ])
+            target.onClick = { [weak self] in self?.click() }
+            button.target = target
+            button.action = #selector(ClickTarget.clicked)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        watchTooltip(loop)
         watchRequests(loop)
-        observer = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
-                                                          object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.position() }
+    }
+
+    private func click() {
+        guard let item, let button = item.button else { return }
+        let event = NSApp.currentEvent
+        if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
+            item.menu = menu
+            button.performClick(nil)
+            item.menu = nil
+        } else {
+            openDashboard()
+        }
+    }
+
+    private func watchTooltip(_ loop: VoiceLoop) {
+        item?.button?.toolTip = withObservationTracking {
+            StatusOrbView.tooltip(loop)
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self, let loop = self.loop else { return }
+                self.watchTooltip(loop)
+            }
         }
     }
 
@@ -71,7 +102,7 @@ final class NotchIsland {
             p.isOpaque = false
             p.backgroundColor = .clear
             p.hasShadow = true
-            p.level = .statusBar
+            p.level = Self.level
             p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             p.hidesOnDeactivate = false
             let host = NSHostingView(rootView: RequestDropdown(loop: loop))
@@ -80,7 +111,7 @@ final class NotchIsland {
             p.contentView = host
             popover = p
         }
-        guard let popover, let orb = panel else { return }
+        guard let popover, let orb = item?.button?.window else { return }
         let size = popover.contentView?.fittingSize ?? NSSize(width: 380, height: 220)
         popover.setContentSize(NSSize(width: 380, height: max(120, size.height)))
         let screen = orb.screen ?? NSScreen.main
@@ -90,24 +121,11 @@ final class NotchIsland {
         popover.orderFrontRegardless()
         NSSound(named: "Tink")?.play()
     }
-
-    /// Vertically centred in the menu bar, 10 pt right of the notch (or of the screen centre without one).
-    private func position() {
-        guard let panel, let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main else { return }
-        let barHeight = screen.safeAreaInsets.top > 0 ? screen.safeAreaInsets.top : (screen.frame.maxY - screen.visibleFrame.maxY)
-        let notchRight = screen.auxiliaryTopRightArea.map { screen.frame.minX + $0.minX } ?? screen.frame.midX + 100
-        let pad = (Self.canvas - Self.size) / 2
-        panel.setFrameOrigin(NSPoint(x: notchRight + 10 - pad,
-                                     y: screen.frame.maxY - barHeight + (barHeight - Self.size) / 2 - pad))
-    }
 }
 
-struct IslandView: View {
+struct StatusOrbView: View {
     let loop: VoiceLoop
-    let openDashboard: () -> Void
-    let openSettings: () -> Void
-    @State private var hover = false
-
+    
     private var waiting: Bool { !loop.confirmations.isEmpty || !loop.questions.isEmpty }
     private var busy: Bool { [.hearing, .thinking, .speaking].contains(loop.state) || waiting || loop.routineMode }
     private var agents: Int { loop.tasks.filter(\.isActive).count }
@@ -119,7 +137,8 @@ struct IslandView: View {
         return Theme.tint(loop.state)
     }
 
-    private var tooltip: String {
+    static func tooltip(_ loop: VoiceLoop) -> String {
+        let agents = loop.tasks.filter(\.isActive).count
         if let q = loop.questions.first { return "Aspetta una risposta: \(q.question)" }
         if let c = loop.confirmations.first { return "Aspetta conferma: \(c.title)" }
         if !loop.connected { return "\(Brand.shared.name): daemon non raggiungibile" }
@@ -139,11 +158,11 @@ struct IslandView: View {
                 Circle().fill(Color.black)
                 Circle()
                     .fill(RadialGradient(colors: [color.opacity(0.95), color.opacity(0.25)], center: .center,
-                                         startRadius: 1, endRadius: 10))
-                    .scaleEffect(0.42 + 0.18 * pulse + 0.25 * voice + (hover ? 0.12 : 0))
+                                         startRadius: 1, endRadius: 7))
+                    .scaleEffect(0.42 + 0.18 * pulse + 0.25 * voice)
                     .opacity(loop.connected ? 1 : 0.4)
                 Circle()
-                    .strokeBorder(color.opacity(hover ? 1 : busy ? 0.6 + 0.4 * pulse : 0.45), lineWidth: hover ? 2 : 1.5)
+                    .strokeBorder(color.opacity(busy ? 0.6 + 0.4 * pulse : 0.45), lineWidth: 1.5)
                 if loop.state == .thinking {
                     Circle().trim(from: 0, to: 0.28)
                         .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
@@ -151,33 +170,26 @@ struct IslandView: View {
                         .padding(1)
                 }
                 if agents > 0 {
-                    Circle().fill(Color.green).frame(width: 6, height: 6)
+                    Circle().fill(Color.green).frame(width: 5, height: 5)
                         .overlay(Circle().strokeBorder(Color.black, lineWidth: 1))
-                        .offset(x: 9, y: -9)
+                        .offset(x: 6, y: -6)
                 }
             }
-            .shadow(color: color.opacity(hover ? 0.9 : busy ? 0.5 * (0.5 + pulse) : 0), radius: hover ? 6 : 4)
-            .scaleEffect(hover ? 1.0 : 0.88)
+            .shadow(color: color.opacity(busy ? 0.5 * (0.5 + pulse) : 0), radius: 4)
         }
-        .onHover { h in
-            withAnimation(.spring(duration: 0.25, bounce: 0.35)) { hover = h }
-            if h { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
-        }
-        .frame(width: NotchIsland.size, height: NotchIsland.size)
-        .contentShape(Circle())
-        .frame(width: NotchIsland.canvas, height: NotchIsland.canvas)
-        .onTapGesture { openDashboard() }
-        .help(tooltip)
-        .contextMenu {
-            Button("Parla con \(Brand.shared.name)") { loop.activate() }
-            Button(loop.muted ? "Riattiva microfono" : "Silenzia microfono") { loop.setMuted(!loop.muted) }
-            if loop.state == .thinking || loop.state == .speaking { Button("Ferma") { loop.stopEverything() } }
-            Button("Briefing di oggi") { loop.submit(text: "briefing") }
-            Divider()
-            Button("Dashboard") { openDashboard() }
-            Button("Impostazioni") { openSettings() }
-        }
+        .frame(width: StatusOrb.size, height: StatusOrb.size)
+        .frame(width: StatusOrb.width, height: StatusOrb.width)
     }
+}
+
+/// Lets clicks fall through to the status item button underneath.
+private final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+private final class ClickTarget: NSObject {
+    var onClick: () -> Void = {}
+    @objc func clicked() { onClick() }
 }
 
 /// Borderless panel that can take keyboard input (reply field) without activating the app.

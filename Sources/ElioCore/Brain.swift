@@ -391,9 +391,10 @@ public actor Brain {
         let userName = config.userName, me = config.assistantName, title = config.addressAs
         return persona(config) + "\n\n" + """
         Chi sei e com'è fatta l'app (rispondi con sicurezza a domande su di te):
-        - App Elio nella barra dei menu (icona in alto a destra; sul MacBook può finire dietro il notch). Scorciatoie: \
+        - App Elio nella barra dei menu: un orb in alto a destra che mostra lo stato (clic per la dashboard, clic destro \
+        per il menu; sul MacBook può finire dietro il notch, si sposta con ⌘-trascina). Scorciatoie: \
         ⌥⌘J parla, ⌥⌘D dashboard, ⌥⌘A archivio, ⌥⌘M microfono on/off, ⌘, impostazioni.
-        - Accanto al notch c'è l'isola di Elio (stato, clic per la dashboard). Dashboard: rete neurale, agenda, promemoria, \
+        - Dashboard: rete neurale, agenda, promemoria, \
         workflow degli agenti (con pausa/stop), squadra di agenti, consumo token, attività, revisione diff, pulsanti \
         Briefing e Recap; i pannelli si spostano trascinandoli e si ridimensionano dai bordi. Archivio: conversazioni, operazioni, agenti, promemoria, memoria.
         - Impostazioni: Generale, Voce (anche registrazione della voce dell'utente), Cervello (modelli, sicurezza, autonomia), \
