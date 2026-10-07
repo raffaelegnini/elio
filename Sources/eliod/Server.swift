@@ -72,9 +72,21 @@ final class Server: @unchecked Sendable {
                 Task {
                     await self.brain.subscribe(id: sinkId) { [weak self] msg in self?.send(msg, on: conn) }
                 }
+                // The phone shows whether the Mac is at rest from the moment it connects.
+                if self.mode == .remote { self.send(Self.idleState(), on: conn) }
                 self.receive(on: conn)
             case .failed, .cancelled:
                 Task { await self.brain.unsubscribe(sinkId) }
+                // The app that put the Mac at rest is gone (quit, crashed): it can't be at rest any more.
+                let wasOwner = self.idleOwner.withLock { owner -> Bool in
+                    guard owner == ObjectIdentifier(conn) else { return false }
+                    owner = nil
+                    return true
+                }
+                if wasOwner, Presence.idle {
+                    Presence.setIdle(false)
+                    self.brain.publish(Self.idleState())
+                }
             default: break
             }
         }
@@ -161,7 +173,26 @@ final class Server: @unchecked Sendable {
         case .confirm(let id, let approved):
             Presence.noteRequest(remote: mode == .remote)
             Task { await brain.gate.answer(id: id, approved: approved) }
+        case .idle(let on):
+            if mode == .local {
+                // The Mac app reports its rest state: the daemon pushes instead of waiting, and tells Claude.
+                idleOwner.withLock { $0 = on ? ObjectIdentifier(conn) : nil }
+                guard Presence.idle != on else { return }
+                Presence.setIdle(on)
+                log("rest mode \(on ? "on" : "off")")
+                brain.publish(Self.idleState())
+            } else {
+                // From the phone: the app does the switching (screen, voice) and then reports back.
+                brain.publish(ServerMessage(type: .event, text: on ? "on" : "off", kind: "idleRequest"))
+            }
         }
+    }
+
+    /// Connection of the app that put the Mac at rest.
+    private let idleOwner = Mutex<ObjectIdentifier?>(nil)
+
+    static func idleState() -> ServerMessage {
+        ServerMessage(type: .event, text: Presence.idle ? "on" : "off", kind: "idle")
     }
 
     private func dispatchTool(_ message: ClientMessage, on conn: NWConnection) {

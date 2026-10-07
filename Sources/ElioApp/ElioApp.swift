@@ -39,6 +39,9 @@ struct MenuContent: View {
             Button("Briefing di oggi") { loop.submit(text: "briefing") }
             Button("Recap della giornata") { loop.submit(text: "recap della giornata") }
             Button(loop.muted ? "Riattiva microfono  ⌥⌘M" : "Silenzia microfono  ⌥⌘M") { loop.setMuted(!loop.muted) }
+            Toggle("Modalità riposo", isOn: Binding(get: { delegate.idle.active }, set: { _ in delegate.idle.toggle() }))
+            Toggle("Riposo automatico dopo \(delegate.idle.config.idleMinutes) min", isOn: Binding(
+                get: { delegate.idle.config.idleAuto }, set: { delegate.idle.setAuto($0) }))
             Button("Mostra HUD") { delegate.hud.show(pinned: true) }
             Button("Dashboard  ⌥⌘D") { delegate.showDashboard() }
             Button("Archivio  ⌥⌘A") { delegate.showArchive() }
@@ -96,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let hud = HUDController()
     let orb = StatusOrb()
     let dashboardState = DashboardState()
+    let idle = IdleMode()
     private var dashboard: NSWindow?
     private var settingsWindow: NSWindow?
     private var archiveWindow: NSWindow?
@@ -155,6 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
         loop.onSettingsChanged = { [weak self] cfg in
+            self?.idle.apply(cfg)
             Brand.shared.apply(cfg)
             WakeWord.configure(name: cfg.assistantName, aliases: cfg.wakeAliases)
             self?.settings.reload()
@@ -183,6 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         ideKey = HotKey(keyCode: 34 /* I */, modifiers: [.option, .command]) { [weak self] in self?.showIDE() }
         orb.attach(loop, menu: MenuContent(delegate: self), openDashboard: { [weak self] in self?.showDashboard(forceFront: true) })
         hud.attach(loop, openReview: { [weak self] diff in self?.showDashboard(review: diff) })
+        idle.attach(loop, app: self)
 
         hotKey = HotKey(keyCode: 38 /* J */, modifiers: [.option, .command]) { [weak self] in
             self?.activate()
@@ -217,6 +223,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func activate() {
         hud.show(pinned: false)
         loop?.activate()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        idle.shutdown()
+    }
+
+    /// Rest mode: nothing on screen keeps drawing (the HUD goes away, the dashboard's animations stop).
+    func setResting(_ on: Bool) {
+        dashboardState.resting = on
+        if on { hud.hide() }
+        objectWillChange.send()
     }
 
     func showArchive() {
@@ -355,6 +372,8 @@ final class DashboardState {
     var visible = false
     /// Visible and the key window: animations run at full frame rate.
     var focused = false
+    /// The Mac is at rest: no animations even if the window is technically on screen (dim mode).
+    var resting = false
 }
 
 extension Notification.Name {

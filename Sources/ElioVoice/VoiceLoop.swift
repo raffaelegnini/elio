@@ -327,7 +327,14 @@ public final class VoiceLoop {
         // The on-device model that tells who a sentence is for: loaded now, ready in ~0.5 s when needed.
         Addressee.prewarm()
         client.onMessage = { [weak self] msg in Task { @MainActor in self?.handle(msg) } }
-        client.onConnectionChange = { [weak self] up in Task { @MainActor in self?.connected = up } }
+        client.onConnectionChange = { [weak self] up in
+            Task { @MainActor in
+                guard let self else { return }
+                self.connected = up
+                // A restarted daemon forgets: tell it again that the Mac is at rest.
+                if up, self.resting { self.client.send(.idle(true)) }
+            }
+        }
         client.start()
 
         speaker.onSpeakingChange = { [weak self] speaking in self?.speakingChanged(speaking) }
@@ -392,6 +399,8 @@ public final class VoiceLoop {
 
     /// Hotkey / click on the orb: talk now without the wake word, or interrupt Elio.
     public func activate() {
+        lastInteraction = Date()
+        if resting, onRestCommand?("") == true { return }
         if speaker.isSpeaking {
             interrupt()
             return
@@ -406,7 +415,8 @@ public final class VoiceLoop {
     }
 
     /// Stops listening entirely (mic released). Typed input and spoken replies still work.
-    public func setMuted(_ on: Bool) {
+    /// `persist: false` for temporary changes (rest mode) that must not survive a restart.
+    public func setMuted(_ on: Bool, persist: Bool = true) {
         guard on != muted else { return }
         do {
             try audio.setInputEnabled(!on)
@@ -415,7 +425,7 @@ public final class VoiceLoop {
             return
         }
         muted = on
-        UserDefaults.standard.set(on, forKey: "elio.muted")
+        if persist { UserDefaults.standard.set(on, forKey: "elio.muted") }
         if on {
             inUtterance = false
             pipeline.resetVAD()
@@ -437,6 +447,30 @@ public final class VoiceLoop {
     /// A card to keep on screen (the app opens it in its own window).
     public var onCard: ((CardPayload) -> Void)?
     public var onOpenView: ((String, String, String) -> Void)?
+
+    // MARK: Rest mode (the app's IdleMode decides; the loop only applies it)
+
+    /// The Mac is at rest: events aren't spoken unless `onRestEvent` lets them through. Reported to the daemon.
+    public var resting = false {
+        didSet { if resting != oldValue { client.send(.idle(resting)) } }
+    }
+    /// An event arrived while resting: true = wake up and say it (ring first), false = keep quiet.
+    public var onRestEvent: ((ServerMessage) -> Bool)?
+    /// The user talked to Elio (or typed, or pressed the hotkey) while resting. True = handled, don't send it on.
+    public var onRestCommand: ((String) -> Bool)?
+    /// "Mettiti a riposo" / the phone's switch: the daemon asks the app to enter or leave rest mode.
+    public var onIdleRequest: ((Bool) -> Void)?
+    /// Last time the user talked to Elio or typed to it (voice use counts as being at the Mac).
+    public private(set) var lastInteraction = Date()
+
+    /// One line of Elio's own (the "welcome back" summary): said, or only shown when `speak` is false.
+    public func announce(_ text: String, speak: Bool = true) {
+        turns.append(Turn(role: "event", text: text))
+        trimTurns()
+        guard speak else { return }
+        spokenText = text
+        speaker.say(text)
+    }
     /// "Aprimi il controller del login": the IDE on a path (and line).
     public var onOpenIDE: ((String, Int) -> Void)?
     /// "Apri una console sul DB di staging": a saved connection (id) to open in the IDE (terminal, files, console, tables).
@@ -790,6 +824,8 @@ public final class VoiceLoop {
 
     private func send(_ text: String, voice: Bool = false, display: String? = nil) {
         // "Basta" / "stop" / "fermati": stop talking and stop the work in progress, locally.
+        lastInteraction = Date()
+        if resting, onRestCommand?(text) == true { return }
         if IntentMatcher().match(text)?.intent == .stop {
             stopEverything()
             return
@@ -875,6 +911,26 @@ public final class VoiceLoop {
     }
 
     private func handleEvent(_ msg: ServerMessage) {
+        var msg = msg
+        var ringFirst = false
+        if resting {
+            if onRestEvent?(msg) == true {
+                // Woken up for something urgent: a ring first, it's heard from across the room (the alarm rings
+                // on its own; if the app left rest mode instead, e.g. the user is back for the briefing, no ring).
+                ringFirst = resting && msg.kind != "alarm"
+            } else {
+                switch msg.kind {
+                case "briefStart", "recapStart", "routineDelta", "routineDone":
+                    return  // no theme and no live reading in an empty room; the text stays in the history
+                case "alarm":
+                    // No ring at rest during the quiet hours: the phone got the urgent push.
+                    if let text = msg.text { turns.append(Turn(role: "event", text: text, route: msg.route)); trimTurns() }
+                    return
+                default:
+                    msg.speak = msg.speak == true ? false : msg.speak
+                }
+            }
+        }
         switch msg.kind {
         case "briefStart", "recapStart":
             let isBrief = msg.kind == "briefStart"
@@ -945,6 +1001,8 @@ public final class VoiceLoop {
             if let p = msg.payload, let obj = try? JSONSerialization.jsonObject(with: Data(p.utf8)) as? [String: Any] {
                 onIDEConnect?(obj["id"] as? String ?? "", obj["what"] as? String ?? "")
             }
+        case "idleRequest":
+            onIdleRequest?(msg.text == "on")
         case "openView":
             if let p = msg.payload, let obj = try? JSONSerialization.jsonObject(with: Data(p.utf8)) as? [String: String] {
                 onOpenView?(obj["view"] ?? "dashboard", obj["tab"] ?? "", obj["integration"] ?? "")
@@ -1049,9 +1107,20 @@ public final class VoiceLoop {
         }
         guard msg.speak == true, let text = msg.text else { return }
         turns.append(Turn(role: "event", text: text, route: msg.route))
-        spokenText = text
-        speaker.say(text, lang: msg.lang)
         trimTurns()
+        guard ringFirst else {
+            spokenText = text
+            speaker.say(text, lang: msg.lang)
+            return
+        }
+        let lang = msg.lang
+        Task { @MainActor [weak self] in
+            NSSound(named: "Glass")?.play()
+            try? await Task.sleep(for: .milliseconds(900))
+            guard let self else { return }
+            self.spokenText = text
+            self.speaker.say(text, lang: lang)
+        }
     }
 
     /// Answers an agent's or the assistant's question (typed in the HUD or spoken).

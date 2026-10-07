@@ -28,7 +28,8 @@ public final class PhoneNotifier: @unchecked Sendable {
     }
 
     public var isAway: Bool {
-        lock.withLock { screenLocked } || Self.idleSeconds > 300
+        // Rest mode means the user is away, whatever the idle timer says: push right away.
+        lock.withLock { screenLocked } || Self.idleSeconds > 300 || Presence.idle
     }
 
     /// Kinds worth chasing the user for when they're at the Mac but not reacting.

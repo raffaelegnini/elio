@@ -48,6 +48,8 @@
   .conn { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); }
   .conn i { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
   .conn.on i { background: var(--ok); }
+  .rest { color: var(--text-2); }
+  .rest .ic { width: 13px; height: 13px; }
   .icon-btn { position: relative; width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--fill);
     color: var(--text); display: grid; place-items: center; padding: 0; flex: none; }
   .icon-btn:active { background: var(--fill-2); }
@@ -345,7 +347,7 @@
   <header>
     <div class="title">
       <h1 id="title">Elio</h1>
-      <div id="conn" class="conn"><i></i><span>Connessione…</span></div>
+      <div id="conn" class="conn"><i></i><span>Connessione…</span><span id="restBadge" class="rest" hidden>· <svg class="ic xs"><use href="#i-moon"/></svg> Mac a riposo</span></div>
     </div>
     <button id="settingsBtn" class="icon-btn" aria-label="Impostazioni"><svg class="ic"><use href="#i-gear"/></svg><span class="pip" id="setPip" hidden></span></button>
   </header>
@@ -456,6 +458,16 @@
       </div>
     </div>
     <div class="group-f">Con l'ascolto continuo Elio ti sente mentre l'app è aperta, e risponde solo quando parli con lui.</div>
+
+    <div class="group-h">Mac</div>
+    <div class="group">
+      <div class="cell">
+        <span class="ci"><svg class="ic"><use href="#i-moon"/></svg></span>
+        <span class="cb"><span>Modalità riposo</span><br><span class="cs" id="restStatus">Mac acceso</span></span>
+        <button class="switch" id="restSwitch" role="switch" aria-checked="false" aria-label="Modalità riposo del Mac"></button>
+      </div>
+    </div>
+    <div class="group-f">A riposo il Mac spegne lo schermo ma resta sveglio per agenti e monitor; Elio non parla lì e ti scrive qui. Esce appena tocchi tastiera o mouse.</div>
 
     <div class="group-h">Questo telefono</div>
     <div class="group">
@@ -708,6 +720,9 @@ function handleEvent(m) {
       break;
     case "mode":
       setMode(m.text);
+      break;
+    case "idle":
+      setRest(m.text === "on");
       break;
     case "todos":
       try { todoData = JSON.parse(m.payload || "null"); renderTodos(); } catch {}
@@ -1006,6 +1021,20 @@ async function micStream() {
   if (stream && stream.getAudioTracks().some(t => t.readyState === "live")) return stream;
   return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
 }
+// ---------- Mac at rest ----------
+let macResting = false;
+function setRest(on) {
+  macResting = on;
+  $("restBadge").hidden = !on;
+  $("restSwitch").setAttribute("aria-checked", String(on));
+  $("restStatus").textContent = on ? "Il Mac è a riposo" : "Mac acceso";
+}
+$("restSwitch").onclick = () => {
+  if (!ws || ws.readyState !== 1) { toast("Il Mac non è raggiungibile."); return; }
+  // The Mac app switches and then reports back (the "idle" event updates the switch).
+  send({ type: "idle", on: !macResting });
+  toast(macResting ? "Sveglio il Mac…" : "Metto il Mac a riposo…");
+};
 function toast(text, ms = 3500) { const t = $("toast"); t.textContent = text; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), ms); }
 async function startRec() {
   unlockAudio();

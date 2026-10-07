@@ -100,9 +100,9 @@ struct DashboardView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .environment(\.animationsLive, state.visible)
+        .environment(\.animationsLive, state.visible && !state.resting)
         // Smooth when you're looking at it, light when it's just on screen behind something else.
-        .environment(\.animationFPS, state.focused ? 60 : state.visible ? 24 : 0)
+        .environment(\.animationFPS, state.resting ? 0 : state.focused ? 60 : state.visible ? 24 : 0)
         .task { await refreshLoop() }
     }
 

@@ -83,6 +83,18 @@ public struct ElioConfig: Codable, Sendable {
     /// Thinking ahead while the user talks (a small read-only session), and its model.
     public var speechPrep: Bool = true
     public var prepModel: String = "haiku"
+    /// Rest mode ("modalità riposo"): after `idleMinutes` without keyboard/mouse the screen goes off (or dim),
+    /// the Mac is kept awake for background work and Elio stops talking aloud, except for urgent things
+    /// outside the quiet hours.
+    public var idleAuto: Bool = true
+    public var idleMinutes: Int = 15
+    /// "off" (display asleep) or "dim" (built-in display at minimum brightness).
+    public var idleScreen: String = "off"
+    /// Hours when Elio never wakes the Mac or speaks on its own, even for urgent things (phone only). HH:mm.
+    public var quietStart: String = "23:00"
+    public var quietEnd: String = "07:30"
+    /// The mic keeps listening for the wake word while at rest ("Elio, sono tornato").
+    public var idleListen: Bool = true
 
     public init() {}
 
@@ -137,6 +149,12 @@ public struct ElioConfig: Codable, Sendable {
         selfSourcePath = try c.decodeIfPresent(String.self, forKey: .selfSourcePath) ?? d.selfSourcePath
         speechPrep = try c.decodeIfPresent(Bool.self, forKey: .speechPrep) ?? d.speechPrep
         prepModel = try c.decodeIfPresent(String.self, forKey: .prepModel) ?? d.prepModel
+        idleAuto = try c.decodeIfPresent(Bool.self, forKey: .idleAuto) ?? d.idleAuto
+        idleMinutes = try c.decodeIfPresent(Int.self, forKey: .idleMinutes) ?? d.idleMinutes
+        idleScreen = try c.decodeIfPresent(String.self, forKey: .idleScreen) ?? d.idleScreen
+        quietStart = try c.decodeIfPresent(String.self, forKey: .quietStart) ?? d.quietStart
+        quietEnd = try c.decodeIfPresent(String.self, forKey: .quietEnd) ?? d.quietEnd
+        idleListen = try c.decodeIfPresent(Bool.self, forKey: .idleListen) ?? d.idleListen
     }
 
     static func defaultClaudePath() -> String {

@@ -119,7 +119,8 @@ final class StatusOrb {
         if let s = screen { x = min(max(x, s.frame.minX + 8), s.frame.maxX - 388) }
         popover.setFrameOrigin(NSPoint(x: x, y: orb.frame.minY - popover.frame.height - 2))
         popover.orderFrontRegardless()
-        NSSound(named: "Tink")?.play()
+        // At rest the urgent ones already ring (outside the quiet hours); the rest stay silent.
+        if !loop.resting { NSSound(named: "Tink")?.play() }
     }
 }
 
@@ -130,8 +131,12 @@ struct StatusOrbView: View {
     private var busy: Bool { [.hearing, .thinking, .speaking].contains(loop.state) || waiting || loop.routineMode }
     private var agents: Int { loop.tasks.filter(\.isActive).count }
 
+    /// Moonlight: the Mac is at rest.
+    static let restColor = Color(hex: "#9DB0E8")
+
     private var color: Color {
         if waiting { return Color(hex: "#FF9F43") }
+        if loop.resting { return Self.restColor }
         if loop.muted { return Color(hex: "#FF6B61") }
         if !loop.connected { return Color(hex: "#6E6B62") }
         return Theme.tint(loop.state)
@@ -142,27 +147,30 @@ struct StatusOrbView: View {
         if let q = loop.questions.first { return "Aspetta una risposta: \(q.question)" }
         if let c = loop.confirmations.first { return "Aspetta conferma: \(c.title)" }
         if !loop.connected { return "\(Brand.shared.name): daemon non raggiungibile" }
-        if loop.muted { return "\(Brand.shared.name): microfono spento" }
-        var s = "\(Brand.shared.name): \(loop.state.label)"
+        if loop.muted, !loop.resting { return "\(Brand.shared.name): microfono spento" }
+        var s = "\(Brand.shared.name): \(loop.resting ? "a riposo" : loop.state.label)"
         if let tool = loop.activeTools.first { s += " · \(Capability.describe(tool: tool))" }
         if agents > 0 { s += " · \(agents) agenti al lavoro" }
         return s
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: !busy)) { ctx in
+        // At rest: a slow, dim breath at a few frames per second (nothing else should cost energy then).
+        let resting = loop.resting && !busy
+        TimelineView(.animation(minimumInterval: resting ? 1 / 6 : 1 / 30, paused: !busy && !resting)) { ctx in
             let t = ctx.date.timeIntervalSinceReferenceDate
             let pulse = busy ? (sin(t * (loop.state == .thinking ? 5 : 3)) + 1) / 2 : 0
+            let breath = resting ? (sin(t * 0.9) + 1) / 2 : 0
             let voice = loop.state == .hearing || loop.state == .speaking ? Double(max(0, min(1, loop.level))) : 0
             ZStack {
                 Circle().fill(Color.black)
                 Circle()
                     .fill(RadialGradient(colors: [color.opacity(0.95), color.opacity(0.25)], center: .center,
                                          startRadius: 1, endRadius: 7))
-                    .scaleEffect(0.42 + 0.18 * pulse + 0.25 * voice)
-                    .opacity(loop.connected ? 1 : 0.4)
+                    .scaleEffect(0.42 + 0.18 * pulse + 0.25 * voice + 0.06 * breath)
+                    .opacity(loop.connected ? (resting ? 0.35 + 0.3 * breath : 1) : 0.4)
                 Circle()
-                    .strokeBorder(color.opacity(busy ? 0.6 + 0.4 * pulse : 0.45), lineWidth: 1.5)
+                    .strokeBorder(color.opacity(busy ? 0.6 + 0.4 * pulse : resting ? 0.3 : 0.45), lineWidth: 1.5)
                 if loop.state == .thinking {
                     Circle().trim(from: 0, to: 0.28)
                         .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))

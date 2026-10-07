@@ -9,6 +9,12 @@ public enum Presence {
     nonisolated(unsafe) private static var lastRemote = Date.distantPast
     nonisolated(unsafe) private static var lastLocal = Date.distantPast
 
+    nonisolated(unsafe) private static var resting = false
+
+    /// The Mac is in rest mode (screen off/dim, the user away): nothing is said aloud there, events go to the phone.
+    public static var idle: Bool { lock.withLock { resting } }
+    public static func setIdle(_ on: Bool) { lock.withLock { resting = on } }
+
     /// A request arrived (from the phone when `remote`).
     public static func noteRequest(remote: Bool) {
         lock.withLock { if remote { lastRemote = Date() } else { lastLocal = Date() } }

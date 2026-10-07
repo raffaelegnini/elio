@@ -347,8 +347,9 @@ public actor Brain {
         f.locale = Locale(identifier: "it_IT")
         f.dateFormat = "EEEE d MMMM yyyy, HH:mm"
         // A short reminder every turn keeps replies spoken-length (the system prompt alone wasn't enough).
+        let away = Presence.idle ? " Il Mac è in modalità riposo: l'utente è lontano dal Mac e lì non ti sente. Preferisci lavorare in background e lasciare messaggi (message_send) o notifiche al posto di risposte da ascoltare al Mac." : ""
         let ack = ackGiven ? " La frase di riscontro l'ha già detta l'app: niente \"Certo, Signore…\", entra subito nel merito, ma rivolgiti comunque a lui con \"Signore\"." : ""
-        return "[contesto: \(f.string(from: Date())). Rispondi in massimo due frasi, salvo richiesta di dettagli. Se ti servono più fonti (es. Slack e Teamwork), interrogale una alla volta, prima la più veloce, e dopo ciascuna dì subito in una frase cosa hai trovato, poi passa alla successiva: non aspettare di avere tutto.\(ack)]\n\(text)"
+        return "[contesto: \(f.string(from: Date())). Rispondi in massimo due frasi, salvo richiesta di dettagli. Se ti servono più fonti (es. Slack e Teamwork), interrogale una alla volta, prima la più veloce, e dopo ciascuna dì subito in una frase cosa hai trovato, poi passa alla successiva: non aspettare di avere tutto.\(ack)\(away)]\n\(text)"
     }
 
     /// Personality and speaking style, editable in Settings (the rest of the prompt is how the app works).

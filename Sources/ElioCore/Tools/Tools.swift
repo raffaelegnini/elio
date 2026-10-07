@@ -141,6 +141,7 @@ public enum ToolRegistry {
         WatcherTools.listJSON,
         AlertTools.message,
         AlertTools.notify,
+        IdleTools.mode,
         NativeIntegrations.connectTool,
         NativeIntegrations.disconnectTool,
         ProjectTreeTools.info,

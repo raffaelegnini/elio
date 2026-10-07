@@ -24,8 +24,10 @@ public enum ClientMessage: Codable, Sendable {
     case prepare(id: String, text: String)
     /// Heard by an always-on mic (the phone app): handled only if it's meant for Elio.
     case ambient(id: String, text: String)
+    /// Rest mode on/off. From the Mac app it reports the state; from the phone it asks the app to switch.
+    case idle(Bool)
 
-    private enum CodingKeys: String, CodingKey { case type, id, text, name, args, approved }
+    private enum CodingKeys: String, CodingKey { case type, id, text, name, args, approved, on }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -45,6 +47,7 @@ public enum ClientMessage: Codable, Sendable {
         case "ambient": self = .ambient(id: try c.decode(String.self, forKey: .id), text: try c.decode(String.self, forKey: .text))
         case "confirm":
             self = .confirm(id: try c.decode(String.self, forKey: .id), approved: try c.decode(Bool.self, forKey: .approved))
+        case "idle": self = .idle(try c.decode(Bool.self, forKey: .on))
         case let other:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown type \(other)")
         }
@@ -78,6 +81,8 @@ public enum ClientMessage: Codable, Sendable {
             try c.encode("ambient", forKey: .type); try c.encode(id, forKey: .id); try c.encode(text, forKey: .text)
         case .confirm(let id, let approved):
             try c.encode("confirm", forKey: .type); try c.encode(id, forKey: .id); try c.encode(approved, forKey: .approved)
+        case .idle(let on):
+            try c.encode("idle", forKey: .type); try c.encode(on, forKey: .on)
         }
     }
 }

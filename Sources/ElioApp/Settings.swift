@@ -27,6 +27,7 @@ final class SettingsModel {
         Brand.shared.apply(config)
         WakeWord.configure(name: config.assistantName, aliases: config.wakeAliases)
         loop?.applySettings(config)
+        ElioApp.delegate.idle.apply(config)
         loop?.requestDaemonReload()
         saved = true
         Task { try? await Task.sleep(for: .seconds(2)); saved = false }
@@ -318,6 +319,7 @@ private struct GeneralSettings: View {
                     .disabled(model.config.persona.isEmpty)
             }
         }
+        RestSettings(model: model)
         Group(title: "Aspetto") {
             HStack {
                 Text("Colore accento").font(.system(size: 12.5)).foregroundStyle(Theme.text).frame(width: 190, alignment: .leading)
@@ -331,6 +333,39 @@ private struct GeneralSettings: View {
             Toggle("Progetti colorati per tecnologia (Magento, Laravel, React…)", isOn: Binding(
                 get: { model.config.stackColors },
                 set: { model.config.stackColors = $0; Brand.shared.stackColors = $0 }))
+                .font(.system(size: 12.5))
+        }
+    }
+}
+
+/// Rest mode: the Mac stays awake for background work, the screen goes off, Elio keeps quiet.
+private struct RestSettings: View {
+    @Bindable var model: SettingsModel
+    private let idle = ElioApp.delegate.idle
+
+    var body: some View {
+        Group(title: "Modalità riposo",
+              note: "A riposo il Mac resta sveglio per agenti e monitor, \(Brand.shared.name) non parla ad alta voce e ti scrive sul telefono. Fuori dalle ore di silenzio ti chiama per allarmi, problemi nei workflow e conferme. Esce da solo appena tocchi tastiera o mouse. Con il coperchio chiuso serve l'alimentatore e uno schermo esterno, altrimenti macOS va comunque in stop.") {
+            HStack {
+                Toggle("Riposo automatico", isOn: $model.config.idleAuto).font(.system(size: 12.5))
+                Spacer()
+                Button(idle.active ? "Esci dal riposo" : "Riposo adesso") { idle.toggle() }
+            }
+            Stepper("Dopo \(model.config.idleMinutes) minuti senza tastiera e mouse",
+                    value: $model.config.idleMinutes, in: 5...120, step: 5)
+                .font(.system(size: 12.5))
+                .disabled(!model.config.idleAuto)
+            HStack {
+                Text("Schermo").font(.system(size: 12.5)).foregroundStyle(Theme.text).frame(width: 190, alignment: .leading)
+                Picker("", selection: $model.config.idleScreen) {
+                    Text("Spento").tag("off")
+                    Text("Luminosità al minimo").tag("dim")
+                }
+                .labelsHidden()
+            }
+            Field(label: "Ore di silenzio: dalle", text: $model.config.quietStart, placeholder: "23:00")
+            Field(label: "Ore di silenzio: alle", text: $model.config.quietEnd, placeholder: "07:30")
+            Toggle("Resta in ascolto di \"\(Brand.shared.name)\" (per dirgli \"sono tornato\")", isOn: $model.config.idleListen)
                 .font(.system(size: 12.5))
         }
     }

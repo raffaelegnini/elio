@@ -223,6 +223,12 @@ final class MainMenu: NSObject, NSMenuDelegate {
         let always = own("Ascolto sempre attivo (\"\(name)…\")", #selector(toggleAlways))
         always.state = loop?.alwaysListening == true ? .on : .off
         m.addItem(always)
+        let rest = own("Modalità riposo", #selector(toggleRest))
+        rest.state = app.idle.active ? .on : .off
+        m.addItem(rest)
+        let auto = own("Riposo automatico dopo \(app.idle.config.idleMinutes) min", #selector(toggleAutoRest))
+        auto.state = app.idle.config.idleAuto ? .on : .off
+        m.addItem(auto)
         let silent = own("Workflow in silenzio (solo domande e problemi)", #selector(toggleSilent))
         silent.state = ElioConfig.load().workflowVoice == "silent" ? .on : .off
         m.addItem(silent)
@@ -395,6 +401,8 @@ final class MainMenu: NSObject, NSMenuDelegate {
     @objc private func plan() { loop?.submit(text: "Pianifichiamo la giornata: guarda la mia to-do list e l'agenda e aiutami a organizzarla.") }
     @objc private func toggleMute() { if let loop { loop.setMuted(!loop.muted) } }
     @objc private func toggleAlways() { if let loop { loop.alwaysListening.toggle() } }
+    @objc private func toggleRest() { app.idle.toggle() }
+    @objc private func toggleAutoRest() { app.idle.setAuto(!app.idle.config.idleAuto) }
     @objc private func toggleSilent() {
         let silent = ElioConfig.load().workflowVoice == "silent"
         Task { _ = await loop?.callTool("workflow_mode", ["mode": silent ? "talking" : "silent"]) }
