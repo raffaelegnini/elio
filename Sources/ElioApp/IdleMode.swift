@@ -140,6 +140,10 @@ final class IdleMode {
         restPage?.cancel(); restPage = nil
         RestScreen.shared.hide()
         restoreScreen()
+        // Back by voice, from the phone or a switch: the display slept on its own and nothing woke it (a key or
+        // the mouse would have). Light it up; if the Mac locks on display sleep, the lock screen shows.
+        var wake: IOPMAssertionID = 0
+        IOPMAssertionDeclareUserActivity("Elio: fine del riposo" as CFString, kIOPMUserActiveLocal, &wake)
         if assertion != 0 {
             IOPMAssertionRelease(assertion)
             assertion = 0
