@@ -44,6 +44,7 @@ public enum SelfTools {
         "idleAuto": ("modalità riposo automatica dopo idleMinutes senza tastiera e mouse", false),
         "idleMinutes": ("minuti di inattività prima del riposo automatico (5–120)", false),
         "idleScreen": ("schermo a riposo: off (spento) o dim (luminosità al minimo)", false),
+        "restScreenMinutes": ("minuti della schermata «a riposo» prima che lo schermo si spenga (0 = subito, max 30)", false),
         "quietStart": ("ore di silenzio: dalle (HH:mm), a riposo non sveglia il Mac nemmeno per le urgenze", false),
         "quietEnd": ("ore di silenzio: alle (HH:mm)", false),
         "idleListen": ("a riposo il microfono resta in ascolto della parola di attivazione", false),

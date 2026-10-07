@@ -28,6 +28,8 @@ final class IdleMode {
     @ObservationIgnored private var poll: Timer?
     @ObservationIgnored private var pendingEnter: Task<Void, Never>?
     @ObservationIgnored private var rescreen: Task<Void, Never>?
+    /// The "Elio a riposo" page phase: the screen goes off when it ends.
+    @ObservationIgnored private var restPage: Task<Void, Never>?
     /// When Elio last woke the screen itself: that's not the user coming back.
     @ObservationIgnored private var selfWake = Date.distantPast
     /// Left rest mode without touching the Mac (from the phone, by voice): the idle timer starts over from here.
@@ -107,7 +109,20 @@ final class IdleMode {
             loop.setMuted(true, persist: false)
         }
         app?.setResting(true)
-        applyScreen()
+        let minutes = min(max(config.restScreenMinutes, 0), 30)
+        if minutes > 0 {
+            // First the rest page (sleeping orb, time, what's running), then the screen goes off/dim.
+            RestScreen.shared.show(loop: loop, held: { [weak self] in self?.held.count ?? 0 })
+            restPage = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Double(minutes) * 60))
+                guard !Task.isCancelled, let self, self.active else { return }
+                RestScreen.shared.hide()
+                self.selfWake = Date()
+                self.applyScreen()
+            }
+        } else {
+            applyScreen()
+        }
         schedulePoll()
     }
 
@@ -122,6 +137,8 @@ final class IdleMode {
         since = nil
         lastExit = Date()
         rescreen?.cancel()
+        restPage?.cancel(); restPage = nil
+        RestScreen.shared.hide()
         restoreScreen()
         if assertion != 0 {
             IOPMAssertionRelease(assertion)
@@ -141,6 +158,8 @@ final class IdleMode {
     /// Quitting: never leave the screen dimmed or the assertion behind.
     func shutdown() {
         guard active else { return }
+        restPage?.cancel()
+        RestScreen.shared.hide()
         restoreScreen()
         if assertion != 0 { IOPMAssertionRelease(assertion); assertion = 0 }
         if mutedByRest { loop?.setMuted(false, persist: false) }

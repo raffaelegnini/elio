@@ -92,6 +92,8 @@ public struct ElioConfig: Codable, Sendable {
     public var idleMinutes: Int = 15
     /// "off" (display asleep) or "dim" (built-in display at minimum brightness).
     public var idleScreen: String = "off"
+    /// Minutes of the full-screen "Elio a riposo" page before the screen actually goes off/dim (0 = straight away).
+    public var restScreenMinutes: Int = 5
     /// Hours when Elio never wakes the Mac or speaks on its own, even for urgent things (phone only). HH:mm.
     public var quietStart: String = "23:00"
     public var quietEnd: String = "07:30"
@@ -155,6 +157,7 @@ public struct ElioConfig: Codable, Sendable {
         idleAuto = try c.decodeIfPresent(Bool.self, forKey: .idleAuto) ?? d.idleAuto
         idleMinutes = try c.decodeIfPresent(Int.self, forKey: .idleMinutes) ?? d.idleMinutes
         idleScreen = try c.decodeIfPresent(String.self, forKey: .idleScreen) ?? d.idleScreen
+        restScreenMinutes = try c.decodeIfPresent(Int.self, forKey: .restScreenMinutes) ?? d.restScreenMinutes
         quietStart = try c.decodeIfPresent(String.self, forKey: .quietStart) ?? d.quietStart
         quietEnd = try c.decodeIfPresent(String.self, forKey: .quietEnd) ?? d.quietEnd
         idleListen = try c.decodeIfPresent(Bool.self, forKey: .idleListen) ?? d.idleListen

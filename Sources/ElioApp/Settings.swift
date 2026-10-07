@@ -363,6 +363,10 @@ private struct RestSettings: View {
                 }
                 .labelsHidden()
             }
+            Stepper(model.config.restScreenMinutes == 0 ? "Schermata «a riposo»: no, spegni subito lo schermo"
+                        : "Schermata «a riposo» per \(model.config.restScreenMinutes) minuti, poi lo schermo si spegne",
+                    value: $model.config.restScreenMinutes, in: 0...30)
+                .font(.system(size: 12.5))
             Field(label: "Ore di silenzio: dalle", text: $model.config.quietStart, placeholder: "23:00")
             Field(label: "Ore di silenzio: alle", text: $model.config.quietEnd, placeholder: "07:30")
             Toggle("Resta in ascolto di \"\(Brand.shared.name)\" (per dirgli \"sono tornato\")", isOn: $model.config.idleListen)
