@@ -142,6 +142,16 @@ final class WebServer: @unchecked Sendable {
             } catch {
                 send(conn, 500, "text/plain", Data("Non sono riuscito a salvare il file.".utf8))
             }
+        case ("POST", "/api/log"):
+            // The phone app's timings and audio errors (it has no console the user can see): one line each.
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            let line = String(decoding: req.body.prefix(2000), as: UTF8.self)
+                .replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
+            let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Elio/phone.log")
+            let entry = "[\(ISO8601DateFormatter().string(from: Date()))] \(SecretFilter.redact(line))\n"
+            if let h = try? FileHandle(forWritingTo: file) { h.seekToEndOfFile(); h.write(Data(entry.utf8)); try? h.close() }
+            else { try? Data(entry.utf8).write(to: file) }
+            send(conn, 204, "text/plain", Data())
         case ("POST", "/api/ack"):
             // The phone was opened or a call notification tapped: stop ringing.
             guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }

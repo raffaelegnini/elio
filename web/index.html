@@ -533,6 +533,8 @@ if (token) kvSet("token", token);
 const $ = id => document.getElementById(id);
 const icon = (name, cls = "") => `<svg class="ic ${cls}"><use href="#i-${name}"/></svg>`;
 const authHeaders = (json) => json ? { "Content-Type": "application/json", "X-Elio-Token": token } : { "X-Elio-Token": token };
+// Timings and audio errors go to the Mac (~/Library/Logs/Elio/phone.log): there's no console to look at on the phone.
+function plog(msg) { try { fetch("api/log", { method: "POST", headers: authHeaders(), body: String(msg).slice(0, 1500), keepalive: true }).catch(() => {}); } catch {} }
 const feed = $("feed"), tasksEl = $("tasks");
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let ws = null, state = "connessione…", level = 0, current = null;
@@ -629,6 +631,7 @@ function handle(m) {
   if (m.type === "event") return handleEvent(m);
   if (!current || m.id !== current.id) return;
   if (m.type === "delta") {
+    if (!current.firstAt) { current.firstAt = performance.now(); if (current.sentAt) plog(`first sentence after ${Math.round(current.firstAt - current.sentAt)}ms`); }
     // Whole sentences arrive as Elio writes them (between one tool and the next): say each one right away.
     current.text += m.text || "";
     current.el.querySelector(".text").textContent = current.text;
@@ -636,6 +639,7 @@ function handle(m) {
     speak((m.text || "").trim());
     current.spoken = current.text.length;
   } else if (m.type === "done") {
+    if (current.sentAt) plog(`done after ${Math.round(performance.now() - current.sentAt)}ms route=${m.route} server=${m.latencyMs}ms voice=${voiceOn} ambient=${!!current.ambient}`);
     if (current.ambient && !m.text && !current.text) {
       // Not for Elio: nothing to show.
       current.el.remove(); current.userEl && current.userEl.remove(); current = null;
@@ -779,7 +783,7 @@ function say(text) {
   unlockAudio();
   const id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
   addMsg("user", text);
-  current = { id, text: "", el: addMsg("elio", "…") };
+  current = { id, text: "", el: addMsg("elio", "…"), sentAt: performance.now() };
   setState("thinking", "elaboro");
   send({ type: "say", id, text });
 }
@@ -967,6 +971,7 @@ function ttsBlob(text) {
     .then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); });
 }
 function speak(text) {
+  if (!voiceOn && text) plog("speak skipped: voice replies are off");
   if (!voiceOn || !text) { if (!ttsPlaying) setState("listening", "pronto"); return; }
   // Elio speaking now beats a message being listened to.
   if (audioOwner === "msg") stopMessage();
@@ -986,10 +991,12 @@ async function playNext() {
   const url = blob ? URL.createObjectURL(blob) : null;
   try {
     audioOwner = "tts";
+    const t0 = performance.now();
     audio.src = url || await ttsUrl(item.text);
     await audio.play();
+    plog(`tts playing after ${Math.round(performance.now() - t0)}ms (${url ? "prefetched" : "stream"}) muted=${audio.muted} vol=${audio.volume} mic=${!!(typeof stream !== "undefined" && stream && stream.getAudioTracks().some(t => t.readyState === "live"))} session=${navigator.audioSession ? navigator.audioSession.type : "n/a"}`);
     await new Promise(res => { ttsWake = res; audio.onended = res; audio.onerror = res; });
-  } catch (e) { console.warn("tts", e); }
+  } catch (e) { console.warn("tts", e); plog(`tts error ${e && e.name}: ${e && e.message}`); }
   if (url) URL.revokeObjectURL(url);
   if (gen !== ttsGen) return;
   playNext();
@@ -1071,7 +1078,9 @@ async function upload() {
   setState("thinking", "trascrivo");
   $("partial").textContent = "…";
   try {
+    const t0 = performance.now();
     const r = await fetch("stt", { method: "POST", headers: { "Content-Type": blob.type, "X-Elio-Token": token }, body: blob });
+    plog(`stt ${r.status} ${Math.round(performance.now() - t0)}ms ${Math.round(blob.size / 1024)}KB ${blob.type}`);
     if (!r.ok) throw new Error(r.status);
     const { text } = await r.json();
     $("partial").textContent = "";
@@ -1222,7 +1231,9 @@ function endSegment(send) {
     if (!send || blob.size < 6000) { if (state === "hearing") setState("listening", "pronto"); return; }
     setState("thinking", "trascrivo");
     try {
-      const r = await fetch("stt", { method: "POST", headers: { "Content-Type": blob.type, "X-Elio-Token": token }, body: blob });
+      const t0 = performance.now();
+    const r = await fetch("stt", { method: "POST", headers: { "Content-Type": blob.type, "X-Elio-Token": token }, body: blob });
+    plog(`stt ${r.status} ${Math.round(performance.now() - t0)}ms ${Math.round(blob.size / 1024)}KB ${blob.type}`);
       const { text } = await r.json();
       if (text && text.split(/\s+/).length >= 2) sayAmbient(text); else setState("listening", "pronto");
     } catch { setState("listening", "pronto"); }
@@ -1233,7 +1244,7 @@ function sayAmbient(text) {
   unlockAudio();
   const id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
   const userEl = addMsg("user", text);
-  current = { id, text: "", el: addMsg("elio", "…"), ambient: true, userEl };
+  current = { id, text: "", el: addMsg("elio", "…"), ambient: true, userEl, sentAt: performance.now() };
   setState("thinking", "elaboro");
   send({ type: "ambient", id, text });
 }

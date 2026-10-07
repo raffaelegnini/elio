@@ -786,6 +786,9 @@ public final class VoiceLoop {
             }
         } else if let afterWake = WakeWord.strip(text) {
             command = afterWake
+        } else if resting, let back = Self.restReturn(text) {
+            // At rest, "sono tornato" / "eccomi" is enough: the recognizer often hears "Elio" as "E io".
+            command = back
         } else {
             prepKey = nil
             if pendingCommand != nil { schedulePendingFlush(after: 0.3) }
@@ -818,6 +821,16 @@ public final class VoiceLoop {
             return
         }
         continueOrSend(command, cutByLimit: Date().timeIntervalSince(utteranceBegan) >= 44)
+    }
+
+    /// "Sono tornato", "eccomi", "rieccomi"… at the start of what was heard, also after a misheard "Elio"
+    /// ("E io", "Ellio", "Helio"). Returns the phrase without that prefix.
+    static func restReturn(_ text: String) -> String? {
+        var t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        t = t.replacingOccurrences(of: #"^(e io|eh io|ehi o|ellio|elio|helio|hello|e lio|ei o)[ ,]*"#, with: "", options: .regularExpression)
+        guard t.range(of: #"^(sono tornat[oa]|sono qui|ci sono|eccomi|rieccomi|son tornat[oa]|torno|svegliati)\b"#, options: .regularExpression) != nil,
+              t.split(separator: " ").count <= 8 else { return nil }
+        return t
     }
 
     // MARK: - Daemon
