@@ -77,7 +77,10 @@ public enum AgentSandbox {
         } else {
             sandbox["filesystem"] = [
                 "allowWrite": [agentCache.path],
-                "denyWrite": secrets() + autorun,
+                // Inside the project (relative paths = the agent's folder): what git or the shell run later on their
+                // own — hooks and repo config (fsmonitor, aliases, filters). (.envrc needs no entry: direnv runs a new or
+                // changed one only after `direnv allow`.)
+                "denyWrite": secrets() + autorun + ["./.git/hooks", "./.git/config", "./.git/info/attributes"],
                 "denyRead": secrets(),
             ]
             sandbox["network"] = ["allowedDomains": developerDomains, "allowLocalBinding": true]
