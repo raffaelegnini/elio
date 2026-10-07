@@ -19,4 +19,34 @@ struct GitGuardTests {
         #expect(!FileManager.default.fileExists(atPath: git + "/hooks/pre-commit"))
         #expect(try String(contentsOfFile: git + "/config", encoding: .utf8) == config)
     }
+
+    @Test func neverFollowsASymlinkedHooksFolder() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("gitguard-\(UUID().uuidString)").path
+        let dir = base + "/repo", victim = base + "/victim"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: victim, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        _ = GitSafety.run(dir, ["init", "-q"])
+        try "keep".write(toFile: victim + "/important.plist", atomically: true, encoding: .utf8)
+        let snap = try #require(GitGuard.snapshot(dir))
+        try FileManager.default.removeItem(atPath: dir + "/.git/hooks")
+        try FileManager.default.createSymbolicLink(atPath: dir + "/.git/hooks", withDestinationPath: victim)
+        let msg = try #require(snap.verifyAndRestore())
+        #expect(msg.contains("simbolici"))
+        #expect(FileManager.default.fileExists(atPath: victim + "/important.plist"))
+    }
+
+    @Test func secondAgentKeepsTheFirstBaseline() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("gitguard-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        _ = GitSafety.run(dir, ["init", "-q"])
+        GitGuards.shared.begin(agent: "a", cwd: dir)
+        try "#!/bin/sh\n".write(toFile: dir + "/.git/hooks/pre-commit", atomically: true, encoding: .utf8)
+        GitGuards.shared.begin(agent: "b", cwd: dir)   // must not adopt the planted hook as "original"
+        _ = GitGuards.shared.end(agent: "a")
+        try "#!/bin/sh\n".write(toFile: dir + "/.git/hooks/pre-commit", atomically: true, encoding: .utf8)
+        #expect(GitGuards.shared.end(agent: "b") != nil)
+        #expect(!FileManager.default.fileExists(atPath: dir + "/.git/hooks/pre-commit"))
+    }
 }
