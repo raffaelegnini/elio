@@ -1228,42 +1228,34 @@ public enum TaskTools {
 }
 
 
-/// "Don't ask again for this" without a button: once the user approves a kind of action for an agent (osascript on
-/// iTerm, running tests outside the sandbox, editing files in a folder), the same kind of action by the same agent
+/// "Don't ask again for this" without a button: once the user approves an action for an agent, the very same action
+/// by the same agent (an agent re-reading iTerm every few minutes, re-running the same check outside the sandbox)
 /// doesn't ask again until the agent ends (or for 3 hours). Only ordinary confirmations: what the rules mark as
-/// dangerous (push, deletes, sends) asks every time. The kind is the programs involved (with the subcommand for
-/// git/npm-style tools) — so approving `git status` never covers `git push` — or the folder for file edits.
+/// dangerous (push, deletes, sends) asks every time.
 public final class ApprovalMemory: @unchecked Sendable {
     public static let shared = ApprovalMemory()
     private let lock = NSLock()
     private var approved: [String: (kinds: Set<String>, at: Date)] = [:]
 
-    static let withSubcommand: Set<String> = ["git", "npm", "pnpm", "yarn", "bun", "composer", "php", "docker", "herd",
-                                              "valet", "brew", "swift", "cargo", "go", "pip", "pip3", "python3", "node",
-                                              "kubectl", "gh", "ddev", "artisan", "bin/magento", "osascript", "defaults", "launchctl"]
-
-    /// What kind of action this is; nil when it can't be told safely (then nothing is remembered or covered).
+    /// The exact action, normalized: the same command (whitespace aside, inside or outside the sandbox), the same
+    /// file, the same tool call. Never a family of commands — a remembered `write text "ls"` to iTerm must not cover
+    /// `write text "rm -rf ~"`. The case that matters is an agent repeating the very same check every few minutes.
     static func kinds(tool: String, input: [String: Any]) -> Set<String>? {
         switch tool {
         case "Bash":
-            guard let cmd = input["command"] as? String, !cmd.contains("$("), !cmd.contains("`") else { return nil }
+            guard let cmd = input["command"] as? String else { return nil }
+            let normalized = cmd.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
+            guard !normalized.isEmpty, normalized.count <= 2000 else { return nil }
             let outside = input["dangerouslyDisableSandbox"] as? Bool == true ? "!" : ""
-            var out: Set<String> = []
-            for part in cmd.splitOutsideQuotes(";|&\n") {
-                let words = part.trimmingCharacters(in: .whitespaces).split(separator: " ").map(String.init)
-                    .drop { $0.contains("=") && !$0.hasPrefix("-") }
-                guard let first = words.first else { continue }
-                let prog = (first as NSString).lastPathComponent
-                if prog == "cd" { continue }
-                let sub = words.dropFirst().first { !$0.hasPrefix("-") } ?? ""
-                out.insert(outside + (withSubcommand.contains(prog) ? "\(prog) \(sub)" : prog))
-            }
-            return out.isEmpty ? nil : out
+            return [outside + "bash:" + normalized]
         case "Edit", "Write", "MultiEdit", "NotebookEdit":
-            guard let path = (input["file_path"] as? String) ?? (input["notebook_path"] as? String), !path.isEmpty else { return nil }
-            return ["write:" + (path as NSString).deletingLastPathComponent]
+            // Each edit is different content: only the very same edit (rare) is covered.
+            guard let data = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]) else { return nil }
+            return ["\(tool):" + String(decoding: data, as: UTF8.self)]
         default:
-            return [tool]
+            guard let data = try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]) else { return nil }
+            return ["\(tool):" + String(decoding: data, as: UTF8.self)]
         }
     }
 
