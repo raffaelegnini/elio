@@ -493,7 +493,10 @@ public enum ShellCommandClassifier {
         let positional = words.dropFirst().filter { !$0.hasPrefix("-") && $0.range(of: #"^[0-9]+$"#, options: .regularExpression) == nil }
         switch name {
         case "head", "tail", "wc": return positional.isEmpty
-        case "grep": return positional.count == 1   // the pattern
+        case "grep":
+            // Only matching flags: -r/-R/-d/-f/--include… make grep read files instead of the pipe.
+            let flags = words.dropFirst().filter { $0.hasPrefix("-") }
+            return positional.count == 1 && flags.allSatisfy { $0.count > 1 && !$0.hasPrefix("--") && $0.dropFirst().allSatisfy { "invcwxEFHhoI".contains($0) } }
         default: return false
         }
     }
