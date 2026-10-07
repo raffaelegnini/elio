@@ -159,10 +159,52 @@ final class WebServer: @unchecked Sendable {
             send(conn, 200, "application/json", Data("{\"ok\":true}".utf8))
         case ("POST", "/push/test"):
             guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
-            let n = WebPush.shared.subscriptions.count
+            let n = PhonePush.deviceCount
             guard n > 0 else { return send(conn, 409, "text/plain", Data("Nessun telefono iscritto alle notifiche.".utf8)) }
-            WebPush.shared.send(title: "Elio", body: "Prova: le notifiche funzionano.", tag: "test")
+            PhonePush.send(title: "Elio", body: "Prova: le notifiche funzionano.", tag: "test")
             send(conn, 200, "application/json", Data("{\"ok\":true,\"devices\":\(n)}".utf8))
+        case ("POST", "/api/apns/register"):
+            // The native iPhone app: APNs token (alerts) and PushKit token (calls).
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            guard let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
+                  let token = obj["token"] as? String else {
+                return send(conn, 400, "application/json", Self.json(["ok": false, "error": "token mancante"]))
+            }
+            do {
+                let device = try APNsRegistry.shared.register(
+                    token: token, voipToken: obj["voipToken"] as? String,
+                    bundleId: obj["bundleId"] as? String ?? ElioConfig.load().apnsBundleId,
+                    env: obj["env"] as? String ?? "production")
+                send(conn, 200, "application/json", Self.json(["ok": true, "devices": APNsRegistry.shared.devices.count,
+                                                               "voip": device.voipToken != nil, "configured": APNs.isConfigured]))
+            } catch {
+                send(conn, 400, "application/json", Self.json(["ok": false, "error": "\(error)"]))
+            }
+        case ("POST", "/api/call/test"):
+            // "Chiama di prova" from the Mac's Settings.
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            guard APNs.shared.canCall else {
+                return send(conn, 409, "application/json", Self.json(["ok": false, "error": "Nessuna app iPhone che può squillare, o APNs non configurato."]))
+            }
+            guard let call = await PhoneCalls.shared.start(text: "Prova: questa è una chiamata di \(config.assistantName). Funziona.",
+                                                           title: "Chiamata di prova", phone: true) else {
+                return send(conn, 502, "application/json", Self.json(["ok": false, "error": APNs.lastResult?.text ?? "invio non riuscito"]))
+            }
+            send(conn, 200, "application/json", Data("{\"ok\":true,\"call\":\(call.jsonString())}".utf8))
+        case ("POST", "/api/call/answer"), ("POST", "/api/call/decline"), ("POST", "/api/call/end"):
+            // CallKit on the iPhone: picked up (Mac stops ringing), declined (urgent push + inbox), hung up.
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            guard let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
+                  let id = obj["id"] as? String, !id.isEmpty else {
+                return send(conn, 400, "application/json", Self.json(["ok": false, "error": "id mancante"]))
+            }
+            let call: PhoneCall? = switch req.path {
+            case "/api/call/answer": await PhoneCalls.shared.answer(id)
+            case "/api/call/decline": await PhoneCalls.shared.decline(id)
+            default: await PhoneCalls.shared.end(id)
+            }
+            guard let call else { return send(conn, 404, "application/json", Self.json(["ok": false, "error": "chiamata sconosciuta"])) }
+            send(conn, 200, "application/json", Data("{\"ok\":true,\"call\":\(SecretFilter.redact(call.jsonString()))}".utf8))
         case ("GET", "/push/key"):
             send(conn, 200, "application/json", Data("{\"key\":\"\(WebPush.shared.publicKey)\"}".utf8))
         case ("POST", "/push/subscribe"):
@@ -206,6 +248,10 @@ final class WebServer: @unchecked Sendable {
         default:
             send(conn, 405, "text/plain", Data("method not allowed".utf8))
         }
+    }
+
+    static func json(_ obj: [String: Any]) -> Data {
+        (try? JSONSerialization.data(withJSONObject: obj, options: .sortedKeys)) ?? Data("{}".utf8)
     }
 
     /// Phone voice → text with ElevenLabs Scribe (the key stays on the Mac).
@@ -302,7 +348,8 @@ final class WebServer: @unchecked Sendable {
     }
 
     private func send(_ conn: NWConnection, _ status: Int, _ type: String, _ body: Data, cache: Bool = false) {
-        let reason = [200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found", 405: "Method Not Allowed", 502: "Bad Gateway"][status] ?? "OK"
+        let reason = [200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found", 405: "Method Not Allowed",
+                      409: "Conflict", 502: "Bad Gateway"][status] ?? "OK"
         var head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
         head += cache ? "Cache-Control: max-age=3600\r\n" : "Cache-Control: no-cache\r\n"
         head += "X-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n"

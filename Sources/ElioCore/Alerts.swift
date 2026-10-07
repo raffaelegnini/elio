@@ -5,7 +5,7 @@ import Foundation
 /// - notify: said on the Mac (or the phone, wherever the user is); pushed to the phone if they're away
 ///   or don't react within a couple of minutes.
 /// - call: something they asked to be called for (the meeting break is over): the Mac rings and speaks,
-///   the phone gets an urgent push right away, repeated until they're back.
+///   the iPhone app rings like a phone call (PhoneCalls), or the phone gets urgent pushes until they're back.
 public enum Urgency: String, Codable, Sendable, CaseIterable {
     case message, notify, call
 }
@@ -76,6 +76,10 @@ public actor Alerts {
 
     /// The phone saw it: stop ringing.
     public func acknowledge() { lastAck = Date() }
+    public var lastAcknowledged: Date { lastAck }
+
+    /// Events from outside the alert paths (a call answered on the phone).
+    public func emit(_ message: ServerMessage) { broadcast?(message) }
 
     /// `phone`: the user asked to get it on the phone, whatever they're doing.
     public func send(_ text: String, title: String, urgency: Urgency, source: String? = nil, phone: Bool = false) async {
@@ -86,15 +90,18 @@ public actor Alerts {
             broadcast?(ServerMessage(type: .event, text: title, lang: .it, kind: "message", payload: m.jsonString(), speak: false))
             let n = await MessageBox.shared.unread
             // One quiet notification that gets replaced, not one per message.
-            WebPush.shared.send(title: n > 1 ? "\(n) messaggi da Elio" : "Messaggio da Elio", body: title,
-                                tag: "messages", urgency: "low")
+            PhonePush.send(title: n > 1 ? "\(n) messaggi da Elio" : "Messaggio da Elio", body: title,
+                           tag: "messages", urgency: "low", badge: n)
         case .notify:
             broadcast?(ServerMessage(type: .event, text: clean, lang: .it, kind: "watch", speak: true))
-            if phone { WebPush.shared.send(title: title, body: String(clean.prefix(400)), tag: "watch-\(UUID().uuidString.prefix(6))") }
+            if phone { PhonePush.send(title: title, body: String(clean.prefix(400)), tag: "watch-\(UUID().uuidString.prefix(6))") }
         case .call:
             let started = Date()
             broadcast?(ServerMessage(type: .event, text: clean, lang: .it, kind: "alarm", speak: true))
             let tag = "call-\(UUID().uuidString.prefix(6))"
+            // The native iPhone app rings for real (CallKit): no repeated pushes then.
+            // Quiet hours (unless `phone`) or no app that can ring: urgent notifications as before.
+            if await PhoneCalls.shared.start(text: clean, title: title, phone: phone, at: started) != nil { return }
             // Rings on the phone too, right away, then again while nobody reacts (Mac untouched, phone not opened).
             Task {
                 for attempt in 0..<4 {
@@ -104,8 +111,8 @@ public actor Alerts {
                         let acked = await self.lastAck > started
                         if back || acked { return }
                     }
-                    WebPush.shared.send(title: attempt == 0 ? title : "\(title) (ancora)", body: String(clean.prefix(400)),
-                                        tag: tag, urgency: "high")
+                    PhonePush.send(title: attempt == 0 ? title : "\(title) (ancora)", body: String(clean.prefix(400)),
+                                   tag: tag, urgency: "high")
                 }
             }
         }
@@ -134,8 +141,8 @@ public enum AlertTools {
         name: "notify_user",
         description: """
         Avvisa l'utente adesso. urgency: notify (lo dici sul Mac, o sul telefono se è via o non risponde entro due \
-        minuti), call (squilla sul Mac e notifica urgente ripetuta sul telefono finché non risponde: solo se ha chiesto \
-        "chiamami"/"avvisami subito"), message (casella Messaggi, da sentire dopo). phone = true se ha chiesto di riceverlo \
+        minuti), call (squilla sul Mac e chiama l'app iPhone, o notifica urgente ripetuta sul telefono finché non risponde: \
+        solo se ha chiesto "chiamami"/"avvisami subito"), message (casella Messaggi, da sentire dopo). phone = true se ha chiesto di riceverlo \
         sul telefono.
         """,
         properties: ["text": prop("Cosa dire"), "title": prop("Titolo breve della notifica"),

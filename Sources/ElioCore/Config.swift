@@ -99,6 +99,11 @@ public struct ElioConfig: Codable, Sendable {
     public var quietEnd: String = "07:30"
     /// The mic keeps listening for the wake word while at rest ("Elio, sono tornato").
     public var idleListen: Bool = true
+    /// Native iPhone app (APNs, token auth): Apple Developer Team ID and the Key ID of the .p8 key
+    /// (the key itself is in the Keychain, service elio-apns-key), and the app's bundle id.
+    public var apnsTeamId: String = ""
+    public var apnsKeyId: String = ""
+    public var apnsBundleId: String = "it.dnafactory.elio.phone"
 
     public init() {}
 
@@ -161,6 +166,9 @@ public struct ElioConfig: Codable, Sendable {
         quietStart = try c.decodeIfPresent(String.self, forKey: .quietStart) ?? d.quietStart
         quietEnd = try c.decodeIfPresent(String.self, forKey: .quietEnd) ?? d.quietEnd
         idleListen = try c.decodeIfPresent(Bool.self, forKey: .idleListen) ?? d.idleListen
+        apnsTeamId = try c.decodeIfPresent(String.self, forKey: .apnsTeamId) ?? d.apnsTeamId
+        apnsKeyId = try c.decodeIfPresent(String.self, forKey: .apnsKeyId) ?? d.apnsKeyId
+        apnsBundleId = try c.decodeIfPresent(String.self, forKey: .apnsBundleId) ?? d.apnsBundleId
     }
 
     static func defaultClaudePath() -> String {

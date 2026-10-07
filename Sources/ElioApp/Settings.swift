@@ -788,10 +788,98 @@ private struct PhoneSettings: View {
                 }
             }
         }
+        NativePhoneSettings(model: model)
         Group(title: "Notifiche (ntfy)", note: "Arrivano solo quando sei lontano dal Mac (schermo bloccato o inattivo).") {
             Field(label: "Topic ntfy", text: $model.config.ntfyTopic)
         }
         .onAppear { status = PhoneSetup.status(config: model.config) }
+    }
+}
+
+/// The native iPhone app: Apple push (APNs) for notifications, PushKit + CallKit for real calls.
+/// The .p8 key goes straight to the Keychain and is never shown again.
+private struct NativePhoneSettings: View {
+    @Bindable var model: SettingsModel
+    @State private var keyStored = false
+    @State private var status = ""
+    @State private var result = ""
+
+    var body: some View {
+        Group(title: "App iPhone (notifiche e chiamate)",
+              note: "Nel portale Apple Developer: crea una chiave APNs (Keys → Apple Push Notifications service), scarica il file .p8 e annota il Key ID; il Team ID è in Membership. La stessa chiave vale per notifiche e chiamate VoIP. Dopo aver cambiato Team ID, Key ID o bundle id premi Salva e applica.") {
+            Field(label: "Team ID", text: $model.config.apnsTeamId, placeholder: "ABCDE12345")
+            Field(label: "Key ID", text: $model.config.apnsKeyId, placeholder: "XYZ9876543")
+            HStack {
+                Text("Chiave APNs (.p8)").font(.system(size: 12.5)).foregroundStyle(Theme.text).frame(width: 190, alignment: .leading)
+                Button("Scegli file .p8…", action: chooseKey)
+                Image(systemName: keyStored ? "checkmark.seal.fill" : "seal").foregroundStyle(keyStored ? .green : Theme.dim)
+                Text(keyStored ? "salvata nel Portachiavi" : "mancante").font(.system(size: 12)).foregroundStyle(Theme.dim)
+                if keyStored {
+                    Button("Rimuovi") { SharedKeychain.set("", service: APNs.keyService); refresh() }.controlSize(.small)
+                }
+            }
+            Field(label: "Bundle id dell'app", text: $model.config.apnsBundleId, placeholder: "it.dnafactory.elio.phone")
+            Text(status).font(.system(size: 12)).foregroundStyle(Theme.dim).textSelection(.enabled)
+            HStack {
+                Button("Invia notifica di prova") { Task { await test("/push/test") } }
+                Button("Chiama di prova") { Task { await test("/api/call/test") } }
+                if !result.isEmpty { Text(result).font(.system(size: 12)).foregroundStyle(Theme.dim).lineLimit(2) }
+            }
+        }
+        .onAppear(perform: refresh)
+    }
+
+    private func refresh() {
+        keyStored = SharedKeychain.has(APNs.keyService)
+        let devices = APNsRegistry.shared.devices
+        let callers = devices.filter { $0.voipToken != nil }.count
+        var line = devices.isEmpty ? "Nessun iPhone registrato: apri l'app Elio sul telefono e consenti le notifiche."
+            : "iPhone registrati: \(devices.count) (\(callers) per le chiamate)"
+        if let last = APNs.lastResult {
+            line += "\nUltimo invio (\(last.at.formatted(date: .omitted, time: .shortened))): \(last.text)"
+        }
+        status = line
+    }
+
+    private func chooseKey() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Usa questa chiave"
+        panel.message = "Scegli la chiave APNs scaricata dal portale Apple Developer (AuthKey_XXXXXXXXXX.p8)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let pem = try? String(contentsOf: url, encoding: .utf8), (try? APNsCredentials.parseKey(pem)) != nil else {
+            result = "Il file non è una chiave .p8 valida."
+            return
+        }
+        SharedKeychain.set(pem.trimmingCharacters(in: .whitespacesAndNewlines), service: APNs.keyService)
+        // AuthKey_<KEYID>.p8: the Key ID comes with the file name.
+        let name = url.deletingPathExtension().lastPathComponent
+        if model.config.apnsKeyId.isEmpty, name.hasPrefix("AuthKey_") { model.config.apnsKeyId = String(name.dropFirst(8)) }
+        result = "Chiave salvata nel Portachiavi."
+        refresh()
+    }
+
+    /// Through the daemon, which owns the call state (the phone answers to it).
+    private func test(_ path: String) async {
+        guard let token = try? AuthToken.loadOrCreateRemote(),
+              let url = URL(string: "http://127.0.0.1:\(model.config.webPort)\(path)") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue(token, forHTTPHeaderField: "X-Elio-Token")
+        req.httpBody = Data("{}".utf8)
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            let error = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+            result = code == 200 ? (path == "/push/test" ? "Notifica inviata." : "Il telefono dovrebbe squillare.")
+                : error ?? String(decoding: data.prefix(200), as: UTF8.self)
+        } catch {
+            result = "Elio non risponde sul Mac (il servizio è avviato?)."
+        }
+        try? await Task.sleep(for: .seconds(2))
+        refresh()
     }
 }
 

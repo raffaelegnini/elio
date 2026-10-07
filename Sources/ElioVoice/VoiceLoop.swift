@@ -251,6 +251,8 @@ public final class VoiceLoop {
     private var bargeCandidate = false
     /// What Elio is saying right now (to tell its own echo from the user's stop words).
     private var spokenText = ""
+    /// When the user last picked up an Elio call on the iPhone (the Mac alarm then goes quiet).
+    private var callAnsweredAt: Date?
     /// Spoken sentences left for the current reply; the rest is only shown on screen.
     private var sentenceBudget = 2
 
@@ -1099,16 +1101,24 @@ public final class VoiceLoop {
             guard let text = msg.text else { return }
             turns.append(Turn(role: "event", text: text, route: msg.route))
             trimTurns()
+            let rang = Date()
             Task { @MainActor [weak self] in
                 for _ in 0..<3 {
+                    // Picked up on the iPhone: the Mac stops ringing and leaves it to the phone.
+                    if let at = self?.callAnsweredAt, at >= rang { return }
                     NSSound(named: "Glass")?.play()
                     try? await Task.sleep(for: .milliseconds(650))
                 }
                 try? await Task.sleep(for: .milliseconds(400))
                 guard let self else { return }
+                if let at = self.callAnsweredAt, at >= rang { return }
                 self.spokenText = text
                 self.speaker.say(text, lang: msg.lang)
             }
+            return
+        case "callAnswered":
+            callAnsweredAt = Date()
+            if speaker.isSpeaking, spokenText == msg.text { speaker.stop() }
             return
         case "card":
             if let c = CardPayload.fromJSON(msg.payload) {

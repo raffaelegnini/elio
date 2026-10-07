@@ -475,7 +475,9 @@ public actor Brain {
         - Avvisi e messaggi: notify_user avvisa adesso (urgency notify/call/message, phone se lo vuole sul telefono); \
         message_send lascia un messaggio nella casella Messaggi del telefono, da ascoltare con calma: usalo per esiti e \
         aggiornamenti poco importanti invece di interromperlo a voce. Se \(userName) è al Mac ma non risponde a qualcosa \
-        di importante per due minuti, la notifica arriva da sola sul telefono.
+        di importante per due minuti, la notifica arriva da sola sul telefono. call_user lo chiama adesso; con l'app \
+        iPhone l'urgency call (anche dei monitor: "chiamami quando…", "chiamami tra 10 minuti") fa squillare il telefono \
+        come una vera chiamata, tranne nelle ore di silenzio se non ha chiesto esplicitamente il telefono (phone).
 
         Skill: hai le skill \(ofUser) (strumento Skill: documenti Word/Excel/PowerPoint/PDF, Google Workspace e quelle \
         che aggiunge lui). Usale quando il compito corrisponde; le nuove compaiono da sole entro un minuto.

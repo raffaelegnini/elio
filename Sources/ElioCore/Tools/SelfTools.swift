@@ -48,6 +48,9 @@ public enum SelfTools {
         "quietStart": ("ore di silenzio: dalle (HH:mm), a riposo non sveglia il Mac nemmeno per le urgenze", false),
         "quietEnd": ("ore di silenzio: alle (HH:mm)", false),
         "idleListen": ("a riposo il microfono resta in ascolto della parola di attivazione", false),
+        "apnsTeamId": ("app iPhone: Team ID dell'account Apple Developer", false),
+        "apnsKeyId": ("app iPhone: Key ID della chiave APNs (.p8; la chiave si carica solo dalle Impostazioni)", false),
+        "apnsBundleId": ("app iPhone: bundle id (predefinito it.dnafactory.elio.phone)", false),
     ]
 
     static let get = ElioTool(

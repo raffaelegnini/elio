@@ -64,8 +64,8 @@ public final class PhoneNotifier: @unchecked Sendable {
         case "squadDone": "Squadra al traguardo"
         default: "Elio"
         }
-        // The phone app itself (Web Push); ntfy stays as a fallback channel.
-        WebPush.shared.send(title: title, body: String(SecretFilter.redact(text).prefix(400)), tag: kind)
+        // The phone apps (Web Push for the PWA, APNs for the native one); ntfy stays as a fallback channel.
+        PhonePush.send(title: title, body: String(SecretFilter.redact(text).prefix(400)), tag: kind)
         guard !topic.isEmpty else { return }
         var req = URLRequest(url: URL(string: "https://ntfy.sh/\(topic)")!)
         req.httpMethod = "POST"
