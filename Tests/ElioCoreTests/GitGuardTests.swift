@@ -49,4 +49,17 @@ struct GitGuardTests {
         #expect(GitGuards.shared.end(agent: "b") != nil)
         #expect(!FileManager.default.fileExists(atPath: dir + "/.git/hooks/pre-commit"))
     }
+
+    @Test func symlinkAlreadyThereAtStartIsReported() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("gitguard-\(UUID().uuidString)").path
+        let dir = base + "/repo"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        _ = GitSafety.run(dir, ["init", "-q"])
+        try FileManager.default.removeItem(atPath: dir + "/.git/hooks")
+        try FileManager.default.createSymbolicLink(atPath: dir + "/.git/hooks", withDestinationPath: base)
+        GitGuards.shared.begin(agent: "c", cwd: dir)
+        let msg = try #require(GitGuards.shared.end(agent: "c"))
+        #expect(msg.contains("già alla partenza"))
+    }
 }

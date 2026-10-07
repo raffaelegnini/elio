@@ -57,6 +57,39 @@ public struct GitGuard: Sendable {
         return files
     }
 
+    /// Replaces (or with nil deletes) one watched file without ever following a symlink, even one swapped in after
+    /// the checks above: the git dir and its subfolder are opened with O_NOFOLLOW and the file is unlinked and
+    /// recreated relative to those descriptors (O_EXCL: a name that reappears in between makes it fail, not follow).
+    static func rewrite(_ gitDir: String, _ rel: String, _ entry: Entry?) -> Bool {
+        let root = open(gitDir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard root >= 0 else { return false }
+        defer { close(root) }
+        let parts = rel.split(separator: "/").map(String.init)
+        guard let name = parts.last, parts.count <= 2 else { return false }
+        var dir = root
+        if parts.count == 2 {
+            dir = openat(root, parts[0], O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard dir >= 0 else { return false }
+        }
+        defer { if dir != root { close(dir) } }
+        if unlinkat(dir, name, 0) != 0 && errno != ENOENT { return false }
+        guard let entry else { return true }
+        let fd = openat(dir, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode_t(entry.mode & 0o777))
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let ok = entry.data.withUnsafeBytes { buf in
+            var off = 0
+            while off < buf.count {
+                let n = write(fd, buf.baseAddress! + off, buf.count - off)
+                if n <= 0 { return false }
+                off += n
+            }
+            return true
+        }
+        _ = fchmod(fd, mode_t(entry.mode & 0o777))
+        return ok
+    }
+
     /// Compares with now and restores what changed. Returns a short Italian description of what was undone, or
     /// of why it couldn't be checked safely (nil if nothing changed).
     public func verifyAndRestore() -> String? {
@@ -68,16 +101,15 @@ public struct GitGuard: Sendable {
             return "nella cartella .git ci sono collegamenti simbolici al posto di hook o configurazione: non li ho toccati, controlla tu prima di usare git"
         }
         var changed: [String] = []
+        var failed: [String] = []
         for (rel, entry) in files where now[rel] != entry {
-            let path = (gitDir as NSString).appendingPathComponent(rel)
-            // read() just verified the parents are real directories and the file isn't a symlink.
-            try? fm.removeItem(atPath: path)
-            fm.createFile(atPath: path, contents: entry.data, attributes: [.posixPermissions: entry.mode])
-            changed.append(rel)
+            if Self.rewrite(gitDir, rel, entry) { changed.append(rel) } else { failed.append(rel) }
         }
         for rel in now.keys where files[rel] == nil {
-            try? fm.removeItem(atPath: (gitDir as NSString).appendingPathComponent(rel))
-            changed.append(rel)
+            if Self.rewrite(gitDir, rel, nil) { changed.append(rel) } else { failed.append(rel) }
+        }
+        if !failed.isEmpty {
+            return "non sono riuscito a ripristinare in sicurezza " + failed.sorted().joined(separator: ", ") + " (forse un collegamento simbolico): controlla la cartella .git prima di usare git"
         }
         guard !changed.isEmpty else { return nil }
         return "ho annullato modifiche a " + changed.sorted().joined(separator: ", ")
@@ -93,11 +125,15 @@ public final class GitGuards: @unchecked Sendable {
     private var byAgent: [String: String] = [:]
 
     /// Called when an agent starts in `cwd`.
+    /// Repos that couldn't be snapshotted safely when an agent started (a symlink already in .git): reported when
+    /// that agent ends instead of silently skipping the check.
+    private var unsafeAtStart: [String: String] = [:]
+
     public func begin(agent: String, cwd: String) {
         guard let dir = GitGuard.gitDir(cwd) else { return }
         lock.withLock {
             if baselines[dir] == nil {
-                guard let g = GitGuard.snapshot(cwd) else { return }
+                guard let g = GitGuard.snapshot(cwd) else { unsafeAtStart[agent] = dir; return }
                 baselines[dir] = (g, [])
             }
             baselines[dir]?.agents.insert(agent)
@@ -109,6 +145,9 @@ public final class GitGuards: @unchecked Sendable {
     /// left. Returns what was undone, if anything.
     public func end(agent: String) -> String? {
         lock.withLock {
+            if let dir = unsafeAtStart.removeValue(forKey: agent) {
+                return "già alla partenza dell'agente nella cartella .git di \(dir) c'erano collegamenti simbolici al posto di hook o configurazione: non ho potuto controllarla, verifica tu prima di usare git"
+            }
             guard let dir = byAgent.removeValue(forKey: agent), let entry = baselines[dir] else { return nil }
             let undone = entry.guard.verifyAndRestore()
             baselines[dir]?.agents.remove(agent)
