@@ -62,4 +62,19 @@ struct GitGuardTests {
         let msg = try #require(GitGuards.shared.end(agent: "c"))
         #expect(msg.contains("già alla partenza"))
     }
+
+    @Test func linkedWorktreeGuardsTheCommonDir() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("gitguard-\(UUID().uuidString)").path
+        let main = base + "/main", wt = base + "/wt"
+        try FileManager.default.createDirectory(atPath: main, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        _ = GitSafety.run(main, ["init", "-q"])
+        _ = GitSafety.run(main, ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"])
+        _ = GitSafety.run(main, ["worktree", "add", "-q", wt])
+        GitGuards.shared.begin(agent: "w", cwd: wt)
+        try "#!/bin/sh\n".write(toFile: main + "/.git/hooks/post-checkout", atomically: true, encoding: .utf8)
+        let msg = try #require(GitGuards.shared.end(agent: "w"))
+        #expect(msg.contains("hooks/post-checkout"))
+        #expect(!FileManager.default.fileExists(atPath: main + "/.git/hooks/post-checkout"))
+    }
 }

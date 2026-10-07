@@ -14,7 +14,7 @@ public struct GitGuard: Sendable {
     let gitDir: String          // as resolved when the snapshot was taken
     let files: [String: Entry]  // path relative to gitDir → contents + permissions
 
-    static let watched = ["config", "info/attributes", "info/exclude", "commondir", "gitdir"]
+    static let watched = ["config", "config.worktree", "info/attributes", "info/exclude", "commondir", "gitdir"]
 
     /// The git directory `cwd` belongs to, resolved (nil when it isn't a repository).
     public static func gitDir(_ cwd: String) -> String? {
@@ -23,9 +23,25 @@ public struct GitGuard: Sendable {
         return URL(fileURLWithPath: out).resolvingSymlinksInPath().path
     }
 
-    public static func snapshot(_ cwd: String) -> GitGuard? {
-        guard let dir = gitDir(cwd), let files = read(dir) else { return nil }
+    /// The repository's own git dir and, for a linked worktree, the shared ("common") one where the main config
+    /// and hooks live. The common dir is the repository's identity: worktrees of one repo share a baseline.
+    public static func dirs(_ cwd: String) -> (key: String, dirs: [String])? {
+        guard let own = gitDir(cwd) else { return nil }
+        let raw = GitSafety.output(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"], timeout: 10)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let common = raw.hasPrefix("/") ? URL(fileURLWithPath: raw).resolvingSymlinksInPath().path : own
+        return (common, common == own ? [own] : [common, own])
+    }
+
+    static func snapshot(dir: String) -> GitGuard? {
+        guard let files = read(dir) else { return nil }
         return GitGuard(gitDir: dir, files: files)
+    }
+
+    /// Single-directory snapshot of the repository `cwd` belongs to (its own git dir).
+    public static func snapshot(_ cwd: String) -> GitGuard? {
+        guard let dir = gitDir(cwd) else { return nil }
+        return snapshot(dir: dir)
     }
 
     static func type(_ path: String) -> FileAttributeType? {
@@ -153,12 +169,14 @@ public struct GitGuard: Sendable {
     }
 }
 
-/// One baseline per repository while agents work in it: a second agent starting in the same repo must not take a
-/// snapshot of what the first one may already have changed (it would later "restore" a planted hook).
+/// One baseline per repository (keyed by its common git dir, so all its worktrees share it) while agents work in it:
+/// a second agent starting in the same repo must not take a snapshot of what the first one may already have changed
+/// (it would later "restore" a planted hook). A hooks folder set with core.hooksPath inside the project (husky,
+/// .githooks) is a tracked folder: changes there show up in the agent's diff like any other file.
 public final class GitGuards: @unchecked Sendable {
     public static let shared = GitGuards()
     private let lock = NSLock()
-    private var baselines: [String: (guard: GitGuard, agents: Set<String>)] = [:]
+    private var baselines: [String: (guards: [GitGuard], agents: Set<String>)] = [:]
     private var byAgent: [String: String] = [:]
 
     /// Called when an agent starts in `cwd`.
@@ -167,11 +185,12 @@ public final class GitGuards: @unchecked Sendable {
     private var unsafeAtStart: [String: String] = [:]
 
     public func begin(agent: String, cwd: String) {
-        guard let dir = GitGuard.gitDir(cwd) else { return }
+        guard let (dir, dirs) = GitGuard.dirs(cwd) else { return }
         lock.withLock {
             if baselines[dir] == nil {
-                guard let g = GitGuard.snapshot(cwd) else { unsafeAtStart[agent] = dir; return }
-                baselines[dir] = (g, [])
+                let snaps = dirs.compactMap { GitGuard.snapshot(dir: $0) }
+                guard snaps.count == dirs.count else { unsafeAtStart[agent] = dir; return }
+                baselines[dir] = (snaps, [])
             }
             baselines[dir]?.agents.insert(agent)
             byAgent[agent] = dir
@@ -186,7 +205,8 @@ public final class GitGuards: @unchecked Sendable {
                 return "già alla partenza dell'agente nella cartella .git di \(dir) c'erano collegamenti simbolici al posto di hook o configurazione: non ho potuto controllarla, verifica tu prima di usare git"
             }
             guard let dir = byAgent.removeValue(forKey: agent), let entry = baselines[dir] else { return nil }
-            let undone = entry.guard.verifyAndRestore()
+            let notes = entry.guards.compactMap { $0.verifyAndRestore() }
+            let undone = notes.isEmpty ? nil : notes.joined(separator: "; ")
             baselines[dir]?.agents.remove(agent)
             if baselines[dir]?.agents.isEmpty == true { baselines[dir] = nil }
             return undone
