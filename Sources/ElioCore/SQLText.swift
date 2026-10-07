@@ -444,6 +444,72 @@ public enum ShellCommandClassifier {
         return segments.allSatisfy(segmentIsReadOnly)
     }
 
+    /// Local system queries that only read (network addresses, listening ports, versions) plus `cd`, possibly
+    /// chained with `;` / `&&` / `|`: an agent asking to run these outside the sandbox doesn't need the user.
+    /// Every chained part must pass on its own; anything that expands, redirects or isn't listed doesn't.
+    public static func isLocalReadOnly(_ command: String) -> Bool {
+        guard let parts = splitChain(command), !parts.isEmpty else { return false }
+        for part in parts {
+            guard let segments = splitSegments(part), !segments.isEmpty else { return false }
+            for var words in segments {
+                if let p = words.first, ["/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/"].contains(where: { p.hasPrefix($0) }) {
+                    words[0] = (p as NSString).lastPathComponent
+                }
+                guard segmentIsReadOnly(words) || localQuery(words) else { return false }
+            }
+        }
+        return true
+    }
+
+    /// Splits on `;` and `&&` outside quotes (no `||`, no `&` background, no newlines).
+    static func splitChain(_ cmd: String) -> [String]? {
+        var parts: [String] = [], cur = ""
+        var quote: Character? = nil
+        let c = Array(cmd)
+        var i = 0
+        while i < c.count {
+            let ch = c[i]
+            if let q = quote { cur.append(ch); if ch == q { quote = nil }; i += 1; continue }
+            if ch == "'" || ch == "\"" { quote = ch; cur.append(ch); i += 1; continue }
+            if ch == ";" { parts.append(cur); cur = ""; i += 1; continue }
+            if ch == "&" {
+                guard i + 1 < c.count, c[i + 1] == "&" else { return nil }
+                parts.append(cur); cur = ""; i += 2; continue
+            }
+            cur.append(ch); i += 1
+        }
+        guard quote == nil else { return nil }
+        parts.append(cur)
+        let trimmed = parts.map { $0.trimmingCharacters(in: .whitespaces) }
+        return trimmed.contains(where: \.isEmpty) ? nil : trimmed
+    }
+
+    static func localQuery(_ words: [String]) -> Bool {
+        guard let name = words.first else { return false }
+        let args = Array(words.dropFirst())
+        let plain = args.allSatisfy { $0.range(of: #"^[A-Za-z0-9:@._,/+-]+$"#, options: .regularExpression) != nil }
+        guard plain else { return false }
+        switch name {
+        case "cd": return args.count <= 1 && !(args.first?.hasPrefix("-") ?? false)
+        case "echo": return !(args.first?.hasPrefix("-") ?? false) && args.count <= 20
+        case "sw_vers", "hostname", "whoami", "uptime", "arch", "date": return args.isEmpty
+        case "which": return args.count <= 5 && !args.contains { $0.hasPrefix("-") && $0 != "-a" }
+        case "ipconfig":
+            guard let sub = args.first else { return false }
+            return ["getifaddr", "getoption", "ifcount", "getsummary"].contains(sub) && args.count <= 3
+        case "ifconfig": return args.count <= 1 && !args.contains { $0.hasPrefix("-") && $0 != "-a" && $0 != "-l" }
+        case "lsof":
+            // Only options (it reads the kernel's tables): -i / -n / -P / -s TCP:LISTEN / -iTCP:80 …, never +flags or files.
+            return !args.isEmpty && args.allSatisfy { $0.hasPrefix("-") || $0.range(of: #"^[A-Z]+:[A-Z]+$"#, options: .regularExpression) != nil }
+                && !args.contains { $0.hasPrefix("-F") || $0.hasPrefix("-r") || $0.hasPrefix("+") }
+        case "netstat": return args.allSatisfy { $0.hasPrefix("-") && $0.dropFirst().allSatisfy { "anrlvWfp46".contains($0) } || ["inet", "inet6", "tcp", "udp"].contains($0) }
+        case "scutil": return args.count >= 1 && ["--dns", "--proxy", "--nwi"].contains(args[0]) && args.count == 1
+            || (args.count == 2 && args[0] == "--get" && ["ComputerName", "LocalHostName", "HostName"].contains(args[1]))
+        case "system_profiler": return args.allSatisfy { !$0.hasPrefix("-") || $0 == "-json" || $0 == "-detailLevel" || ["mini", "basic"].contains($0) } && args.count <= 4
+        default: return false
+        }
+    }
+
     /// Words of each `|`-separated command. nil when anything could expand, redirect, chain or run in background.
     static func splitSegments(_ cmd: String) -> [[String]]? {
         var segments: [[String]] = [], words: [String] = [], word = ""

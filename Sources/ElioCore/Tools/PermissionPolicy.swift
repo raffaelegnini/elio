@@ -27,6 +27,8 @@ public enum PermissionPolicy {
             let command = (input["command"] as? String) ?? ""
             // Asking to run outside the OS sandbox (more files, network) is always the user's call.
             if input["dangerouslyDisableSandbox"] as? Bool == true {
+                // Reading the Mac's own state (IP, listening ports, versions) needs no OK even outside the sandbox.
+                if ShellCommandClassifier.isLocalReadOnly(command) { return .allow }
                 let inner = decide(tool: tool, input: input.filter { $0.key != "dangerouslyDisableSandbox" }, cwd: cwd, onMac: onMac)
                 return inner == .confirm(.dangerous) ? inner : .confirm(.normal)
             }
