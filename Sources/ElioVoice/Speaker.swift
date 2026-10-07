@@ -206,6 +206,7 @@ public final class Speaker {
         jobs?.finish()
         consumer?.cancel()
         audio.player.stop()
+        rebuffer.reset()
         audio.player.play()
         pendingBuffers = 0
         utteranceOpen = false
@@ -248,8 +249,9 @@ public final class Speaker {
                         } else {
                             pending.append(buffer)
                             ready += Double(buffer.frameLength) / buffer.format.sampleRate
-                            if ready >= 0.3 {
+                            if ready >= 0.45 {
                                 started = true
+                                self.rebuffer.setOpen(true, player: self.audio.player)
                                 for b in pending { self.schedule(b, generation: gen) }
                                 pending = []
                             }
@@ -258,21 +260,32 @@ public final class Speaker {
                 } catch {
                     NSLog("Elio TTS job failed: \(error)")
                 }
-                if let self, self.generation == gen { for b in pending { self.schedule(b, generation: gen) } }
+                if let self, self.generation == gen {
+                    for b in pending { self.schedule(b, generation: gen) }
+                    // This item is complete: whatever is queued plays out, no waiting for more.
+                    self.rebuffer.setOpen(false, player: self.audio.player)
+                }
             }
         }
     }
 
+    private let rebuffer = Rebuffer()
+
     private func schedule(_ buffer: AVAudioPCMBuffer, generation gen: Int) {
         audio.ensureOutput()
         pendingBuffers += 1
+        let seconds = Double(buffer.frameLength) / buffer.format.sampleRate
+        let rebuffer = self.rebuffer, player = audio.player
         audio.player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            // Accounted on the audio thread, not after a hop to the (possibly busy) main thread.
+            rebuffer.played(seconds, player: player)
             Task { @MainActor in
                 guard let self, self.generation == gen else { return }
                 self.pendingBuffers -= 1
                 self.checkFinished()
             }
         }
+        rebuffer.added(seconds, player: player)
     }
 
     private func checkFinished() {
@@ -436,4 +449,49 @@ public enum Keychain {
               let data = item as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
+}
+
+
+/// Keeps a reply from stuttering when audio arrives late (a busy Mac, a slow network): if what's queued is about
+/// to run out while more is still coming, playback pauses for a moment and resumes once a little audio is ready
+/// again — a short clean pause instead of choppy sound. Counted on the audio thread; play/pause on its own queue.
+final class Rebuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "elio.voice.rebuffer", qos: .userInteractive)
+    private var queued: Double = 0
+    private var waiting = false
+    private var open = false
+    static let low = 0.06, resume = 0.35
+
+    func added(_ seconds: Double, player: AVAudioPlayerNode) {
+        let go = lock.withLock { () -> Bool in
+            queued += seconds
+            guard waiting, queued >= Self.resume || !open else { return false }
+            waiting = false
+            return true
+        }
+        if go { queue.async { player.play() } }
+    }
+
+    func played(_ seconds: Double, player: AVAudioPlayerNode) {
+        let pause = lock.withLock { () -> Bool in
+            queued = max(0, queued - seconds)
+            guard open, !waiting, queued < Self.low else { return false }
+            waiting = true
+            return true
+        }
+        if pause { queue.async { player.pause() } }
+    }
+
+    func setOpen(_ on: Bool, player: AVAudioPlayerNode) {
+        let go = lock.withLock { () -> Bool in
+            open = on
+            guard !on, waiting else { return false }
+            waiting = false
+            return true
+        }
+        if go { queue.async { player.play() } }
+    }
+
+    func reset() { lock.withLock { queued = 0; waiting = false; open = false } }
 }
