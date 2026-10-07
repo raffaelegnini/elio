@@ -37,6 +37,7 @@ public enum SelfTools {
         "maxSquadAgents": ("numero massimo di agenti per squadra", false),
         "squadModel": ("modello degli agenti di squadra, scout e coordinatore (sonnet/opus/haiku)", false),
         "speechPrep": ("si prepara mentre l'utente parla (sessione veloce di sola lettura)", false),
+        "screenGlance": ("allega uno screenshot alle richieste su ciò che l'utente sta guardando (cancellato dopo la risposta)", false),
         "prepModel": ("modello della preparazione mentre l'utente parla", false),
         "smartModelRouting": ("modello leggero solo per le micro-modifiche banali (Opus per tutto il resto)", false),
         "lightModel": ("modello leggero per le micro-modifiche", false),

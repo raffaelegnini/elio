@@ -82,6 +82,8 @@ public struct ElioConfig: Codable, Sendable {
     public var selfSourcePath: String = ""
     /// Thinking ahead while the user talks (a small read-only session), and its model.
     public var speechPrep: Bool = true
+    /// A request about what's on screen ("ho degli errori qui") comes with a screenshot (deleted after the reply).
+    public var screenGlance: Bool = true
     public var prepModel: String = "haiku"
     /// Rest mode ("modalità riposo"): after `idleMinutes` without keyboard/mouse the screen goes off (or dim),
     /// the Mac is kept awake for background work and Elio stops talking aloud, except for urgent things
@@ -148,6 +150,7 @@ public struct ElioConfig: Codable, Sendable {
         showInDock = try c.decodeIfPresent(Bool.self, forKey: .showInDock) ?? d.showInDock
         selfSourcePath = try c.decodeIfPresent(String.self, forKey: .selfSourcePath) ?? d.selfSourcePath
         speechPrep = try c.decodeIfPresent(Bool.self, forKey: .speechPrep) ?? d.speechPrep
+        screenGlance = try c.decodeIfPresent(Bool.self, forKey: .screenGlance) ?? d.screenGlance
         prepModel = try c.decodeIfPresent(String.self, forKey: .prepModel) ?? d.prepModel
         idleAuto = try c.decodeIfPresent(Bool.self, forKey: .idleAuto) ?? d.idleAuto
         idleMinutes = try c.decodeIfPresent(Int.self, forKey: .idleMinutes) ?? d.idleMinutes

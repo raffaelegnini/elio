@@ -248,9 +248,17 @@ public actor Brain {
         }
 
         var firstDeltaMs: Int?
+        var glance: URL?
+        defer { if let glance { ScreenGlance.discard(glance) } }
         do {
             // What the prep session found while the user was talking (empty for short requests).
             var prompt = Self.withContext(text, ackGiven: ackOn)
+            // "Ho degli errori qui": the screen comes with the request (deleted when the reply is done).
+            if config.screenGlance, !overheard, ScreenGlance.wants(text), let shot = ScreenGlance.capture() {
+                glance = shot
+                prompt += ScreenGlance.note(shot)
+                log("screen glance attached")
+            }
             if let notes = await prep.take(key: id), notes != "-" {
                 prompt += "\n\n[preparato mentre parlava — appunti di una ricerca veloce, verificali se serve, non citarli:\n\(notes)\n]"
             }
@@ -441,7 +449,9 @@ public actor Brain {
         squad_start, una squadra di 2-5 agenti che si coordinano tra loro e riferiscono a te; squad_status per lo stato, \
         squad_send per dare istruzioni o rispondere. Riferisci \(toUser) solo l'essenziale.
         - Su cosa sta guardando l'utente ("questo", "compilalo tu", "scrivi tu questa mail", "riassumi la selezione", \
-        "cosa vedi"): screen_context per primo; screenshot + Read se serve vedere. Nel browser compila con gli strumenti del \
+        "cosa vedi"): se il messaggio contiene già uno screenshot dello schermo, aprilo con Read e rispondi da quello \
+        (errori nell'IDE, messaggi, codice: vai dritto alla causa e alla correzione); altrimenti screen_context per primo, \
+        screenshot + Read se serve vedere. Nel browser compila con gli strumenti del \
         browser; nelle app native scrivi con type_text. Componi tu il testo (mail, risposte, moduli) con il suo stile, \
         ma non inviare né confermare moduli senza il suo ok.
         - arrange_windows per disporre le finestre, find_files per trovare file (Spotlight), clipboard per gli appunti.

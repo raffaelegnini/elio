@@ -461,6 +461,7 @@ private struct BrainSettings: View {
                 .font(.system(size: 12.5))
                 .help("Opus resta il default. Il modello leggero solo quando Elio e il router concordano che è banale: circa un lavoro su venti.")
             Toggle("Si prepara mentre parlo (ricerca veloce in parallelo)", isOn: $model.config.speechPrep).font(.system(size: 12.5))
+            Toggle("Guarda lo schermo quando chiedo di quello che ho davanti (\"ho degli errori qui\", \"cosa vedi\")", isOn: $model.config.screenGlance).font(.system(size: 12.5))
         }
         Group(title: "Comandi rapidi",
               note: "Musica, app, link, volume, blocco schermo e tema li capisce il modello Apple sul Mac in meno di un secondo, senza usare Claude. Tutto il resto va a Claude.") {
