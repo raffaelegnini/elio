@@ -45,6 +45,8 @@ final class AppModel {
     private(set) var pairing: Pairing?
     /// A pairing from a link, QR code or paste, waiting for the user to confirm the host.
     var pendingPairing: Pairing?
+    /// A link asked to start a call: it opens the mic, so the user confirms it in the app first.
+    var pendingLinkCall = false
     var tab: Tab = .elio {
         didSet { workflows.visible = tab == .workflow }
     }
@@ -248,7 +250,9 @@ final class AppModel {
             case "messages": tab = .messages
             case "todo": tab = .todo
             case "workflow": tab = .workflow
-            case "call": callElio()   // e.g. from a Shortcut; iOS asks before opening the link
+            // From a Shortcut or another app: starting a call opens the mic, so ask in the app first (iOS doesn't
+            // always ask before opening a link).
+            case "call": pendingLinkCall = true
             case "pair":
                 if let p = Pairing.parse(url.absoluteString) { requestPairing(p) }
                 else { showToast("Link di associazione non valido: serve un indirizzo .ts.net.") }

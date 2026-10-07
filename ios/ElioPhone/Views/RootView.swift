@@ -47,6 +47,12 @@ struct RootView: View {
             Text("Il Mac \(p.host) riceverà quello che dici a Elio, gli allegati e le notifiche di questo iPhone."
                  + (p.isTailnet ? "" : "\n\nAttenzione: non è un indirizzo Tailscale (.ts.net)."))
         }
+        .alert("Chiamare Elio?", isPresented: Binding(get: { model.pendingLinkCall }, set: { model.pendingLinkCall = $0 })) {
+            Button("Chiama") { model.pendingLinkCall = false; model.callElio() }
+            Button("Annulla", role: .cancel) { model.pendingLinkCall = false }
+        } message: {
+            Text("Un collegamento chiede di avviare una chiamata con Elio: il microfono resterà aperto finché non riagganci.")
+        }
         .onChange(of: scenePhase, initial: true) { _, phase in
             model.scenePhaseChanged(active: phase == .active)
         }

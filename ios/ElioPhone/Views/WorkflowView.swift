@@ -182,12 +182,19 @@ struct ReportWebView: UIViewRepresentable {
                 onBack()
                 return
             }
-            // Stay on the Mac: anything else opens outside the app.
-            if url.host() != host {
+            // Stay on the Mac's report pages; links elsewhere open in Safari only if they're plain web links (a report
+            // shows agent output: no tel:, sms:, other apps' schemes or elio:// actions from it).
+            let scheme = url.scheme?.lowercased() ?? ""
+            if url.host() != host || scheme != "https" {
                 decisionHandler(.cancel)
-                if action.navigationType == .linkActivated { UIApplication.shared.open(url) }
+                if action.navigationType == .linkActivated, ["https", "http"].contains(scheme), url.host() != nil {
+                    UIApplication.shared.open(url)
+                }
                 return
             }
+            // On the Mac itself only the report page and its static files, never the API with the injected token.
+            guard url.path == "/report.html" || url.path.hasSuffix(".js") || url.path.hasSuffix(".css") || url.path.hasSuffix(".png")
+                    || url.path.hasSuffix(".svg") else { decisionHandler(.cancel); return }
             decisionHandler(.allow)
         }
     }
