@@ -124,6 +124,11 @@ public enum ApprovalTool {
         switch decision {
         case .allow:
             allow = true
+        case .confirm(.normal) where ApprovalMemory.shared.covers(task: ctx.taskId, tool: tool, input: input):
+            // The user already said yes to this kind of action for this agent (dangerous ones always ask again).
+            allow = true
+            await ctx.tasks.logEvent(taskId: ctx.taskId, .autoDecision,
+                                     text: "Già approvato per questo agente: \(summary(tool: tool, input: input))", actor: "elio")
         case .confirm(let risk):
             let detail = describe(tool: tool, input: input)
             // Spoken: what it amounts to ("cancellare la cartella build"), never the raw command;
@@ -136,6 +141,7 @@ public enum ApprovalTool {
             allow = await ctx.gate.request(ConfirmRequest(id: UUID().uuidString, title: title, detail: detail,
                                                           risk: risk, taskId: ctx.taskId))
             await ctx.tasks.logEvent(taskId: ctx.taskId, .confirmResult, text: allow ? "Confermato" : "Negato", actor: "utente")
+            if allow, risk == .normal { ApprovalMemory.shared.remember(task: ctx.taskId, tool: tool, input: input) }
             await ctx.tasks.setStatus(ctx.taskId, .running)
         }
         let response: [String: Any] = allow
@@ -857,6 +863,7 @@ public actor TaskRunner {
     }
 
     private func exited(_ id: String, code: Int32) {
+        ApprovalMemory.shared.forget(task: id)
         let title = tasks[id]?.info.title ?? "un agente"
         Task {
             guard let undone = GitGuards.shared.end(agent: id) else { return }
@@ -1218,4 +1225,65 @@ public enum TaskTools {
     ) { args, ctx in
         await ctx.tasks.cancel(args["id"] as? String ?? "") ? "Task fermato." : "Task non trovato."
     }
+}
+
+
+/// "Don't ask again for this" without a button: once the user approves a kind of action for an agent (osascript on
+/// iTerm, running tests outside the sandbox, editing files in a folder), the same kind of action by the same agent
+/// doesn't ask again until the agent ends (or for 3 hours). Only ordinary confirmations: what the rules mark as
+/// dangerous (push, deletes, sends) asks every time. The kind is the programs involved (with the subcommand for
+/// git/npm-style tools) — so approving `git status` never covers `git push` — or the folder for file edits.
+public final class ApprovalMemory: @unchecked Sendable {
+    public static let shared = ApprovalMemory()
+    private let lock = NSLock()
+    private var approved: [String: (kinds: Set<String>, at: Date)] = [:]
+
+    static let withSubcommand: Set<String> = ["git", "npm", "pnpm", "yarn", "bun", "composer", "php", "docker", "herd",
+                                              "valet", "brew", "swift", "cargo", "go", "pip", "pip3", "python3", "node",
+                                              "kubectl", "gh", "ddev", "artisan", "bin/magento", "osascript", "defaults", "launchctl"]
+
+    /// What kind of action this is; nil when it can't be told safely (then nothing is remembered or covered).
+    static func kinds(tool: String, input: [String: Any]) -> Set<String>? {
+        switch tool {
+        case "Bash":
+            guard let cmd = input["command"] as? String, !cmd.contains("$("), !cmd.contains("`") else { return nil }
+            let outside = input["dangerouslyDisableSandbox"] as? Bool == true ? "!" : ""
+            var out: Set<String> = []
+            for part in cmd.splitOutsideQuotes(";|&\n") {
+                let words = part.trimmingCharacters(in: .whitespaces).split(separator: " ").map(String.init)
+                    .drop { $0.contains("=") && !$0.hasPrefix("-") }
+                guard let first = words.first else { continue }
+                let prog = (first as NSString).lastPathComponent
+                if prog == "cd" { continue }
+                let sub = words.dropFirst().first { !$0.hasPrefix("-") } ?? ""
+                out.insert(outside + (withSubcommand.contains(prog) ? "\(prog) \(sub)" : prog))
+            }
+            return out.isEmpty ? nil : out
+        case "Edit", "Write", "MultiEdit", "NotebookEdit":
+            guard let path = (input["file_path"] as? String) ?? (input["notebook_path"] as? String), !path.isEmpty else { return nil }
+            return ["write:" + (path as NSString).deletingLastPathComponent]
+        default:
+            return [tool]
+        }
+    }
+
+    public func remember(task: String?, tool: String, input: [String: Any]) {
+        guard let task, let k = Self.kinds(tool: tool, input: input) else { return }
+        lock.withLock {
+            var entry = approved[task] ?? ([], Date())
+            entry.kinds.formUnion(k)
+            entry.at = Date()
+            approved[task] = entry
+        }
+    }
+
+    public func covers(task: String?, tool: String, input: [String: Any]) -> Bool {
+        guard let task, let k = Self.kinds(tool: tool, input: input) else { return false }
+        return lock.withLock {
+            guard let entry = approved[task], Date().timeIntervalSince(entry.at) < 3 * 3600 else { return false }
+            return k.isSubset(of: entry.kinds)
+        }
+    }
+
+    public func forget(task: String) { lock.withLock { approved[task] = nil } }
 }

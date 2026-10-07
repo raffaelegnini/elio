@@ -13,3 +13,13 @@ struct ScreenGlanceTests {
         }
     }
 }
+
+struct AckGroundingTests {
+    @Test func acksOnlyNameWhatTheUserSaid() {
+        let wrong = FastPath.grounded("Guardo Slack, Signore.", in: "mi fai il riassunto del progetto skgame?", addressAs: "Signore")
+        #expect(!wrong.lowercased().contains("slack"))
+        let right = FastPath.grounded("Guardo Slack, Signore.", in: "ho messaggi su slack?", addressAs: "Signore")
+        #expect(right == "Guardo Slack, Signore.")
+        #expect(FastPath.grounded("Controllo l'agenda di domani, Signore.", in: "che impegni ho domani", addressAs: "Signore").contains("agenda"))
+    }
+}

@@ -299,13 +299,68 @@ struct DiffLineView: View {
 struct MarkdownText: View {
     let text: String
 
+    /// Rendered block by block (headings, bullets, code fences, paragraphs), each line parsed for inline markdown on
+    /// its own: one odd line (an unbalanced `*` or backtick) used to make the whole parse fail and show raw `**`.
     var body: some View {
         let shown = SecretFilter.redact(text, with: "••••••••")
-        Text((try? AttributedString(markdown: shown, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-             ?? AttributedString(shown))
-            .font(.system(size: 12.5)).foregroundStyle(Theme.text)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(Self.blocks(shown).enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .heading(let t):
+                    Self.inline(t).font(.system(size: 13, weight: .semibold)).padding(.top, 4)
+                case .bullet(let t, let depth):
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("•").foregroundStyle(Theme.dim)
+                        Self.inline(t)
+                    }
+                    .padding(.leading, CGFloat(depth) * 12)
+                case .code(let t):
+                    Text(t).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text)
+                        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.05)))
+                case .paragraph(let t):
+                    Self.inline(t)
+                case .gap:
+                    Spacer().frame(height: 2)
+                }
+            }
+        }
+        .font(.system(size: 12.5)).foregroundStyle(Theme.text)
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    enum Block { case heading(String), bullet(String, Int), code(String), paragraph(String), gap }
+
+    static func blocks(_ text: String) -> [Block] {
+        var out: [Block] = []
+        var code: [String]? = nil
+        for raw in text.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("```") {
+                if let c = code { out.append(.code(c.joined(separator: "\n"))); code = nil } else { code = [] }
+                continue
+            }
+            if code != nil { code?.append(raw); continue }
+            if line.isEmpty { if case .gap? = out.last {} else if !out.isEmpty { out.append(.gap) }; continue }
+            if let r = line.range(of: #"^#{1,6}\s+"#, options: .regularExpression) {
+                out.append(.heading(String(line[r.upperBound...])))
+            } else if let r = line.range(of: #"^([-*+]|\d+[.)])\s+"#, options: .regularExpression) {
+                let indent = raw.prefix { $0 == " " }.count / 2
+                out.append(.bullet(String(line[r.upperBound...]), min(indent, 3)))
+            } else {
+                out.append(.paragraph(line))
+            }
+        }
+        if let c = code { out.append(.code(c.joined(separator: "\n"))) }
+        return out
+    }
+
+    static func inline(_ s: String) -> Text {
+        if let a = try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+            return Text(a)
+        }
+        return Text(s)
     }
 }
 

@@ -95,6 +95,29 @@ public enum FastPath {
 
     /// The specific acknowledgement said while Claude works ("Certo, Signore, controllo l'agenda di domani."),
     /// from the on-device model. Nil when not useful (small talk), unavailable or too slow.
+    /// Sources and apps an acknowledgement might name. The small model guesses ("Controllo Slack") when the user
+    /// asked something else entirely; an ack may only name what the user actually said.
+    static let sourceWords: [String: [String]] = [
+        "slack": ["slack", "canal", "dm", "messagg"], "mail": ["mail", "posta", "email"], "gmail": ["gmail", "mail"],
+        "agenda": ["agenda", "calendar", "impegn", "riunion", "meeting"], "calendario": ["calendar", "agenda", "impegn"],
+        "teamwork": ["teamwork", "task"], "task": ["task", "attivit", "ticket"], "ticket": ["ticket", "task"],
+        "spotify": ["spotify", "musica", "canzon", "brano"], "musica": ["musica", "spotify", "canzon"],
+        "github": ["github", "pull", "pr", "repo"], "repository": ["repo", "progett", "codice"], "meteo": ["meteo", "tempo"],
+        "promemoria": ["promemoria", "ricord"], "browser": ["browser", "sito", "pagina", "chrome"], "chrome": ["chrome", "browser", "sito"],
+    ]
+
+    /// The ack if it only mentions sources the request is about; otherwise a neutral one.
+    static func grounded(_ ack: String, in request: String, addressAs: String) -> String {
+        let a = ack.lowercased(), r = request.lowercased()
+        for (word, triggers) in sourceWords where a.range(of: "\\b\(word)", options: .regularExpression) != nil {
+            if !triggers.contains(where: { r.contains($0) }) {
+                let neutral = ["Subito, \(addressAs).", "Ci penso io, \(addressAs).", "Un attimo, \(addressAs), me ne occupo."]
+                return neutral[abs(request.hashValue) % neutral.count]
+            }
+        }
+        return ack
+    }
+
     public static func acknowledgement(for text: String, addressAs: String) async -> String? {
         #if canImport(FoundationModels)
         guard isAvailable, text.split(separator: " ").count >= 3 else { return nil }
@@ -112,7 +135,7 @@ public enum FastPath {
             guard s.lowercased().range(of: #"\b(dimmi|fammi|dammi|mi dici|mostrami|spiegami|trovami)\b"#,
                                        options: .regularExpression) == nil else { return nil }
             if !(s.hasSuffix(".") || s.hasSuffix("!")) { s += "." }
-            return s
+            return grounded(s, in: text, addressAs: addressAs)
         } ?? nil
         #else
         return nil
