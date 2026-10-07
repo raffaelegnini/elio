@@ -139,6 +139,8 @@ public enum ToolRegistry {
         WatcherTools.list,
         WatcherTools.control,
         WatcherTools.listJSON,
+        AlertTools.message,
+        AlertTools.notify,
         NativeIntegrations.connectTool,
         NativeIntegrations.disconnectTool,
         ProjectTreeTools.info,
@@ -162,6 +164,11 @@ public enum ToolRegistry {
         TaskTools.message,
         IDETools.open,
         IDETools.selfUpdate,
+        ConnectionTools.save,
+        ConnectionTools.list,
+        ConnectionTools.open,
+        ConnectionTools.query,
+        ConnectionTools.sshRun,
     ]
 
     public static func listingJSON() -> String {
@@ -189,6 +196,8 @@ public enum ToolRegistry {
         case "spotify_login", "integration_connect": 180
         case "mail_send": 200
         case "watch_create": 200
+        case "db_query", "ssh_run": 240   // the confirmation (180 s) plus the query/command itself
+        case "connection_save": 220   // may confirm a change of destination
         case "watch_control": 60
         case "mail_inbox", "mail_search", "mail_read", "integrations_native": 45
         case "spotify_play": 30

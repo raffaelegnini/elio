@@ -97,4 +97,29 @@ import Testing
         #expect(PermissionPolicy.decideOperatorBash("mv \(dir)/src/a.zip \(dir)/dest/b.zip") != .allow)
         #expect(PermissionPolicy.decideOperatorBash("mv -n \(dir)/src/a.zip \(dir)/dest/b.zip") == .allow)
     }
+
+    @Test func runningAScriptFileNeedsConfirmation() {
+        // Write is free in the home in operator mode: running what was written must not be.
+        for cmd in ["python3 ~/Desktop/x.py", "node ~/x.js", "bash ~/Desktop/do.sh", "sh x.sh", "osascript ~/a.scpt",
+                    "./run.sh", "~/bin/tool --go", "cd ~/Desktop && python3 x.py", "env FOO=1 python3 x.py",
+                    "perl script.pl", "ruby -e1; ruby x.rb", "make", "npm run build", "npx cowsay hi", "python3 -m http.server",
+                    "timeout 10 python3 x.py", "nice -n 5 python3 x.py", "sudo -u root bash x.sh", "\"python3\" x.py",
+                    "py\\thon3 x.py", "xargs -n1 sh", "source ~/x.sh", ". ~/x.sh", "find . -name '*.tmp' -exec sh {} \\;",
+                    "python3\tx.py", "open ~/Desktop/run.command", "open x-callback://do", "cat x.py | python3", "bash < x.sh", "$SHELL x.sh", "echo $(python3 x.py)", "echo `sh x.sh`", "A=\"1 2\" python3 x.py", "env $X x.sh"] {
+            #expect(PermissionPolicy.decideOperatorBash(cmd) != .allow, "\(cmd)")
+        }
+        for cmd in ["python3 --version", "ls ~/Desktop", "/usr/bin/sw_vers", "open ~/Documents", "open ~/Desktop/report.pdf", "mkdir -p ~/Documents/Z"] {
+            #expect(PermissionPolicy.decideOperatorBash(cmd) == .allow, "\(cmd)")
+        }
+    }
+
+    @Test func leavingTheSandboxAlwaysAsks() {
+        let input: [String: Any] = ["command": "ls", "dangerouslyDisableSandbox": true]
+        #expect(PermissionPolicy.decide(tool: "Bash", input: input, cwd: "/tmp") == .confirm(.normal))
+        #expect(PermissionPolicy.decide(tool: "Bash", input: input, cwd: "/tmp", onMac: true) == .confirm(.normal))
+        #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": "ls"], cwd: "/tmp") == .allow)
+        let json = AgentSandbox.settings(kind: "code")
+        #expect(json.contains("\"enabled\":true") && json.contains("\"autoAllowBashIfSandboxed\":false"))
+        #expect(AgentSandbox.settings(kind: "mac").contains("osascript"))
+    }
 }

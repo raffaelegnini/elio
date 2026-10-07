@@ -1,0 +1,84 @@
+/* Database and remote connections: tool windows, connection form, results grid. */
+/* These classes sit on the IDE's tool-window panes: no `display` here, or hidden panes would show (.tw-pane / .tw-pane.on own it). */
+.cx-pane { flex-direction: column; height: 100%; }
+.cx-bar { display: flex; align-items: center; gap: 2px; padding: 4px 6px 4px 10px; border-bottom: 1px solid var(--line); flex: none; }
+.cx-title { font: 600 10.5px var(--mono); letter-spacing: .08em; color: var(--faint); text-transform: uppercase; }
+.cx-sp { flex: 1; }
+.cx-btn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 5px; color: var(--dim); }
+.cx-btn:hover { background: #ffffff12; color: var(--text); }
+.cx-btn.go { color: var(--green); } .cx-btn.ok { color: var(--green); } .cx-btn.bad { color: var(--red); } .cx-btn.dim { opacity: .4; }
+.cx-ico { display: inline-flex; width: 16px; height: 16px; flex: none; color: var(--dim); }
+.cx-ico svg, .cx-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.cx-tree { flex: 1; overflow: auto; padding: 4px 0 20px; }
+.cx-row { display: flex; align-items: center; gap: 5px; height: 24px; padding-right: 8px; white-space: nowrap; border-left: 2px solid var(--cx-color, transparent); }
+.cx-row:hover { background: #ffffff0a; }
+.cx-row.sel { background: var(--sel); }
+.cx-row.prod { --cx-color: var(--red); }
+.cx-row.prod .cx-nm { color: var(--red); }
+.cx-row.grp .cx-nm { color: var(--dim); font-size: 12px; }
+.cx-row.dim .cx-nm { color: var(--faint); }
+.cx-row.pref .cx-nm { font-weight: 600; }
+.cx-tw { width: 12px; height: 12px; display: inline-flex; color: var(--faint); flex: none; }
+.cx-tw svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.cx-ico.on { color: var(--green); }
+.cx-ico.key { color: var(--accent); }
+.cx-nm { overflow: hidden; text-overflow: ellipsis; }
+.cx-meta { color: var(--faint); font: 11px var(--mono); margin-left: 6px; overflow: hidden; text-overflow: ellipsis; }
+.cx-err { color: var(--red); font-size: 12px; padding: 4px 8px; white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
+.cx-empty { color: var(--faint); padding: 14px; font-size: 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.cx-dim { color: var(--faint); font-size: 12px; }
+.cx-note { padding: 4px 10px; }
+.cx-missing { margin: 6px 10px 6px 24px; padding: 8px 10px; border: 1px solid #E5A24F55; border-radius: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.cx-missing .cx-ico { color: var(--orange); }
+.cx-missing code { font: 11px var(--mono); background: #ffffff10; padding: 2px 6px; border-radius: 4px; -webkit-user-select: text; user-select: text; }
+.cx-input { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; color: var(--text); font: 12.5px var(--mono); padding: 4px 7px; outline: none; min-width: 0; }
+.cx-input:focus { border-color: #FFD36088; }
+select.cx-input { font-family: -apple-system, system-ui; }
+.btn.small { padding: 2px 9px; font-size: 12px; }
+
+/* Connection form */
+.cx-overlay { position: fixed; inset: 0; background: #0008; z-index: 60; display: flex; justify-content: center; align-items: flex-start; }
+.cx-form { width: 600px; max-height: calc(100% - 140px); overflow: auto; -webkit-user-select: text; user-select: text; }
+.cx-grid { display: grid; grid-template-columns: 170px 1fr auto; gap: 7px 10px; align-items: center; }
+.cx-lbl { color: var(--dim); font-size: 12.5px; }
+.cx-null { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.cx-status { min-height: 18px; margin-top: 10px; font-size: 12px; color: var(--dim); white-space: pre-wrap; }
+.cx-status.ok { color: var(--green); } .cx-status.bad { color: var(--red); }
+
+/* Results */
+.cx-results { flex-direction: column; height: 100%; }
+.cx-rbar { display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-bottom: 1px solid var(--line); flex: none; min-height: 30px; }
+.cx-conname { font: 600 12px var(--mono); margin-right: 6px; }
+.cx-conname.prod { color: var(--red); }
+.cx-ac { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--dim); margin: 0 6px; }
+.cx-spin { color: var(--orange); font-size: 12px; margin-left: 6px; }
+.cx-rtabs { display: flex; gap: 2px; padding: 3px 6px 0; overflow-x: auto; flex: none; border-bottom: 1px solid var(--line); }
+.cx-rtab { display: flex; align-items: center; gap: 4px; padding: 3px 4px 4px 9px; border-radius: 5px 5px 0 0; font: 11.5px var(--mono); color: var(--dim); white-space: nowrap; }
+.cx-rtab.on { background: #ffffff10; color: var(--text); }
+.cx-rtab.bad { color: var(--red); }
+.cx-x { width: 16px; height: 16px; display: inline-flex; color: var(--faint); border-radius: 3px; }
+.cx-x:hover { background: #ffffff18; color: var(--text); }
+.cx-x svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; margin: 2px; }
+.cx-rbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cx-rinfo { display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: 12px; color: var(--dim); flex: none; }
+.cx-where { flex: 1; max-width: 560px; }
+.cx-text { margin: 0; padding: 10px 12px; font: 12px var(--mono); white-space: pre-wrap; overflow: auto; -webkit-user-select: text; user-select: text; }
+.cx-text.bad { color: var(--red); }
+.cx-done { padding: 12px; color: var(--green); font: 12px var(--mono); }
+.cx-grid-wrap { flex: 1; overflow: auto; }
+.cx-table { border-collapse: separate; border-spacing: 0; font: 12px var(--mono); -webkit-user-select: text; user-select: text; }
+.cx-table th { position: sticky; top: 0; background: var(--panel); color: var(--text); font-weight: 600; text-align: left; padding: 4px 10px;
+  border-bottom: 1px solid var(--line); border-right: 1px solid #ffffff0a; white-space: nowrap; cursor: default; }
+.cx-table th.asc::after { content: ""; display: inline-block; margin-left: 6px; border: 4px solid transparent; border-bottom-color: var(--dim); transform: translateY(-2px); }
+.cx-table th.desc::after { content: ""; display: inline-block; margin-left: 6px; border: 4px solid transparent; border-top-color: var(--dim); transform: translateY(2px); }
+.cx-table td { padding: 3px 10px; border-bottom: 1px solid #ffffff08; border-right: 1px solid #ffffff08; white-space: nowrap; max-width: 420px;
+  overflow: hidden; text-overflow: ellipsis; }
+.cx-table tr:hover td { background: #ffffff06; }
+.cx-table td.null { color: var(--faint); font-style: italic; }
+.cx-table .cx-rn { color: var(--faint); text-align: right; position: sticky; left: 0; background: var(--bg); }
+.cx-table th.cx-rn { background: var(--panel); z-index: 1; }
+.cx-cell { width: 100%; min-width: 120px; background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 3px; font: 12px var(--mono); padding: 1px 4px; outline: none; }
+.cx-running { background: #FFD36022; }
+
+/* The dock header already shows the tool window title: no second one in the toolbar. */
+.tw-pane .cx-bar .cx-title { display: none; }

@@ -13,174 +13,469 @@
 <title>Elio</title>
 <style>
   :root {
-    --bg: #0E0E10; --panel: rgba(26, 26, 29, .78); --line: rgba(255, 211, 96, .16);
-    --text: #FBF8F1; --dim: #9E9A8E; --accent: #FFD360; --warn: #FF9F43; --danger: #FF6B61; --ok: #4ade80;
+    color-scheme: dark;
+    /* Surfaces: grouped like iOS (background, raised, raised again). */
+    --bg: #0E0E10; --bg-2: #18181B; --bg-3: #222226; --fill: rgba(255,255,255,.06); --fill-2: rgba(255,255,255,.1);
+    --sep: rgba(255,255,255,.08);
+    --text: #F7F5F0; --text-2: rgba(235,233,228,.62); --text-3: rgba(235,233,228,.38);
+    --accent: #FFD360; --accent-ink: #1C1606; --accent-soft: rgba(255,211,96,.14);
+    --warn: #FF9F43; --danger: #FF6B61; --danger-soft: rgba(255,107,97,.12); --ok: #4ADE80; --badge: #FF453A;
     --tint: var(--accent);
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --tabbar-h: 54px;
+    --ease: cubic-bezier(.2, .8, .2, 1);
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
-    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; overflow: hidden; }
-  body::before { content: ""; position: fixed; inset: 0; pointer-events: none;
-    background: radial-gradient(120% 60% at 50% 0%, rgba(255,211,96,.10), transparent 60%),
-                linear-gradient(var(--line) 1px, transparent 1px) 0 0/28px 28px,
-                linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/28px 28px; opacity: .35; }
-  #app { position: relative; height: 100%; display: flex; flex-direction: column;
-    padding: calc(env(safe-area-inset-top) + 4px) 16px calc(env(safe-area-inset-bottom) + 6px); }
-  header { display: flex; align-items: center; gap: 10px; padding: 10px 0 4px; }
-  header img { height: 22px; }
-  .brand { font: 700 13px var(--mono); letter-spacing: .38em; }
-  .sub { font: 10px var(--mono); color: var(--dim); letter-spacing: .1em; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 8px currentColor; }
-  .dot.on { background: var(--ok); }
-  header .spacer { flex: 1; }
-  .icon-btn { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: rgba(255,255,255,.03);
-    color: var(--accent); display: grid; place-items: center; font-size: 15px; }
-  .icon-btn.hot { background: var(--accent); color: #000; border-color: transparent; }
-  #orbWrap { position: relative; height: 30vh; min-height: 180px; display: grid; place-items: center; }
-  #orb { width: 100%; height: 100%; }
-  #state { position: absolute; bottom: 2px; font: 600 10.5px var(--mono); letter-spacing: .32em; color: var(--tint); text-transform: uppercase; }
-  #partial { min-height: 22px; text-align: center; color: var(--dim); font-size: 14px; padding: 0 8px; }
-  #feed { flex: 1; overflow-y: auto; padding: 8px 2px 12px; display: flex; flex-direction: column; gap: 12px;
-    mask-image: linear-gradient(transparent, #000 24px); -webkit-mask-image: linear-gradient(transparent, #000 24px); }
-  .msg .who { font: 600 10px var(--mono); letter-spacing: .18em; color: var(--dim); margin-bottom: 2px; }
-  .msg.elio .who { color: var(--accent); }
-  .msg.event .who { color: var(--warn); }
-  .msg .text { white-space: pre-wrap; }
-  .msg.user { align-self: flex-end; max-width: 85%; text-align: right; }
-  .msg.user .text { color: var(--dim); }
-  .meta { font: 10px var(--mono); color: var(--dim); opacity: .7; margin-left: 6px; letter-spacing: 0; }
-  .card { border: 1px solid var(--line); background: var(--panel); border-radius: 16px; padding: 12px;
-    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
-  .confirm { border-color: rgba(255, 211, 96, .45); }
-  .confirm.danger { border-color: rgba(255, 107, 97, .6); background: rgba(255, 107, 97, .08); }
-  .confirm .label { font: 600 10px var(--mono); letter-spacing: .2em; color: var(--accent); }
+    font: 16px/1.42 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; overflow: hidden;
+    -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: 100%; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  input { font: inherit; }
+  [hidden] { display: none !important; }
+
+  /* Icons: one sprite, drawn with strokes in the current text color. */
+  .ic { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7;
+    stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
+  .ic.sm { width: 18px; height: 18px; } .ic.xs { width: 15px; height: 15px; }
+  .ic.solid { fill: currentColor; stroke: none; }
+
+  /* Height follows the visual viewport, so the iOS keyboard never pushes the layout around. */
+  #app { position: fixed; left: 0; right: 0; top: 0; height: var(--app-h, 100%); display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 12px; min-height: 52px;
+    padding: calc(env(safe-area-inset-top) + 6px) max(16px, env(safe-area-inset-right)) 6px max(16px, env(safe-area-inset-left)); }
+  header .title { flex: 1; min-width: 0; }
+  header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.01em; line-height: 1.15; }
+  .conn { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); }
+  .conn i { width: 6px; height: 6px; border-radius: 50%; background: var(--danger); }
+  .conn.on i { background: var(--ok); }
+  .icon-btn { position: relative; width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--fill);
+    color: var(--text); display: grid; place-items: center; padding: 0; flex: none; }
+  .icon-btn:active { background: var(--fill-2); }
+  .icon-btn .pip { position: absolute; top: 9px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 2px var(--bg); }
+
+  main { position: relative; flex: 1; min-height: 0; }
+  .view { position: absolute; inset: 0; display: none; flex-direction: column;
+    padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
+  .view.on { display: flex; }
+  .scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+
+  /* ---------- Tab bar ---------- */
+  #tabbar { display: grid; grid-template-columns: repeat(4, 1fr); border-top: .5px solid var(--sep);
+    background: rgba(20,20,22,.92); backdrop-filter: saturate(160%) blur(20px); -webkit-backdrop-filter: saturate(160%) blur(20px);
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #tabbar button { position: relative; height: var(--tabbar-h); border: 0; background: none; color: var(--text-3);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10.5px; font-weight: 500; }
+  #tabbar button.on { color: var(--accent); }
+  #tabbar .ic { width: 25px; height: 25px; }
+  .badge { position: absolute; top: 4px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+    background: var(--badge); color: #fff; font: 600 11.5px/18px -apple-system, system-ui; text-align: center; }
+  body.kb #tabbar { display: none; }
+
+  /* ---------- Elio (conversation) ---------- */
+  #orbWrap { position: relative; height: clamp(120px, 24vh, 210px); flex: none; transition: height .3s var(--ease); }
+  #orb { width: 100%; height: 100%; display: block; }
+  body.kb #orbWrap { height: 64px; }
+  #state { text-align: center; font-size: 13px; color: var(--text-2); margin-top: 2px; }
+  #state::first-letter { text-transform: uppercase; }
+  #partial { min-height: 20px; text-align: center; color: var(--text-2); font-size: 14px; padding: 0 8px; }
+  #feed { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 0 14px; display: flex; flex-direction: column; gap: 14px;
+    mask-image: linear-gradient(transparent, #000 18px); -webkit-mask-image: linear-gradient(transparent, #000 18px); overscroll-behavior: contain; }
+  #feedEmpty { margin: auto; color: var(--text-3); font-size: 14.5px; text-align: center; max-width: 260px; }
+  .msg .text { white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; max-width: 82%; background: var(--bg-3); padding: 9px 14px; border-radius: 20px 20px 6px 20px; }
+  .msg.user .who { display: none; }
+  .msg.elio { align-self: flex-start; max-width: 94%; }
+  .msg.elio .who { display: none; }
+  .msg.elio.error .text { color: var(--danger); }
+  .msg .meta { display: block; font: 11px var(--mono); color: var(--text-3); margin-top: 4px; }
+  .msg .meta:empty { display: none; }
+  .msg.event { display: flex; gap: 12px; align-items: flex-start; background: var(--bg-2); border-radius: 16px; padding: 12px 14px; }
+  .msg.event .ev-ic { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); flex: none; }
+  .msg.event .who { font-size: 12.5px; color: var(--text-2); font-weight: 600; }
+  .msg.event.alarm .ev-ic { background: var(--danger-soft); color: var(--danger); }
+  .msg.event > div { min-width: 0; flex: 1; }
+
+  .card { background: var(--bg-2); border-radius: 18px; padding: 14px; }
+  .label { font-size: 13px; font-weight: 600; color: var(--accent); display: flex; align-items: center; gap: 6px; }
+  .confirm .t { font-weight: 600; margin: 6px 0 2px; }
+  .confirm.danger { background: var(--danger-soft); box-shadow: inset 0 0 0 1px rgba(255,107,97,.35); }
   .confirm.danger .label { color: var(--danger); }
-  .confirm pre { white-space: pre-wrap; word-break: break-word; font: 12px var(--mono); background: rgba(0,0,0,.35);
-    border-radius: 8px; padding: 8px; margin: 8px 0; max-height: 140px; overflow: auto; }
-  .row { display: flex; gap: 10px; justify-content: space-between; }
-  button.act { flex: 1; padding: 11px; border-radius: 12px; border: 1px solid var(--line); background: transparent;
-    color: var(--dim); font: 600 14px -apple-system, system-ui; }
-  button.act.go { background: var(--accent); color: #000; border: 0; }
+  .confirm.question .label { color: var(--warn); }
+  .confirm pre { white-space: pre-wrap; word-break: break-word; font: 12px/1.45 var(--mono); color: var(--text-2); background: rgba(0,0,0,.3);
+    border-radius: 10px; padding: 10px; margin: 8px 0 12px; max-height: 150px; overflow: auto; }
+  .confirm pre:empty { display: none; }
+  .row { display: flex; gap: 10px; }
+  button.act { flex: 1; min-height: 44px; padding: 0 14px; border-radius: 12px; border: 0; background: var(--fill);
+    color: var(--text); font-weight: 600; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+  button.act:active { opacity: .75; }
+  button.act:disabled { opacity: .35; }
+  button.act.go { background: var(--accent); color: var(--accent-ink); }
+  button.act.bad { background: var(--danger); color: #fff; }
+  button.act.small { flex: none; min-height: 36px; padding: 0 12px; font-size: 14px; border-radius: 10px; }
+  button.act.plain { background: none; color: var(--accent); padding: 0 6px; }
   .confirm.danger button.act.go { background: var(--danger); color: #fff; }
-  #tasks { display: flex; flex-direction: column; gap: 6px; }
-  .task { display: flex; gap: 8px; align-items: center; font-size: 13px; }
-  .task .s { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); flex: none; }
-  .task .s.done { background: var(--ok); box-shadow: none; } .task .s.failed { background: var(--danger); box-shadow: none; }
-  .task .s.waitingConfirmation { background: var(--warn); }
-  .task .step { color: var(--dim); font: 11px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #dock { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 6px; }
-  #mic { width: 76px; height: 76px; border-radius: 50%; border: 0; background: var(--accent); color: #000; font-size: 28px;
-    box-shadow: 0 0 0 0 rgba(255,211,96,.5), 0 8px 30px rgba(255,211,96,.35); touch-action: none; user-select: none;
-    -webkit-user-select: none; transition: transform .15s, background .2s; }
-  #mic.rec { background: var(--danger); color: #fff; transform: scale(1.08); animation: pulse 1.2s infinite; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,107,97,.55); } 100% { box-shadow: 0 0 0 22px rgba(255,107,97,0); } }
-  #hint { font: 11px var(--mono); color: var(--dim); letter-spacing: .08em; }
-  form { display: flex; gap: 8px; align-items: center; width: 100%; }
-  #input { flex: 1; min-width: 0; padding: 11px 14px; border-radius: 14px; border: 1px solid var(--line);
-    background: rgba(255,255,255,.05); color: var(--text); font-size: 16px; outline: none; }
-  #input:focus { border-color: rgba(255, 211, 96, .55); }
-  #sendBtn { width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: transparent; color: var(--accent); font-size: 17px; }
-  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 120px); padding: 12px 14px; border-radius: 14px;
-    background: var(--panel); border: 1px solid var(--line); font-size: 13px; display: none; z-index: 5; backdrop-filter: blur(16px); }
-  #toast.show { display: block; }
-  .sheet, #wfSheet { position: fixed; inset: 0; z-index: 7; background: var(--bg); display: none; flex-direction: column;
-    padding: calc(env(safe-area-inset-top) + 10px) 16px calc(env(safe-area-inset-bottom) + 10px); }
-  #wfSheet.show, .sheet.show { display: flex; }
-  .sheet .top, #wfSheet .top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-  .sheet h2 { font: 700 13px var(--mono); letter-spacing: .3em; margin: 0; flex: 1; }
-  .seg.tri { grid-template-columns: 1fr 1fr 1fr; margin: 6px 0 12px; }
-  #todoList { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-  .td { display: flex; align-items: flex-start; gap: 12px; padding: 11px 4px; border-bottom: 1px solid rgba(255,255,255,.06); }
-  .td .ck { width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--dim); flex: none; display: grid; place-items: center;
-    color: #000; font-size: 13px; background: transparent; }
-  .td.imp .ck { border-color: var(--accent); }
-  .td.done .ck { background: var(--accent); border-color: var(--accent); }
-  .td .tx { flex: 1; min-width: 0; }
-  .td.done .tx .t { color: var(--dim); text-decoration: line-through; }
+  .field { flex: 1; min-width: 0; min-height: 44px; padding: 10px 14px; border-radius: 12px; border: 0; background: var(--fill);
+    color: var(--text); font-size: 16px; outline: none; }
+  .field:focus { box-shadow: inset 0 0 0 1.5px rgba(255,211,96,.5); }
+
+  #tasks:empty { display: none; }
+  .tasks .label { color: var(--text-2); margin-bottom: 8px; }
+  .task { display: flex; gap: 10px; align-items: center; font-size: 14px; padding: 4px 0; }
+  .task > div { min-width: 0; }
+  .s { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+  .s.done { background: var(--ok); } .s.failed { background: var(--danger); } .s.cancelled { background: var(--text-3); }
+  .s.waitingConfirmation, .s.paused { background: var(--warn); }
+  .task .step { color: var(--text-2); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  #dock { flex: none; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0 10px; }
+  .dock-row { display: flex; align-items: center; justify-content: center; gap: 28px; }
+  .round { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--fill); color: var(--text-2); display: grid; place-items: center; padding: 0; }
+  .round.on { background: var(--accent-soft); color: var(--accent); }
+  #mic { width: 68px; height: 68px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center;
+    box-shadow: 0 6px 24px rgba(255,211,96,.22); touch-action: none; user-select: none; -webkit-user-select: none; transition: transform .15s var(--ease), background .2s; }
+  #mic .ic { width: 28px; height: 28px; stroke-width: 1.9; }
+  #mic.rec { background: var(--danger); color: #fff; transform: scale(1.06); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,107,97,.45); } 100% { box-shadow: 0 0 0 18px rgba(255,107,97,0); } }
+  #hint { font-size: 12.5px; color: var(--text-3); text-align: center; min-height: 18px; }
+  body.kb #hint, body.kb .dock-row { display: none; }
+  form.compose { display: flex; gap: 8px; align-items: center; width: 100%; }
+  .send { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; padding: 0; flex: none; }
+  .send .ic { stroke-width: 2.1; }
+  .attach { width: 40px; height: 44px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; padding: 0; flex: none; }
+  .attach.on { color: var(--accent); }
+  .attach-list { display: flex; gap: 8px; overflow-x: auto; width: 100%; padding: 0 2px; }
+  .attach-list:empty { display: none; }
+  .chip-file { position: relative; flex: none; display: flex; align-items: center; gap: 8px; max-width: 220px; padding: 6px 30px 6px 6px;
+    border-radius: 12px; background: var(--fill); font-size: 13px; color: var(--text-2); }
+  .chip-file img, .chip-file .doc { width: 36px; height: 36px; border-radius: 8px; object-fit: cover; flex: none; background: var(--fill); display: grid; place-items: center; }
+  .chip-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip-file button { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; border: 0; border-radius: 50%;
+    background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; }
+
+  /* ---------- Segmented control ---------- */
+  .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--fill); border-radius: 10px; padding: 2px; gap: 2px; }
+  .seg.tri { grid-template-columns: 1fr 1fr 1fr; }
+  .seg button { min-height: 34px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font-size: 14px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .seg button.on { background: var(--bg-3); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.35); }
+  .seghint { font-size: 13px; color: var(--text-2); margin: 8px 2px 14px; }
+
+  .sec { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 18px 4px 6px; display: flex; justify-content: space-between; align-items: center; }
+  .sec.late { color: var(--warn); }
+  .empty { color: var(--text-3); padding: 28px 8px; text-align: center; font-size: 15px; }
+  .err { color: var(--text-2); padding: 20px 8px; text-align: center; font-size: 14px; }
+
+  /* ---------- Messaggi ---------- */
+  .toolbar { display: flex; gap: 8px; align-items: center; padding: 2px 0 10px; flex-wrap: wrap; }
+  .toolbar .spacer { flex: 1; }
+  .msgs { display: flex; flex-direction: column; }
+  .m-row { border-bottom: .5px solid var(--sep); }
+  .m-head { display: flex; gap: 12px; padding: 13px 2px; width: 100%; text-align: left; border: 0; background: none; align-items: flex-start; }
+  .m-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 7px; flex: none; background: transparent; }
+  .m-row.unread .m-dot { background: var(--accent); }
+  .m-body { flex: 1; min-width: 0; }
+  .m-top { display: flex; gap: 8px; align-items: baseline; }
+  .m-title { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-row.unread .m-title { font-weight: 650; }
+  .m-time { font: 12px var(--mono); color: var(--text-3); white-space: nowrap; }
+  .m-prev { color: var(--text-2); font-size: 14.5px; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .m-row.open .m-prev { display: none; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 12px; color: var(--text-2); background: var(--fill);
+    padding: 2px 8px 2px 6px; border-radius: 99px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-more { display: none; padding: 0 2px 16px 23px; }
+  .m-row.open .m-more { display: block; }
+  .m-full { white-space: pre-wrap; word-break: break-word; font-size: 15.5px; margin-bottom: 14px; }
+  .player { display: flex; align-items: center; gap: 12px; background: var(--bg-2); border-radius: 14px; padding: 10px 12px; margin-bottom: 12px; }
+  .pp { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; padding: 0; flex: none; }
+  .pp .ic { width: 20px; height: 20px; }
+  .pp.loading { opacity: .6; }
+  .prog { flex: 1; height: 28px; display: flex; align-items: center; touch-action: none; }
+  .prog span { position: relative; display: block; width: 100%; height: 4px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+  .prog i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--accent); border-radius: 2px; }
+  .ptime { font: 12px var(--mono); color: var(--text-2); min-width: 76px; text-align: right; }
+  .list-foot { display: flex; justify-content: center; padding: 14px 0 20px; }
+  .list-foot .act { color: var(--danger); }
+  .m-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+  .m-acts button { flex: none; }
+  .m-acts .del { color: var(--danger); }
+
+  /* ---------- To do ---------- */
+  .counter { font: 600 13px var(--mono); color: var(--accent); }
+  .bar { height: 4px; border-radius: 2px; background: var(--fill-2); margin: 4px 0 12px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s var(--ease); }
+  .td { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: .5px solid var(--sep); }
+  .td .ck { width: 44px; height: 44px; margin: -10px -8px -10px -10px; border: 0; background: none; display: grid; place-items: center; padding: 0; flex: none; }
+  .td .ck span { width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 1.6px var(--text-3); display: grid; place-items: center; color: var(--accent-ink); }
+  .td.imp .ck span { box-shadow: inset 0 0 0 1.6px var(--accent); }
+  .td.done .ck span { background: var(--accent); box-shadow: none; }
+  .td .ck .ic { width: 15px; height: 15px; stroke-width: 2.4; }
+  .td .tx { flex: 1; min-width: 0; padding-top: 1px; }
+  .td.done .tx .t { color: var(--text-3); text-decoration: line-through; }
   .td.imp:not(.done) .tx .t { font-weight: 600; }
-  .td .m { font: 11px var(--mono); color: var(--dim); margin-top: 2px; }
-  .td .more { background: none; border: 0; color: var(--dim); font-size: 18px; padding: 0 4px; }
-  .td .acts { display: none; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .td .m { font-size: 12.5px; color: var(--text-2); margin-top: 2px; }
+  .td .more { width: 44px; height: 44px; margin: -10px -10px -10px 0; border: 0; background: none; color: var(--text-3); display: grid; place-items: center; padding: 0; }
+  .td .acts { display: none; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
   .td.open .acts { display: flex; }
-  .td .acts button { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 8px; padding: 5px 9px; font-size: 12px; }
-  .tdsec { font: 600 10px var(--mono); letter-spacing: .18em; color: var(--dim); margin: 14px 0 4px; display: flex; justify-content: space-between; }
-  .tdsec.late { color: var(--warn); }
-  .tdsec button { background: none; border: 0; color: var(--accent); font: 600 12px -apple-system, system-ui; }
-  #todoForm { margin-top: 10px; }
-  #todoAdd { width: 42px; height: 42px; border-radius: 50%; border: 0; background: var(--accent); color: #000; font-size: 20px; }
-  #wfSheet .top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-  #wfSheet h2 { font: 700 13px var(--mono); letter-spacing: .3em; margin: 0; flex: 1; }
-  .seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 3px; margin-bottom: 6px; }
-  .seg button { border: 0; border-radius: 9px; padding: 9px; background: transparent; color: var(--dim); font: 600 13px -apple-system, system-ui; }
-  .seg button.on { background: var(--accent); color: #000; }
-  .seghint { font-size: 12px; color: var(--dim); margin: 0 2px 14px; }
-  #wfList { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
-  .wf .h { display: flex; gap: 8px; align-items: baseline; }
+  .td .acts button { min-height: 36px; border: 0; background: var(--fill); color: var(--text); border-radius: 10px; padding: 0 11px; font-size: 13.5px;
+    display: inline-flex; align-items: center; gap: 6px; }
+  .td .acts button.del { color: var(--danger); }
+  #todoForm { padding: 10px 0; flex: none; }
+
+  /* ---------- Workflow ---------- */
+  #wfList { display: flex; flex-direction: column; gap: 12px; padding-bottom: 16px; }
+  .wf .h { display: flex; gap: 10px; align-items: flex-start; }
   .wf .h .t { font-weight: 600; flex: 1; min-width: 0; }
-  .wf .st { font: 600 9.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); white-space: nowrap; }
-  .wf .st.done { color: var(--ok); } .wf .st.failed { color: var(--danger); } .wf .st.cancelled { color: var(--dim); }
-  .bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,.08); margin: 8px 0; overflow: hidden; }
-  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
-  .wf .ag { display: flex; gap: 8px; font-size: 12.5px; padding: 3px 0; align-items: baseline; }
-  .wf .ag b { font-weight: 600; white-space: nowrap; } .wf .ag span { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .wf .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font: 11px var(--mono); color: var(--dim); }
-  .wf .foot a { color: var(--accent); text-decoration: none; font: 600 12px -apple-system, system-ui; }
-  .wf .ctl { display: flex; gap: 6px; }
-  .wf .ctl button { border: 1px solid var(--line); background: transparent; color: var(--dim); border-radius: 8px; padding: 3px 8px; font-size: 12px; }
-  #pair { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 32px; background: var(--bg); z-index: 9; }
+  .pill { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+  .pill.done { background: rgba(74,222,128,.12); color: var(--ok); } .pill.failed { background: var(--danger-soft); color: var(--danger); }
+  .pill.cancelled { background: var(--fill); color: var(--text-2); }
+  .wf .bar { margin: 10px 0 8px; }
+  .wf .ag { display: flex; gap: 8px; font-size: 13.5px; padding: 4px 0; align-items: center; min-height: 32px; }
+  .wf .ag b { font-weight: 600; white-space: nowrap; }
+  .wf .ag .d { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+  .wf .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font: 12px var(--mono); color: var(--text-3); }
+  .wf .foot a { color: var(--accent); text-decoration: none; font: 600 14px -apple-system, system-ui; display: inline-flex; align-items: center; gap: 2px; min-height: 44px; }
+  .wf .ctl { display: flex; gap: 6px; flex: none; }
+  .wf .ctl button { width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--fill); color: var(--text); display: grid; place-items: center; padding: 0; }
+  .wf .ctl .ic { width: 16px; height: 16px; }
+
+  /* ---------- Alarm banner ---------- */
+  #alarm { position: fixed; z-index: 8; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 8px);
+    background: #2A1615; box-shadow: 0 0 0 1px rgba(255,107,97,.45), 0 12px 40px rgba(0,0,0,.5); border-radius: 18px; padding: 14px;
+    display: flex; gap: 12px; align-items: flex-start; animation: drop .35s var(--ease); }
+  #alarm .ev-ic { width: 34px; height: 34px; border-radius: 50%; background: var(--danger); color: #fff; display: grid; place-items: center; flex: none; }
+  #alarm .b { flex: 1; min-width: 0; }
+  #alarm .l { font-size: 13px; font-weight: 600; color: var(--danger); }
+  #alarm .tx { white-space: pre-wrap; word-break: break-word; margin: 2px 0 10px; }
+  @keyframes drop { from { transform: translateY(-16px); opacity: 0; } }
+
+  /* ---------- Toast ---------- */
+  #toast { position: fixed; z-index: 8; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + var(--tabbar-h) + 14px);
+    padding: 12px 16px; border-radius: 14px; background: rgba(44,44,48,.96); font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.4);
+    opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .2s, transform .2s var(--ease); }
+  #toast.show { opacity: 1; transform: none; }
+  body.kb #toast { bottom: 76px; }
+
+  /* ---------- Settings sheet ---------- */
+  #scrim { position: fixed; inset: 0; z-index: 7; background: rgba(0,0,0,.5); opacity: 0; pointer-events: none; transition: opacity .25s; }
+  #scrim.show { opacity: 1; pointer-events: auto; }
+  #settings { position: fixed; z-index: 7; left: 0; right: 0; bottom: 0; max-height: calc(100% - env(safe-area-inset-top) - 24px);
+    background: var(--bg); border-radius: 16px 16px 0 0; display: flex; flex-direction: column;
+    transform: translateY(105%); transition: transform .32s var(--ease); visibility: hidden; }
+  #settings.show { transform: none; visibility: visible; }
+  .sheet-top { display: flex; align-items: center; padding: 10px 16px 4px; }
+  .sheet-top h2 { flex: 1; margin: 0; font-size: 17px; font-weight: 600; text-align: center; padding-left: 44px; }
+  .sheet-body { overflow-y: auto; padding: 0 16px calc(env(safe-area-inset-bottom) + 20px); }
+  .group-h { font-size: 13px; color: var(--text-2); margin: 20px 16px 6px; }
+  .group { background: var(--bg-2); border-radius: 14px; overflow: hidden; }
+  .group-f { font-size: 12.5px; color: var(--text-3); margin: 6px 16px 0; }
+  .cell { display: flex; align-items: center; gap: 12px; min-height: 50px; padding: 8px 14px; width: 100%; border: 0; background: none; text-align: left; }
+  .cell + .cell { box-shadow: inset 0 .5px 0 var(--sep); }
+  button.cell:active { background: var(--fill); }
+  .cell .ci { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--fill-2); color: var(--text); flex: none; }
+  .cell .ci .ic { width: 18px; height: 18px; }
+  .cell .cb { flex: 1; min-width: 0; }
+  .cell .cs { font-size: 13px; color: var(--text-2); }
+  .cell.warn .cs { color: var(--warn); } .cell.good .cs { color: var(--ok); } .cell.bad .cs { color: var(--danger); }
+  .cell.destructive { color: var(--danger); justify-content: center; font-weight: 500; }
+  .switch { position: relative; width: 51px; height: 31px; border-radius: 16px; background: var(--fill-2); border: 0; padding: 0; flex: none; transition: background .2s; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff;
+    box-shadow: 0 2px 6px rgba(0,0,0,.3); transition: transform .2s var(--ease); }
+  .switch[aria-checked="true"] { background: var(--accent); }
+  .switch[aria-checked="true"]::after { transform: translateX(20px); }
+  .sheet-foot { text-align: center; color: var(--text-3); font: 11px var(--mono); margin-top: 24px; }
+
+  /* ---------- Pairing ---------- */
+  #pair { position: fixed; inset: 0; display: none; place-items: center; text-align: center; padding: 32px 24px; background: var(--bg); z-index: 9; }
   #pair.show { display: grid; }
-  #pair h1 { font: 700 18px var(--mono); letter-spacing: .3em; }
-  #pair p { color: var(--dim); }
+  #pair > div { width: 100%; max-width: 360px; }
+  #pair h2 { font-size: 26px; font-weight: 700; margin: 14px 0 8px; }
+  #pair p { color: var(--text-2); font-size: 15px; }
+  #pair .field { width: 100%; margin-top: 8px; }
+  #pair .act { width: 100%; margin-top: 10px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
 </style>
 </head>
 <body>
+<!-- Icon sprite: 24x24 stroke icons, drawn once and reused with <use>. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="m3 7 2 2 4-4M3 17l2 2 4-4M13 6h8M13 12h8M13 18h8"/></symbol>
+  <symbol id="i-flow" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect x="13" y="13" width="8" height="8" rx="2"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M18.5 10.5v.5a6.5 6.5 0 0 1-13 0v-.5M12 17.5V21"/></symbol>
+  <symbol id="i-ear" viewBox="0 0 24 24"><path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0"/><path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H2.5v6H6l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></symbol>
+  <symbol id="i-volume-off" viewBox="0 0 24 24"><path d="M11 5 6 9H2.5v6H6l5 4z"/><path d="m22 9-6 6M16 9l6 6"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-check-all" viewBox="0 0 24 24"><path d="M17 6 7 16l-4.5-4.5M22 10.5 15.5 17 14 15.5"/></symbol>
+  <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1.2"/><rect x="14" y="4.5" width="4" height="15" rx="1.2"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3.5 6h17M18.5 6v13.5a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2V6M8.5 6V4a1.5 1.5 0 0 1 1.5-1.5h4A1.5 1.5 0 0 1 15.5 4v2M10 11v6M14 11v6"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
+  <symbol id="i-bell-off" viewBox="0 0 24 24"><path d="M8.7 3A6 6 0 0 1 18 8a21.3 21.3 0 0 0 .6 5M17 17H3s3-2 3-9a4.67 4.67 0 0 1 .3-1.7M10.3 21a1.94 1.94 0 0 0 3.4 0M2 2l20 20"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 2.8l2.84 5.75 6.35.93-4.6 4.48 1.09 6.32L12 17.3l-5.68 2.98 1.09-6.32-4.6-4.48 6.35-.93z"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-reply" viewBox="0 0 24 24"><path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M21.5 2.5 14.5 21l-4-8.5-8-4z"/><path d="M21.5 2.5 10.5 12.5"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M4 12v7.5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V12M16 6l-4-4-4 4M12 2v13"/></symbol>
+  <symbol id="i-headphones" viewBox="0 0 24 24"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></symbol>
+  <symbol id="i-unlink" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+</svg>
+
 <div id="app">
   <header>
-    <img src="logo.svg" alt="">
-    <div><div class="brand">E.L.I.O.</div><div class="sub">DNA Factory</div></div>
-    <span class="spacer"></span>
-    <span id="conn" class="dot"></span>
-    <button id="bell" class="icon-btn" title="Notifiche">🔔</button>
-    <button id="todoBtn" class="icon-btn" title="To do">☑</button>
-    <button id="wfBtn" class="icon-btn" title="Workflow">▦</button>
-    <button id="earBtn" class="icon-btn" title="Ascolto continuo">👂</button>
-    <button id="voiceToggle" class="icon-btn" title="Voce">🔊</button>
+    <div class="title">
+      <h1 id="title">Elio</h1>
+      <div id="conn" class="conn"><i></i><span>Connessione…</span></div>
+    </div>
+    <button id="settingsBtn" class="icon-btn" aria-label="Impostazioni"><svg class="ic"><use href="#i-gear"/></svg><span class="pip" id="setPip" hidden></span></button>
   </header>
-  <div id="orbWrap"><canvas id="orb"></canvas><div id="state">connessione…</div></div>
-  <div id="partial"></div>
-  <div id="feed"><div id="tasks"></div></div>
-  <div id="dock">
-    <button id="mic" type="button" aria-label="Parla con Elio">🎙</button>
-    <div id="hint">TIENI PREMUTO O TOCCA PER PARLARE</div>
-    <form id="form" autocomplete="off">
-      <input id="input" placeholder="Scrivi a Elio…" enterkeyhint="send">
-      <button id="sendBtn" type="submit" aria-label="Invia">➤</button>
-    </form>
+
+  <main>
+    <!-- Conversation -->
+    <section id="v-elio" class="view on">
+      <div id="orbWrap"><canvas id="orb"></canvas></div>
+      <div id="state">connessione…</div>
+      <div id="partial"></div>
+      <div id="feed">
+        <div id="tasks"></div>
+        <div id="feedEmpty">Chiedimi qualcosa, a voce o per iscritto.</div>
+      </div>
+      <div id="dock">
+        <div class="dock-row">
+          <button id="earBtn" class="round" aria-label="Ascolto continuo"><svg class="ic"><use href="#i-ear"/></svg></button>
+          <button id="mic" type="button" aria-label="Parla con Elio"><svg class="ic"><use href="#i-mic"/></svg></button>
+          <button id="voiceToggle" class="round" aria-label="Risposte a voce"><svg class="ic"><use href="#i-volume"/></svg></button>
+        </div>
+        <div id="hint">Tieni premuto o tocca per parlare</div>
+        <div id="attachList" class="attach-list"></div>
+        <form id="form" class="compose" autocomplete="off">
+          <button id="attachBtn" class="attach" type="button" aria-label="Allega foto o file"><svg class="ic"><use href="#i-clip"/></svg></button>
+          <input id="attachInput" type="file" multiple hidden>
+          <input id="input" class="field" placeholder="Scrivi a Elio" enterkeyhint="send">
+          <button class="send" type="submit" aria-label="Invia"><svg class="ic"><use href="#i-up"/></svg></button>
+        </form>
+      </div>
+    </section>
+
+    <!-- Messages: things Elio left for later -->
+    <section id="v-messages" class="view">
+      <div class="toolbar">
+        <button id="playAll" class="act go small"><svg class="ic sm"><use href="#i-headphones"/></svg><span>Ascolta i non letti</span></button>
+        <span class="spacer"></span>
+        <button id="readAll" class="act plain small">Segna tutti letti</button>
+      </div>
+      <div class="scroll"><div id="msgList" class="msgs"></div>
+        <div class="list-foot"><button id="clearRead" class="act plain small"><svg class="ic xs"><use href="#i-trash"/></svg>Elimina i messaggi letti</button></div></div>
+    </section>
+
+    <!-- To do -->
+    <section id="v-todo" class="view">
+      <div class="bar"><i id="todoBar" style="width:0%"></i></div>
+      <div class="seg tri" id="todoTabs"><button data-t="today" class="on">Oggi</button><button data-t="tomorrow">Domani</button><button data-t="someday">Prima o poi</button></div>
+      <div class="scroll"><div id="todoList"></div></div>
+      <form id="todoForm" class="compose" autocomplete="off"><input id="todoInput" class="field" placeholder="Aggiungi (!importante @domani 18:30)" enterkeyhint="done">
+        <button class="send" type="submit" aria-label="Aggiungi"><svg class="ic"><use href="#i-plus"/></svg></button></form>
+    </section>
+
+    <!-- Workflow -->
+    <section id="v-workflow" class="view">
+      <div class="seg" id="modeSeg">
+        <button data-mode="talking"><svg class="ic sm"><use href="#i-chat"/></svg>Parlante</button>
+        <button data-mode="silent"><svg class="ic sm"><use href="#i-moon"/></svg>Silenziosa</button>
+      </div>
+      <div class="seghint" id="modeHint"></div>
+      <div class="scroll"><div id="wfList"></div></div>
+    </section>
+  </main>
+
+  <nav id="tabbar">
+    <button data-tab="elio" class="on"><svg class="ic"><use href="#i-sun"/></svg>Elio</button>
+    <button data-tab="messages"><svg class="ic"><use href="#i-inbox"/></svg>Messaggi<span class="badge" id="msgBadge" hidden></span></button>
+    <button data-tab="todo"><svg class="ic"><use href="#i-list"/></svg>To do</button>
+    <button data-tab="workflow"><svg class="ic"><use href="#i-flow"/></svg>Workflow</button>
+  </nav>
+</div>
+
+<div id="alarm" hidden>
+  <div class="ev-ic"><svg class="ic sm"><use href="#i-alert"/></svg></div>
+  <div class="b"><div class="l">Avviso urgente</div><div class="tx" id="alarmText"></div>
+    <button id="alarmOk" class="act bad small">Ho visto</button></div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<div id="scrim"></div>
+<div id="settings" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+  <div class="sheet-top"><h2 id="setTitle">Impostazioni</h2>
+    <button id="settingsClose" class="icon-btn" aria-label="Chiudi"><svg class="ic sm"><use href="#i-x"/></svg></button></div>
+  <div class="sheet-body">
+    <div class="group-h">Notifiche</div>
+    <div class="group">
+      <button class="cell" id="pushCell">
+        <span class="ci" id="pushIc"><svg class="ic"><use href="#i-bell"/></svg></span>
+        <span class="cb"><span>Notifiche</span><br><span class="cs" id="pushStatus">Controllo…</span></span>
+        <svg class="ic sm" id="pushChev" style="color:var(--text-3)"><use href="#i-chev"/></svg>
+      </button>
+      <button class="cell" id="pushTest">
+        <span class="ci"><svg class="ic"><use href="#i-send"/></svg></span>
+        <span class="cb">Invia una prova</span>
+      </button>
+    </div>
+    <div class="group-f" id="pushNote">Elio ti scrive qui quando non sei al Mac: domande, conferme, avvisi e messaggi da ascoltare con calma.</div>
+
+    <div class="group-h">Voce</div>
+    <div class="group">
+      <div class="cell">
+        <span class="ci"><svg class="ic"><use href="#i-volume"/></svg></span>
+        <span class="cb">Risposte a voce</span>
+        <button class="switch" id="voiceSwitch" role="switch" aria-checked="true" aria-label="Risposte a voce"></button>
+      </div>
+      <div class="cell">
+        <span class="ci"><svg class="ic"><use href="#i-ear"/></svg></span>
+        <span class="cb">Ascolto continuo</span>
+        <button class="switch" id="earSwitch" role="switch" aria-checked="true" aria-label="Ascolto continuo"></button>
+      </div>
+    </div>
+    <div class="group-f">Con l'ascolto continuo Elio ti sente mentre l'app è aperta, e risponde solo quando parli con lui.</div>
+
+    <div class="group-h">Questo telefono</div>
+    <div class="group">
+      <div class="cell">
+        <span class="ci"><svg class="ic"><use href="#i-link"/></svg></span>
+        <span class="cb"><span>Mac</span><br><span class="cs" id="macStatus">Connessione…</span></span>
+      </div>
+      <button class="cell destructive" id="unpair">Dissocia questo telefono</button>
+    </div>
+    <div class="sheet-foot">Elio · DNA Factory</div>
   </div>
 </div>
-<div id="toast"></div>
-<div id="todoSheet" class="sheet">
-  <div class="top"><h2>TO DO</h2><span id="todoCount" style="font:600 12px var(--mono);color:var(--accent)"></span><button id="todoClose" class="icon-btn" aria-label="Chiudi">✕</button></div>
-  <div class="bar"><i id="todoBar" style="width:0%"></i></div>
-  <div class="seg tri" id="todoTabs"><button data-t="today" class="on">Oggi</button><button data-t="tomorrow">Domani</button><button data-t="someday">Prima o poi</button></div>
-  <div id="todoList"></div>
-  <form id="todoForm" autocomplete="off"><input id="todoInput" placeholder="Aggiungi… (!importante @domani 18:30)" enterkeyhint="done">
-    <button id="todoAdd" type="submit" aria-label="Aggiungi">＋</button></form>
-</div>
-<div id="wfSheet">
-  <div class="top"><h2>WORKFLOW</h2><button id="wfClose" class="icon-btn" aria-label="Chiudi">✕</button></div>
-  <div class="seg" id="modeSeg"><button data-mode="talking">🗣 Parlante</button><button data-mode="silent">🤫 Silenziosa</button></div>
-  <div class="seghint" id="modeHint"></div>
-  <div id="wfList"></div>
-</div>
+
 <div id="pair"><div>
-  <img src="logo.svg" alt="" style="height:48px;margin-bottom:14px">
-  <h1>E.L.I.O.</h1>
-  <p>Questo telefono non è ancora associato.<br>Sul Mac: Impostazioni di Elio → <b>Telefono</b> → "Pubblica e copia link".<br>Poi incollalo qui:</p>
-  <input id="pairInput" placeholder="Incolla il link di associazione" style="width:100%;padding:12px;border-radius:12px;border:1px solid rgba(255,211,96,.3);background:rgba(255,255,255,.05);color:#FBF8F1;font-size:16px">
-  <button id="pairBtn" class="act go" style="width:100%;margin-top:10px;padding:12px;border-radius:12px;border:0;background:#FFD360;color:#000;font-weight:600">Associa</button>
-  <p id="pairErr" style="color:#FF6B61"></p>
+  <img src="logo.svg" alt="" style="height:52px">
+  <h2>Elio</h2>
+  <p>Questo telefono non è ancora associato.<br>Sul Mac apri Impostazioni di Elio, poi <b>Telefono</b>, e tocca "Pubblica e copia link". Incollalo qui.</p>
+  <input id="pairInput" class="field" placeholder="Link di associazione">
+  <button id="pairBtn" class="act go">Associa</button>
+  <p id="pairErr" style="color:var(--danger)"></p>
 </div></div>
 
 <script>
@@ -204,19 +499,85 @@ function pairWith(text) {
   return true;
 }
 
+// Tiny key-value store in IndexedDB, shared with the service worker (it needs the token to acknowledge calls).
+function kv(mode, fn) {
+  return new Promise((res, rej) => {
+    if (!("indexedDB" in self)) return rej(new Error("no idb"));
+    const o = indexedDB.open("elio", 1);
+    o.onupgradeneeded = () => o.result.createObjectStore("kv");
+    o.onerror = () => rej(o.error);
+    o.onsuccess = () => {
+      const db = o.result, tx = db.transaction("kv", mode), r = fn(tx.objectStore("kv"));
+      tx.oncomplete = () => { db.close(); res(r && r.result); };
+      tx.onerror = () => { db.close(); rej(tx.error); };
+    };
+  });
+}
+const kvSet = (k, v) => kv("readwrite", s => s.put(v, k)).catch(() => {});
+const kvDel = k => kv("readwrite", s => s.delete(k)).catch(() => {});
+if (token) kvSet("token", token);
+
 // ---------- State ----------
 const $ = id => document.getElementById(id);
+const icon = (name, cls = "") => `<svg class="ic ${cls}"><use href="#i-${name}"/></svg>`;
+const authHeaders = (json) => json ? { "Content-Type": "application/json", "X-Elio-Token": token } : { "X-Elio-Token": token };
 const feed = $("feed"), tasksEl = $("tasks");
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let ws = null, state = "connessione…", level = 0, current = null;
 let voiceOn = true;
 try { voiceOn = localStorage.getItem("elio.voice") !== "off"; } catch {}
-$("voiceToggle").textContent = voiceOn ? "🔊" : "🔇";
 const tints = { listening: "#FFD360", thinking: "#FF9F43", speaking: "#F5C13F", hearing: "#FFE38A", offline: "#4A4843" };
 function setState(s, label) {
   state = s;
   $("state").textContent = label || s;
   document.documentElement.style.setProperty("--tint", tints[s] || "#FFD360");
 }
+function setConn(on) {
+  $("conn").classList.toggle("on", on);
+  $("conn").querySelector("span").textContent = on ? "Connesso al Mac" : "Offline, riprovo…";
+  $("macStatus").textContent = on ? "Connesso" : "Non raggiungibile";
+}
+
+// ---------- Tabs ----------
+const TABS = { elio: "Elio", messages: "Messaggi", todo: "To do", workflow: "Workflow" };
+let tab = "elio";
+function showTab(name) {
+  if (!TABS[name]) name = "elio";
+  tab = name;
+  for (const t of Object.keys(TABS)) $("v-" + t).classList.toggle("on", t === name);
+  document.querySelectorAll("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  $("title").textContent = TABS[name];
+  todoOpen = name === "todo"; wfOpen = name === "workflow";
+  if (todoOpen) todoCall();
+  if (wfOpen) loadWorkflows();
+  if (name === "messages") { loadInbox(); renderInbox(); }
+  history.replaceState(null, "", name === "elio" ? location.pathname : "#" + name);
+  if (name === "elio") feed.scrollTop = feed.scrollHeight;
+}
+$("tabbar").onclick = e => { const b = e.target.closest("button"); if (b) showTab(b.dataset.tab); };
+// Deep links (#messages from a notification, or a postMessage from the service worker).
+function openLink(url) {
+  try {
+    const u = new URL(url, location.href);
+    if (u.pathname !== location.pathname && !u.pathname.endsWith("/index.html")) { location.href = u.href; return; }
+    showTab(u.hash.slice(1) || "elio");
+  } catch {}
+}
+
+// ---------- Keyboard: keep the layout inside the visible area ----------
+const vv = window.visualViewport;
+function fitViewport() {
+  const h = vv ? vv.height : innerHeight;
+  document.documentElement.style.setProperty("--app-h", h + "px");
+  // iOS scrolls the page to reveal the focused input: undo it, the layout already fits.
+  if (window.scrollY) window.scrollTo(0, 0);
+}
+if (vv) { vv.addEventListener("resize", fitViewport); vv.addEventListener("scroll", fitViewport); }
+fitViewport();
+document.addEventListener("focusin", e => { if (e.target.matches("input, textarea")) document.body.classList.add("kb"); });
+document.addEventListener("focusout", e => { if (e.target.matches("input, textarea")) setTimeout(() => {
+  if (!document.activeElement || !document.activeElement.matches("input, textarea")) document.body.classList.remove("kb");
+}, 60); });
 
 // ---------- Socket ----------
 function wsURL() {
@@ -227,18 +588,21 @@ function wsURL() {
 function connect() {
   if (!token) return;
   ws = new WebSocket(wsURL(), ["elio", "t-" + token]);
-  ws.onopen = () => { $("conn").classList.add("on"); setState("listening", "pronto"); };
-  ws.onclose = () => { $("conn").classList.remove("on"); setState("offline", "offline"); setTimeout(connect, 2500); };
+  ws.onopen = () => { setConn(true); setState("listening", "pronto"); loadInbox(); };
+  ws.onclose = () => { setConn(false); setState("offline", "offline"); setTimeout(connect, 2500); };
   ws.onmessage = e => { try { handle(JSON.parse(e.data)); } catch (err) { console.error(err); } };
 }
 function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
-// ---------- Messages ----------
+// ---------- Conversation ----------
 function addMsg(role, text, meta) {
+  $("feedEmpty")?.remove();
   const el = document.createElement("div");
   el.className = "msg " + role;
-  const who = { user: "TU", elio: "ELIO", event: "AVVISO" }[role] || role.toUpperCase();
-  el.innerHTML = `<div class="who">${who}<span class="meta"></span></div><div class="text"></div>`;
+  const who = { user: "Tu", elio: "Elio", event: "Avviso" }[role] || role;
+  el.innerHTML = role === "event"
+    ? `<span class="ev-ic">${icon("bell", "xs")}</span><div><div class="who">${who}</div><div class="text"></div><span class="meta"></span></div>`
+    : `<div class="who">${who}</div><div class="text"></div><span class="meta"></span>`;
   el.querySelector(".text").textContent = text;
   if (meta) el.querySelector(".meta").textContent = meta;
   feed.appendChild(el);
@@ -268,12 +632,13 @@ function handle(m) {
     }
     const text = m.route === "local" ? (m.text || "") : (m.text || current.text || "");
     current.el.querySelector(".text").textContent = text;
-    current.el.querySelector(".meta").textContent = ` ${m.route || ""} ${m.latencyMs ?? ""}ms`;
+    current.el.querySelector(".meta").textContent = [m.route, m.latencyMs != null ? m.latencyMs + " ms" : ""].filter(Boolean).join(" · ");
     const rest = m.route === "local" ? text : text.slice(current.spoken || 0);
     current = null;
     speak(rest.trim());
   } else if (m.type === "error") {
-    current.el.querySelector(".text").textContent = "⚠️ " + (m.text || "errore");
+    current.el.classList.add("error");
+    current.el.querySelector(".text").textContent = m.text || "Qualcosa è andato storto.";
     current = null;
     setState("listening", "pronto");
   }
@@ -287,41 +652,43 @@ function handleEvent(m) {
       const el = document.createElement("div");
       const danger = req.risk === "dangerous";
       el.className = "card confirm" + (danger ? " danger" : "");
-      el.innerHTML = `<div class="label">${danger ? "CONFERMA ESPLICITA" : "CONFERMA"}</div><div class="t"></div><pre></pre>
+      el.innerHTML = `<div class="label">${icon(danger ? "alert" : "check", "xs")}${danger ? "Conferma esplicita" : "Conferma"}</div><div class="t"></div><pre></pre>
         <div class="row"><button class="act no">Annulla</button><button class="act go">${danger ? "Confermo" : "Procedi"}</button></div>`;
       el.querySelector(".t").textContent = req.title;
-      el.querySelector("pre").textContent = req.detail;
+      el.querySelector("pre").textContent = req.detail || "";
       el.querySelector(".no").onclick = () => answer(req.id, false);
       el.querySelector(".go").onclick = () => answer(req.id, true);
       confirms.set(req.id, el);
+      $("feedEmpty")?.remove();
       feed.appendChild(el);
       feed.scrollTop = feed.scrollHeight;
-      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      buzz([60, 40, 60]);
       break;
     }
     case "question": {
       const q = JSON.parse(m.payload || "{}");
       if (!q.id || confirms.has(q.id)) break;
       const el = document.createElement("div");
-      el.className = "card confirm";
-      el.innerHTML = `<div class="label" style="color:#ff9f43">DOMANDA · <span class="from"></span></div><div class="t" style="margin:6px 0 8px"></div>
-        <div class="row"><input class="ans" placeholder="La tua risposta…" style="flex:1;min-width:0;padding:10px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.05);color:var(--text);font-size:16px">
-        <button class="act go" style="flex:none;padding:10px 14px">Invia</button></div>`;
-      el.querySelector(".from").textContent = q.from || "";
+      el.className = "card confirm question";
+      el.innerHTML = `<div class="label">${icon("chat", "xs")}<span>Domanda</span><span class="from" style="color:var(--text-2);font-weight:500"></span></div><div class="t" style="margin:6px 0 12px"></div>
+        <div class="row"><input class="ans field" placeholder="La tua risposta" enterkeyhint="send">
+        <button class="send go" aria-label="Invia">${icon("up")}</button></div>`;
+      if (q.from) el.querySelector(".from").textContent = "da " + q.from;
       el.querySelector(".t").textContent = q.question;
       const submit = () => {
         const v = el.querySelector(".ans").value.trim();
         if (!v) return;
         send({ type: "answer", id: q.id, text: v });
         el.remove(); confirms.delete(q.id);
-        addMsg("user", "↳ " + v);
+        addMsg("user", v);
       };
       el.querySelector(".go").onclick = submit;
       el.querySelector(".ans").onkeydown = e => { if (e.key === "Enter") submit(); };
       confirms.set(q.id, el);
+      $("feedEmpty")?.remove();
       feed.appendChild(el);
       feed.scrollTop = feed.scrollHeight;
-      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      buzz([60, 40, 60]);
       break;
     }
     case "questionResolved":
@@ -343,26 +710,40 @@ function handleEvent(m) {
       setMode(m.text);
       break;
     case "todos":
-      try { todoData = JSON.parse(m.payload || "null"); if (todoOpen) renderTodos(); } catch {}
+      try { todoData = JSON.parse(m.payload || "null"); renderTodos(); } catch {}
+      break;
+    case "message":
+      // Something for later: into the inbox, no voice.
+      try { addInboxMessage(JSON.parse(m.payload || "null")); } catch {}
+      break;
+    case "alarm":
+      showAlarm(m.text || "");
       break;
   }
   // The device the user is on speaks; the other one still shows what matters.
-  const shown = new Set(["confirm", "question", "taskDone", "squadDone", "workflowAlert", "reminder", "autoDecision", "progress", "tasteFix"]);
-  if (m.text && (m.speak || shown.has(m.kind)) && m.kind !== "confirm" && m.kind !== "question") addMsg("event", m.text);
+  const shown = new Set(["confirm", "question", "taskDone", "squadDone", "workflowAlert", "reminder", "autoDecision", "progress", "tasteFix", "alarm"]);
+  if (m.text && (m.speak || shown.has(m.kind)) && !["confirm", "question", "message"].includes(m.kind)) {
+    const el = addMsg("event", m.text);
+    if (m.kind === "alarm") { el.classList.add("alarm"); el.querySelector(".who").textContent = "Avviso urgente"; el.querySelector(".ev-ic").innerHTML = icon("alert", "xs"); }
+  }
   if (m.speak && m.text) speak(m.text);
 }
+
+// navigator.vibrate doesn't exist on iOS: everything goes through here.
+function buzz(pattern) { try { if (navigator.vibrate) navigator.vibrate(pattern); } catch {} }
 
 function renderTasks() {
   const list = [...tasks.values()].slice(-4).reverse();
   tasksEl.innerHTML = "";
   if (!list.length) return;
+  $("feedEmpty")?.remove();
   const card = document.createElement("div");
-  card.className = "card";
-  card.innerHTML = `<div class="label" style="font:600 10px var(--mono);letter-spacing:.2em;color:var(--dim);margin-bottom:8px">WORKFLOW</div>`;
+  card.className = "card tasks";
+  card.innerHTML = `<div class="label">${icon("flow", "xs")}Workflow</div>`;
   for (const t of list) {
     const row = document.createElement("div");
     row.className = "task";
-    row.innerHTML = `<span class="s ${t.status}"></span><div style="min-width:0"><div class="n"></div><div class="step"></div></div>`;
+    row.innerHTML = `<span class="s ${t.status}"></span><div><div class="n"></div><div class="step"></div></div>`;
     row.querySelector(".n").textContent = t.title + (t.project ? ` · ${t.project}` : "");
     row.querySelector(".step").textContent = t.status === "running" ? (t.steps || []).slice(-1)[0] || "" : (t.summary || t.status).slice(0, 120);
     card.appendChild(row);
@@ -374,7 +755,7 @@ function answer(id, approved) {
   send({ type: "confirm", id, approved });
   const el = confirms.get(id);
   if (el) { el.remove(); confirms.delete(id); }
-  addMsg("user", approved ? "✓ Confermato" : "✕ Annullato");
+  addMsg("user", approved ? "Confermato" : "Annullato");
 }
 
 function say(text) {
@@ -388,6 +769,14 @@ function say(text) {
   send({ type: "say", id, text });
 }
 
+// ---------- Alarm: urgent, can't be missed ----------
+function showAlarm(text) {
+  $("alarmText").textContent = text;
+  $("alarm").hidden = false;
+  buzz([250, 120, 250, 120, 500]);
+}
+$("alarmOk").onclick = () => { $("alarm").hidden = true; ack(); };
+
 // ---------- Workflows: progress, mode, reports ----------
 let mode = "talking", wfOpen = false, wfTimer = null;
 const STATUS = { running: "in corso", done: "completato", failed: "fallito", cancelled: "fermato" };
@@ -398,6 +787,7 @@ function setMode(m) {
     ? "Elio sta zitto mentre gli agenti lavorano: ti cerca solo per domande, problemi e alla fine."
     : "Elio ti racconta i progressi e le decisioni che prende al posto tuo.";
 }
+setMode("talking");
 $("modeSeg").onclick = e => {
   const m = e.target.closest("button")?.dataset.mode;
   if (!m) return;
@@ -411,17 +801,17 @@ function refreshWorkflows() {
 }
 async function loadWorkflows() {
   try {
-    const r = await fetch("api/workflows", { headers: { "X-Elio-Token": token } });
+    const r = await fetch("api/workflows", { headers: authHeaders() });
     if (!r.ok) throw new Error(r.status);
-    const feed = await r.json();
-    setMode(feed.mode);
-    renderWorkflows(feed.workflows || []);
-  } catch { $("wfList").innerHTML = `<div class="card" style="color:var(--dim)">Non riesco a leggere i workflow dal Mac.</div>`; }
+    const data = await r.json();
+    setMode(data.mode);
+    renderWorkflows(data.workflows || []);
+  } catch { $("wfList").innerHTML = `<div class="err">Non riesco a leggere i workflow dal Mac.</div>`; }
 }
 function renderWorkflows(list) {
   const el = $("wfList");
   el.innerHTML = "";
-  if (!list.length) { el.innerHTML = `<div class="card" style="color:var(--dim)">Nessun workflow ancora. Chiedi a Elio di mettere su una squadra.</div>`; return; }
+  if (!list.length) { el.innerHTML = `<div class="empty">Nessun workflow ancora. Chiedi a Elio di mettere su una squadra.</div>`; return; }
   for (const w of list) {
     const wf = w.workflow, agents = w.agents || [];
     const workers = agents.filter(a => a.kind !== "lead");
@@ -430,25 +820,26 @@ function renderWorkflows(list) {
     const cost = agents.reduce((s, a) => s + (a.costUSD || 0), 0);
     const card = document.createElement("div");
     card.className = "card wf";
-    card.innerHTML = `<div class="h"><span class="t"></span><span class="st ${wf.status}">${STATUS[wf.status] || wf.status}${w.pending ? " · attende te" : ""}</span></div>
+    card.innerHTML = `<div class="h"><span class="t"></span><span class="pill ${wf.status}">${STATUS[wf.status] || wf.status}${w.pending ? " · attende te" : ""}</span></div>
       <div class="bar"><i style="width:${pct}%"></i></div><div class="ags"></div>
       <div class="foot"><span>${new Date(wf.startedAt).toLocaleString("it-IT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · $${cost.toFixed(2)}</span>
-      <a href="report.html?id=${encodeURIComponent(wf.id)}">Report →</a></div>`;
+      <a href="report.html?id=${encodeURIComponent(wf.id)}">Report${icon("chev", "sm")}</a></div>`;
     card.querySelector(".t").textContent = wf.title;
     const ags = card.querySelector(".ags");
     for (const a of agents) {
       const row = document.createElement("div");
       row.className = "ag";
       const active = ["running", "waitingConfirmation", "paused"].includes(a.status);
-      row.innerHTML = `<span class="s ${a.status}" style="width:7px;height:7px;border-radius:50%;flex:none;align-self:center;background:${
-        { done: "var(--ok)", failed: "var(--danger)", waitingConfirmation: "var(--warn)", cancelled: "var(--dim)" }[a.status] || "var(--accent)"}"></span><b></b><span></span>`;
+      row.innerHTML = `<span class="s ${a.status}"></span><b></b><span class="d"></span>`;
       row.querySelector("b").textContent = a.member || "agente";
-      row.querySelector("span:last-child").textContent = active ? (a.lastMessage || (a.steps || []).slice(-1)[0] || a.role || "") : (a.summary || a.status).split("\n")[0];
+      row.querySelector(".d").textContent = active ? (a.lastMessage || (a.steps || []).slice(-1)[0] || a.role || "") : (a.summary || a.status).split("\n")[0];
       if (active) {
         const ctl = document.createElement("span");
         ctl.className = "ctl";
-        ctl.innerHTML = `<button data-a="${a.status === "paused" ? "resume" : "pause"}">${a.status === "paused" ? "▶" : "⏸"}</button><button data-a="stop">■</button>`;
-        ctl.onclick = e => { const act = e.target.dataset.a; if (act) { send({ type: "taskControl", id: a.id, text: act }); setTimeout(loadWorkflows, 600); } };
+        const paused = a.status === "paused";
+        ctl.innerHTML = `<button data-a="${paused ? "resume" : "pause"}" aria-label="${paused ? "Riprendi" : "Pausa"}">${icon(paused ? "play" : "pause", "solid")}</button>
+          <button data-a="stop" aria-label="Ferma">${icon("stop", "solid")}</button>`;
+        ctl.onclick = e => { const act = e.target.closest("button")?.dataset.a; if (act) { send({ type: "taskControl", id: a.id, text: act }); setTimeout(loadWorkflows, 600); } };
         row.appendChild(ctl);
       }
       ags.appendChild(row);
@@ -456,52 +847,59 @@ function renderWorkflows(list) {
     el.appendChild(card);
   }
 }
+
 // ---------- To do ----------
 let todoTab = "today", todoOpen = false, todoData = null;
 async function todoCall(body) {
   try {
-    const r = await fetch("api/todos", body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token }, body: JSON.stringify(body) }
-                                           : { headers: { "X-Elio-Token": token } });
+    const r = await fetch("api/todos", body ? { method: "POST", headers: authHeaders(true), body: JSON.stringify(body) }
+                                           : { headers: authHeaders() });
     if (!r.ok) throw new Error(r.status);
     todoData = await r.json();
     renderTodos();
-  } catch { $("todoList").innerHTML = `<div class="card" style="color:var(--dim)">Non riesco a leggere la lista dal Mac.</div>`; }
+  } catch { $("todoList").innerHTML = `<div class="err">Non riesco a leggere la lista dal Mac.</div>`; }
 }
 function todoRow(t, late) {
   const el = document.createElement("div");
   el.className = "td" + (t.done ? " done" : "") + (t.priority > 0 ? " imp" : "");
-  const meta = [late && t.day ? "dal " + t.day.slice(8) + "/" + t.day.slice(5, 7) : "", t.time ? "⏰ " + t.time : "",
-                t.estimate ? "~" + t.estimate + " min" : "", t.focus ? "● in corso" : "", t.notes || ""].filter(Boolean).join(" · ");
-  el.innerHTML = `<button class="ck">${t.done ? "✓" : ""}</button><div class="tx"><div class="t"></div><div class="m"></div>
-    <div class="acts"><button data-a="important">${t.priority > 0 ? "☆ Normale" : "★ Importante"}</button><button data-a="focus">${t.focus ? "Togli focus" : "◎ Ci lavoro ora"}</button>
-    <button data-a="${late || todoTab !== "today" ? "today" : "tomorrow"}">${late || todoTab !== "today" ? "→ Oggi" : "→ Domani"}</button><button data-a="remove">🗑</button></div></div><button class="more">⋯</button>`;
+  const meta = [late && t.day ? "dal " + t.day.slice(8) + "/" + t.day.slice(5, 7) : "", t.time ? "alle " + t.time : "",
+                t.estimate ? "circa " + t.estimate + " min" : "", t.focus ? "ci stai lavorando" : "", t.notes || ""].filter(Boolean).join(" · ");
+  const toToday = late || todoTab !== "today";
+  el.innerHTML = `<button class="ck" aria-label="${t.done ? "Da fare" : "Fatto"}"><span>${t.done ? icon("check") : ""}</span></button>
+    <div class="tx"><div class="t"></div><div class="m"></div>
+    <div class="acts"><button data-a="important">${icon("star", "xs")}${t.priority > 0 ? "Normale" : "Importante"}</button>
+      <button data-a="focus">${icon("target", "xs")}${t.focus ? "Togli focus" : "Ci lavoro ora"}</button>
+      <button data-a="${toToday ? "today" : "tomorrow"}">${icon("arrow", "xs")}${toToday ? "Oggi" : "Domani"}</button>
+      <button data-a="remove" class="del">${icon("trash", "xs")}Elimina</button></div></div>
+    <button class="more" aria-label="Altre azioni">${icon("more")}</button>`;
   el.querySelector(".t").textContent = t.text;
   el.querySelector(".m").textContent = meta;
   if (!meta) el.querySelector(".m").remove();
-  el.querySelector(".ck").onclick = () => { if (navigator.vibrate) navigator.vibrate(15); todoCall({ action: "toggle", id: t.id }); };
+  el.querySelector(".ck").onclick = () => { buzz(15); todoCall({ action: "toggle", id: t.id }); };
   el.querySelector(".more").onclick = () => el.classList.toggle("open");
-  el.querySelector(".acts").onclick = e => { const a = e.target.dataset.a; if (a) todoCall({ action: a, id: t.id }); };
+  el.querySelector(".acts").onclick = e => { const a = e.target.closest("button")?.dataset.a; if (a) todoCall({ action: a, id: t.id }); };
   return el;
 }
 function renderTodos() {
   if (!todoData) return;
-  const el = $("todoList"); el.innerHTML = "";
   const today = todoData.today || [];
   const done = today.filter(t => t.done).length;
-  $("todoCount").textContent = today.length ? `${done}/${today.length}` : "";
   $("todoBar").style.width = today.length ? (100 * done / today.length) + "%" : "0%";
+  if (tab === "todo") $("title").innerHTML = `To do <span class="counter">${today.length ? `${done}/${today.length}` : ""}</span>`;
+  if (!todoOpen) return;
+  const el = $("todoList"); el.innerHTML = "";
   const list = { today, tomorrow: todoData.tomorrow || [], someday: todoData.someday || [] }[todoTab];
   if (todoTab === "today" && (todoData.overdue || []).length) {
-    const h = document.createElement("div"); h.className = "tdsec late";
-    h.innerHTML = `<span>RIMASTE INDIETRO (${todoData.overdue.length})</span><button>Porta a oggi</button>`;
+    const h = document.createElement("div"); h.className = "sec late";
+    h.innerHTML = `<span>Rimaste indietro (${todoData.overdue.length})</span><button class="act plain small">Porta a oggi</button>`;
     h.querySelector("button").onclick = () => todoCall({ action: "carry" });
     el.appendChild(h);
     todoData.overdue.forEach(t => el.appendChild(todoRow(t, true)));
-    const s = document.createElement("div"); s.className = "tdsec"; s.textContent = "OGGI"; el.appendChild(s);
+    const s = document.createElement("div"); s.className = "sec"; s.textContent = "Oggi"; el.appendChild(s);
   }
   const open = list.filter(t => !t.done), closed = list.filter(t => t.done);
   [...open.filter(t => t.focus), ...open.filter(t => !t.focus), ...closed].forEach(t => el.appendChild(todoRow(t)));
-  if (!list.length) el.insertAdjacentHTML("beforeend", `<div style="color:var(--dim);padding:12px 4px">${todoTab === "today" ? "Niente in lista. Dimmi cosa vuoi fare oggi." : "Niente qui."}</div>`);
+  if (!list.length) el.insertAdjacentHTML("beforeend", `<div class="empty">${todoTab === "today" ? "Niente in lista. Dimmi cosa vuoi fare oggi." : "Niente qui."}</div>`);
 }
 $("todoTabs").onclick = e => {
   const t = e.target.closest("button")?.dataset.t; if (!t) return;
@@ -516,15 +914,12 @@ $("todoForm").onsubmit = e => {
   $("todoInput").value = "";
   todoCall({ action: "add", text });
 };
-$("todoBtn").onclick = () => { todoOpen = true; $("todoSheet").classList.add("show"); todoCall(); };
-$("todoClose").onclick = () => { todoOpen = false; $("todoSheet").classList.remove("show"); };
-
-$("wfBtn").onclick = () => { wfOpen = true; $("wfSheet").classList.add("show"); loadWorkflows(); };
-$("wfClose").onclick = () => { wfOpen = false; $("wfSheet").classList.remove("show"); };
 
 // ---------- Voice out (ElevenLabs via the Mac) ----------
+// One <audio> element for everything: iOS unlocks it once from a tap, then it can play later on its own
+// (spoken replies, and messages whose audio arrives seconds after the tap).
 const audio = new Audio();
-let audioUnlocked = false, speakQueue = Promise.resolve(), speaking = 0;
+let audioUnlocked = false, audioOwner = null;   // "tts" or "msg": who is using the element right now
 function silentWav() {
   // 0.05s of silence, 8 kHz mono 16-bit.
   const n = 400, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
@@ -545,55 +940,80 @@ function unlockAudio() {
 // Each sentence is spoken as soon as it arrives: the first one streams (plays on its first bytes),
 // the next ones are fetched while the current one plays, so there's no gap between them.
 const ttsQueue = [];
-let ttsPlaying = false;
+let ttsPlaying = false, ttsGen = 0, ttsWake = null;
 // The pairing token never goes in a URL: the stream is opened with a one-shot ticket (the text stays on the Mac).
 async function ttsUrl(text) {
-  const r = await fetch("tts/ticket", { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token },
-                                         body: JSON.stringify({ text }) });
+  const r = await fetch("tts/ticket", { method: "POST", headers: authHeaders(true), body: JSON.stringify({ text }) });
   if (!r.ok) throw new Error(r.status);
   return "tts/stream?k=" + (await r.json()).ticket;
 }
+function ttsBlob(text) {
+  return fetch("tts", { method: "POST", headers: authHeaders(true), body: JSON.stringify({ text }) })
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); });
+}
 function speak(text) {
   if (!voiceOn || !text) { if (!ttsPlaying) setState("listening", "pronto"); return; }
+  // Elio speaking now beats a message being listened to.
+  if (audioOwner === "msg") stopMessage();
   const item = { text, blob: null };
-  if (ttsPlaying || ttsQueue.length) item.blob = fetch("tts", { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token },
-                                                               body: JSON.stringify({ text }) }).then(r => r.ok ? r.blob() : null).catch(() => null);
+  if (ttsPlaying || ttsQueue.length) item.blob = ttsBlob(text).catch(() => null);
   ttsQueue.push(item);
   if (!ttsPlaying) playNext();
 }
 async function playNext() {
+  const gen = ttsGen;
   const item = ttsQueue.shift();
-  if (!item) { ttsPlaying = false; setState("listening", "pronto"); return; }
+  if (!item) { ttsPlaying = false; if (audioOwner === "tts") audioOwner = null; setState("listening", "pronto"); return; }
   ttsPlaying = true;
   setState("speaking", "parlo");
   const blob = item.blob ? await item.blob : null;
+  if (gen !== ttsGen) return;   // stopped meanwhile
   const url = blob ? URL.createObjectURL(blob) : null;
   try {
+    audioOwner = "tts";
     audio.src = url || await ttsUrl(item.text);
     await audio.play();
-    await new Promise(res => { audio.onended = res; audio.onerror = res; });
+    await new Promise(res => { ttsWake = res; audio.onended = res; audio.onerror = res; });
   } catch (e) { console.warn("tts", e); }
   if (url) URL.revokeObjectURL(url);
+  if (gen !== ttsGen) return;
   playNext();
 }
-function stopSpeaking() { ttsQueue.length = 0; audio.pause(); ttsPlaying = false; }
-$("voiceToggle").onclick = () => {
-  voiceOn = !voiceOn;
+function stopSpeaking() {
+  ttsQueue.length = 0; ttsGen++;
+  if (audioOwner === "tts") { audio.pause(); audioOwner = null; }
+  ttsPlaying = false;
+  if (ttsWake) { ttsWake(); ttsWake = null; }
+}
+function setVoice(on) {
+  voiceOn = on;
   try { localStorage.setItem("elio.voice", voiceOn ? "on" : "off"); } catch {}
-  $("voiceToggle").textContent = voiceOn ? "🔊" : "🔇";
+  $("voiceToggle").innerHTML = icon(voiceOn ? "volume" : "volume-off");
+  $("voiceToggle").classList.toggle("on", voiceOn);
+  $("voiceToggle").setAttribute("aria-label", voiceOn ? "Risposte a voce: attive" : "Risposte a voce: spente");
+  $("voiceSwitch").setAttribute("aria-checked", String(voiceOn));
   if (!voiceOn) stopSpeaking();
-};
+}
+$("voiceToggle").onclick = () => { setVoice(!voiceOn); toast(voiceOn ? "Risposte a voce attive." : "Risposte solo scritte."); };
+$("voiceSwitch").onclick = () => setVoice(!voiceOn);
+setVoice(voiceOn);
 
 // ---------- Voice in: record here, transcribe on the Mac ----------
 // Safari's dictation isn't reliable in home-screen apps: the audio goes to the Mac (ElevenLabs Scribe).
 let recorder = null, chunks = [], stream = null, analyser = null, downAt = 0, held = false;
+// One mic stream for the whole session: every getUserMedia call can show iOS's prompt again.
+async function micStream() {
+  if (stream && stream.getAudioTracks().some(t => t.readyState === "live")) return stream;
+  return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+}
 function toast(text, ms = 3500) { const t = $("toast"); t.textContent = text; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), ms); }
 async function startRec() {
   unlockAudio();
   stopSpeaking();
+  if (audioOwner === "msg") pauseMessage();
   try {
-    stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-  } catch { toast("Serve il permesso del microfono: Impostazioni → Safari/Elio → Microfono."); return; }
+    stream = await micStream();
+  } catch { toast("Serve il permesso del microfono: Impostazioni, Elio, Microfono."); return; }
   const type = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
   chunks = [];
   recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
@@ -606,15 +1026,15 @@ async function startRec() {
     ac.createMediaStreamSource(stream).connect(analyser);
   } catch {}
   $("mic").classList.add("rec");
-  $("hint").textContent = "TI ASCOLTO… RILASCIA O TOCCA PER INVIARE";
+  $("hint").textContent = "Ti ascolto. Rilascia o tocca per inviare";
   setState("hearing", "ti ascolto");
 }
 function stopRec() {
   if (!recorder || recorder.state === "inactive") return;
   recorder.stop();
   $("mic").classList.remove("rec");
-  $("hint").textContent = "TIENI PREMUTO O TOCCA PER PARLARE";
   analyser = null;
+  refreshAmbientUI();
 }
 async function upload() {
   const blob = new Blob(chunks, { type: recorder.mimeType || "audio/mp4" });
@@ -642,24 +1062,89 @@ $("mic").addEventListener("pointerup", e => {
 });
 $("mic").addEventListener("pointercancel", () => { held = false; stopRec(); });
 
-$("form").onsubmit = e => { e.preventDefault(); say($("input").value); $("input").value = ""; $("input").blur(); };
+// ---------- Attachments: photos and files sent with a message (uploaded to the Mac, Elio opens them there) ----------
+let attached = [];
+function renderAttachments() {
+  const list = $("attachList");
+  list.innerHTML = "";
+  attached.forEach((f, i) => {
+    const el = document.createElement("div");
+    el.className = "chip-file";
+    const thumb = f.type.startsWith("image/") ? Object.assign(document.createElement("img"), { src: f.preview, alt: "" })
+      : Object.assign(document.createElement("div"), { className: "doc", innerHTML: '<svg class="ic"><use href="#i-clip"/></svg>' });
+    const name = document.createElement("span"); name.textContent = f.file.name;
+    const rm = document.createElement("button"); rm.type = "button"; rm.setAttribute("aria-label", "Rimuovi");
+    rm.innerHTML = '<svg class="ic"><use href="#i-x"/></svg>';
+    rm.onclick = () => { URL.revokeObjectURL(f.preview); attached.splice(i, 1); renderAttachments(); };
+    el.append(thumb, name, rm);
+    list.append(el);
+  });
+  $("attachBtn").classList.toggle("on", attached.length > 0);
+}
+$("attachBtn").onclick = () => $("attachInput").click();
+$("attachInput").onchange = e => {
+  for (const file of e.target.files) {
+    if (file.size > 60 * 1024 * 1024) { toast(`${file.name} è troppo grande (massimo 60 MB).`); continue; }
+    attached.push({ file, type: file.type || "", preview: URL.createObjectURL(file) });
+  }
+  e.target.value = "";
+  renderAttachments();
+};
+async function uploadAttachments(files) {
+  const paths = [];
+  for (const f of files) {
+    const r = await fetch("api/upload", { method: "POST", body: f.file,
+      headers: { "X-Elio-Token": token, "X-Filename": encodeURIComponent(f.file.name), "Content-Type": f.type || "application/octet-stream" } });
+    if (!r.ok) throw new Error(await r.text() || `errore ${r.status}`);
+    paths.push((await r.json()).path);
+  }
+  return paths;
+}
+// Same shape the Mac builds (Attachments.compose): the request, then the files for Elio to open.
+function withAttachments(text, files, paths) {
+  const lines = files.map((f, i) => `- ${paths[i]} (${f.type.startsWith("image/") ? "immagine" : f.type === "application/pdf" ? "PDF" : "file"})`);
+  return (text || "Guarda questi allegati.") + "\n\n[Allegati dell'utente: aprili tu (Read per immagini e testo, pdf_tool, media_tool…)]\n" + lines.join("\n");
+}
+$("form").onsubmit = async e => {
+  e.preventDefault();
+  const text = $("input").value.trim();
+  const files = attached;
+  if (!text && !files.length) return;
+  $("input").value = ""; $("input").blur();
+  if (!files.length) return say(text);
+  attached = []; renderAttachments();
+  unlockAudio();
+  const id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random());
+  addMsg("user", [text, "Allegati: " + files.map(f => f.file.name).join(", ")].filter(Boolean).join("\n"));
+  current = { id, text: "", el: addMsg("elio", "…") };
+  setState("thinking", "invio gli allegati");
+  try {
+    const paths = await uploadAttachments(files);
+    setState("thinking", "elaboro");
+    send({ type: "say", id, text: withAttachments(text, files, paths) });
+  } catch (err) {
+    current.el.querySelector(".text").textContent = "Non sono riuscito a inviare gli allegati: " + err.message;
+    setState("listening", "pronto");
+  } finally { files.forEach(f => URL.revokeObjectURL(f.preview)); }
+};
 
 // ---------- Always listening while the app is open ----------
 // Energy-based voice detection in the page: a segment is recorded only while you speak, transcribed on the Mac
-// and sent as "ambient" — Elio answers only if it was meant for it (not a chat with someone next to you).
+// and sent as "ambient": Elio answers only if it was meant for it (not a chat with someone next to you).
 let ambientOn = true;
 try { ambientOn = localStorage.getItem("elio.ambient") !== "off"; } catch {}
 const amb = { ctx: null, an: null, timer: null, floor: -55, inSpeech: false, loud: 0, silence: 0, rec: null, chunks: [], began: 0 };
 function refreshAmbientUI() {
-  $("earBtn").classList.toggle("hot", ambientOn);
-  $("earBtn").title = ambientOn ? "Ascolto continuo: attivo" : "Ascolto continuo: spento";
+  $("earBtn").classList.toggle("on", ambientOn);
+  $("earBtn").setAttribute("aria-label", ambientOn ? "Ascolto continuo: attivo" : "Ascolto continuo: spento");
+  $("earSwitch").setAttribute("aria-checked", String(ambientOn));
   if (!(recorder && recorder.state === "recording"))
-    $("hint").textContent = ambientOn ? (amb.timer ? "TI ASCOLTO SEMPRE · PARLA QUANDO VUOI" : "TOCCA LO SCHERMO PER ATTIVARE L'ASCOLTO") : "TIENI PREMUTO O TOCCA PER PARLARE";
+    $("hint").textContent = ambientOn ? (amb.timer ? "Ti ascolto sempre: parla quando vuoi" : "Tocca l'orecchio per ascoltarti sempre") : "Tieni premuto o tocca per parlare";
 }
 async function startAmbient() {
   if (!ambientOn || amb.timer) return;
   try {
-    stream = stream || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    stream = await micStream();
   } catch { toast("Serve il permesso del microfono per l'ascolto continuo."); return; }
   amb.ctx = amb.ctx || new (window.AudioContext || window.webkitAudioContext)();
   if (amb.ctx.state === "suspended") await amb.ctx.resume();
@@ -667,8 +1152,9 @@ async function startAmbient() {
   amb.ctx.createMediaStreamSource(stream).connect(amb.an);
   const buf = new Float32Array(amb.an.fftSize);
   amb.timer = setInterval(() => {
-    // Paused while Elio speaks (its voice isn't a command), while push-to-talk records, or in background.
-    const busy = ttsPlaying || (recorder && recorder.state === "recording") || document.hidden || state === "thinking";
+    // Paused while Elio speaks (its voice isn't a command), while a message plays, while push-to-talk records, or in background.
+    const msgAudible = audioOwner === "msg" && !audio.paused;
+    const busy = ttsPlaying || msgAudible || (recorder && recorder.state === "recording") || document.hidden || state === "thinking";
     amb.an.getFloatTimeDomainData(buf);
     let sum = 0; for (const v of buf) sum += v * v;
     const db = 10 * Math.log10(sum / buf.length + 1e-10);
@@ -722,104 +1208,460 @@ function sayAmbient(text) {
   setState("thinking", "elaboro");
   send({ type: "ambient", id, text });
 }
-$("earBtn").onclick = () => {
-  ambientOn = !ambientOn;
+function setAmbient(on) {
+  ambientOn = on;
   try { localStorage.setItem("elio.ambient", ambientOn ? "on" : "off"); } catch {}
   ambientOn ? startAmbient() : stopAmbient();
   refreshAmbientUI();
+}
+$("earBtn").onclick = () => {
+  // After a relaunch listening is on but not started yet (it needs this tap for the mic): start it, don't turn it off.
+  if (ambientOn && !amb.timer) { startAmbient(); toast("Ti ascolto: chiamami \"Elio\" quando ti serve."); return; }
+  setAmbient(!ambientOn); toast(ambientOn ? "Ascolto continuo attivo: rispondo solo quando dici \"Elio\"." : "Ascolto continuo spento.");
 };
-// iOS lets the mic and audio start only after a touch: the first one turns the listening on.
-document.addEventListener("pointerdown", () => { unlockAudio(); if (ambientOn && !amb.timer) startAmbient(); }, { capture: true });
-document.addEventListener("visibilitychange", () => { if (!document.hidden && ambientOn && amb.ctx && amb.ctx.state === "suspended") amb.ctx.resume(); });
+$("earSwitch").onclick = () => setAmbient(!ambientOn);
+// iOS lets audio start only after a touch. The mic is asked for only when the user taps the mic or the ear:
+// home-screen apps don't keep the permission between launches, so a generic touch (reading messages,
+// ticking a to-do) must not trigger the prompt.
+document.addEventListener("pointerdown", () => unlockAudio(), { capture: true });
 refreshAmbientUI();
+
+// ---------- Messaggi: things Elio left to listen to later ----------
+let inbox = { unread: 0, messages: [] }, openMsg = null, inboxLoaded = false;
+// Player: one message at a time on the shared <audio>; `queue` holds what "listen to unread" still has to play.
+const player = { id: null, state: "idle", queue: [] };
+const audioURLs = new Map();      // message id -> object URL (instant replay)
+const AUDIO_CACHE = "elio-msg-audio";
+
+async function loadInbox() {
+  if (!token) return;
+  try {
+    const r = await fetch("api/messages", { headers: authHeaders() });
+    if (!r.ok) throw new Error(r.status);
+    setInbox(await r.json());
+  } catch { if (!inboxLoaded) $("msgList").innerHTML = `<div class="err">Non riesco a leggere i messaggi dal Mac.</div>`; }
+}
+async function msgAction(action, id) {
+  // Optimistic: the list reacts at once, the Mac's answer then replaces it.
+  const list = inbox.messages;
+  if (action === "read" || action === "unread") { const m = list.find(x => x.id === id); if (m) m.read = action === "read"; }
+  if (action === "delete") inbox.messages = list.filter(x => x.id !== id);
+  if (action === "readAll") list.forEach(m => m.read = true);
+  if (action === "clearRead") inbox.messages = list.filter(m => !m.read);
+  inbox.unread = inbox.messages.filter(m => !m.read).length;
+  renderInbox();
+  try {
+    const r = await fetch("api/messages", { method: "POST", headers: authHeaders(true), body: JSON.stringify(id ? { action, id } : { action }) });
+    if (!r.ok) throw new Error(r.status);
+    setInbox(await r.json());
+  } catch { toast("Il Mac non ha ricevuto la modifica: riprovo quando torna raggiungibile."); }
+}
+function setInbox(data) {
+  inboxLoaded = true;
+  inbox = { unread: data.unread ?? 0, messages: data.messages || [] };
+  // Drop cached audio of messages that no longer exist.
+  for (const id of [...audioURLs.keys()]) if (!inbox.messages.some(m => m.id === id)) forgetAudio(id);
+  if (player.id && !inbox.messages.some(m => m.id === player.id)) stopMessage();
+  renderInbox();
+}
+function addInboxMessage(m) {
+  if (!m || !m.id || inbox.messages.some(x => x.id === m.id)) return;
+  inbox.messages.unshift(m);
+  inbox.unread = inbox.messages.filter(x => !x.read).length;
+  renderInbox();
+  if (tab !== "messages") toast("Nuovo messaggio: " + (m.title || "da Elio"));
+}
+function relTime(iso) {
+  const d = new Date(iso), now = new Date(), s = (now - d) / 1000;
+  if (isNaN(s)) return "";
+  if (s < 60) return "adesso";
+  if (s < 3600) return Math.floor(s / 60) + " min fa";
+  const hm = d.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
+  const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 864e5);
+  if (diff === 0) return s < 3 * 3600 ? Math.floor(s / 3600) + " h fa" : "oggi " + hm;
+  if (diff === 1) return "ieri " + hm;
+  if (diff < 7) return d.toLocaleDateString("it-IT", { weekday: "short" }) + " " + hm;
+  return d.toLocaleDateString("it-IT", { day: "numeric", month: "short" });
+}
+const clock = s => !isFinite(s) || s < 0 ? "0:00" : Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
+function sourceLabel(src) {
+  if (!src || src === "elio") return "";
+  return src.startsWith("monitor:") ? "Monitor · " + src.slice(8) : src;
+}
+function renderBadge() {
+  const n = inbox.unread;
+  $("msgBadge").hidden = !n;
+  $("msgBadge").textContent = n > 99 ? "99+" : String(n);
+}
+function renderInbox() {
+  renderBadge();
+  renderInboxToolbar();
+  const el = $("msgList");
+  if (!inboxLoaded) { el.innerHTML = `<div class="empty">Carico…</div>`; return; }
+  if (!inbox.messages.length) { el.innerHTML = `<div class="empty">Nessun messaggio. Quando Elio avrà qualcosa da raccontarti con calma, lo troverai qui.</div>`; return; }
+  el.innerHTML = "";
+  for (const m of inbox.messages) el.appendChild(msgRow(m));
+}
+function msgRow(m) {
+  const row = document.createElement("div");
+  row.className = "m-row" + (m.read ? "" : " unread") + (openMsg === m.id ? " open" : "");
+  row.dataset.id = m.id;
+  const src = sourceLabel(m.source);
+  row.innerHTML = `<button class="m-head"><span class="m-dot"></span><span class="m-body">
+      <span class="m-top"><span class="m-title"></span><span class="m-time"></span></span>
+      <span class="m-prev"></span>${src ? `<span class="chip">${icon("eye", "xs")}<span class="src"></span></span>` : ""}</span></button>
+    <div class="m-more"><div class="m-full"></div>
+      <div class="player"><button class="pp" aria-label="Ascolta"></button><span class="prog"><span><i></i></span></span><span class="ptime"></span></div>
+      <div class="m-acts"><button class="act small" data-a="${m.read ? "unread" : "read"}">${icon(m.read ? "dot" : "check", "xs")}${m.read ? "Segna da leggere" : "Segna come letto"}</button>
+        <button class="act small del" data-a="delete">${icon("trash", "xs")}Elimina</button></div></div>`;
+  row.querySelector(".m-title").textContent = m.title || "Messaggio";
+  row.querySelector(".m-time").textContent = relTime(m.date);
+  row.querySelector(".m-prev").textContent = m.text || "";
+  row.querySelector(".m-full").textContent = m.text || "";
+  if (src) row.querySelector(".src").textContent = src;
+  row.querySelector(".m-head").onclick = () => {
+    openMsg = openMsg === m.id ? null : m.id;
+    document.querySelectorAll("#msgList .m-row").forEach(r => r.classList.toggle("open", r.dataset.id === openMsg));
+  };
+  row.querySelector(".pp").onclick = () => togglePlay(m.id);
+  row.querySelector(".m-acts").onclick = e => { const a = e.target.closest("button")?.dataset.a; if (a) msgAction(a, m.id); };
+  bindSeek(row.querySelector(".prog"), m.id);
+  paintPlayer(row, m.id);
+  return row;
+}
+// Only the player of the playing row changes while audio runs: no full re-render at every tick.
+function paintPlayer(row, id) {
+  row = row || document.querySelector(`#msgList .m-row[data-id="${CSS.escape(id)}"]`);
+  if (!row) return;
+  const mine = player.id === id;
+  const st = mine ? player.state : "idle";
+  const pp = row.querySelector(".pp");
+  pp.innerHTML = icon(st === "playing" ? "pause" : "play", "solid");
+  pp.classList.toggle("loading", st === "loading");
+  pp.setAttribute("aria-label", st === "playing" ? "Pausa" : "Ascolta");
+  const dur = mine && isFinite(audio.duration) ? audio.duration : 0, cur = mine ? audio.currentTime : 0;
+  row.querySelector(".prog i").style.width = dur ? (100 * cur / dur) + "%" : "0%";
+  row.querySelector(".ptime").textContent = st === "loading" ? "preparo…" : dur ? `${clock(cur)} / ${clock(dur)}` : "";
+}
+function bindSeek(prog, id) {
+  prog.onclick = e => {
+    if (player.id !== id || !isFinite(audio.duration)) return;
+    const r = prog.getBoundingClientRect();
+    audio.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * audio.duration;
+    paintPlayer(null, id);
+  };
+}
+function speechOf(m) {
+  const title = (m.title || "").trim(), text = (m.text || "").trim();
+  return (title && !text.startsWith(title) ? title + ". " + text : text || title).slice(0, 2000);
+}
+// Audio of a message: memory first, then Cache Storage (survives restarts), then the Mac's voice.
+async function messageAudio(m) {
+  if (audioURLs.has(m.id)) return audioURLs.get(m.id);
+  const key = "msg-audio/" + encodeURIComponent(m.id);
+  let blob = null;
+  try { const hit = await (await caches.open(AUDIO_CACHE)).match(key); if (hit) blob = await hit.blob(); } catch {}
+  if (!blob) {
+    blob = await ttsBlob(speechOf(m));
+    try { await (await caches.open(AUDIO_CACHE)).put(key, new Response(blob, { headers: { "Content-Type": blob.type || "audio/mpeg" } })); } catch {}
+  }
+  const url = URL.createObjectURL(blob);
+  audioURLs.set(m.id, url);
+  return url;
+}
+function forgetAudio(id) {
+  const url = audioURLs.get(id);
+  if (url) URL.revokeObjectURL(url);
+  audioURLs.delete(id);
+  caches.open(AUDIO_CACHE).then(c => c.delete("msg-audio/" + encodeURIComponent(id))).catch(() => {});
+}
+async function playMessage(id) {
+  const m = inbox.messages.find(x => x.id === id);
+  if (!m) return nextInQueue();
+  unlockAudio();
+  stopSpeaking();
+  const prev = player.id;
+  player.id = id; player.state = "loading";
+  if (prev && prev !== id) paintPlayer(null, prev);
+  paintPlayer(null, id);
+  if (!m.read) msgAction("read", id);   // listening is reading
+  let url;
+  try { url = await messageAudio(m); }
+  catch { if (player.id === id) { player.state = "idle"; paintPlayer(null, id); } toast("Non riesco a preparare l'audio: il Mac è raggiungibile?"); return; }
+  if (player.id !== id) return;          // something else started meanwhile
+  audioOwner = "msg";
+  audio.onended = audio.onerror = null;
+  audio.src = url;
+  try { await audio.play(); player.state = "playing"; }
+  catch { player.state = "idle"; toast("Tocca di nuovo per ascoltare."); }
+  paintPlayer(null, id);
+}
+function togglePlay(id) {
+  if (player.id === id && audioOwner === "msg") {
+    if (player.state === "playing") return pauseMessage();
+    if (player.state === "paused") { audio.play().then(() => { player.state = "playing"; paintPlayer(null, id); }).catch(() => {}); return; }
+    if (player.state === "loading") return;
+  }
+  player.queue = []; player.all = false;
+  playMessage(id);
+  renderInboxToolbar();
+}
+function pauseMessage() {
+  if (audioOwner !== "msg") return;
+  audio.pause(); player.state = "paused";
+  paintPlayer(null, player.id);
+}
+function stopMessage() {
+  const id = player.id;
+  if (audioOwner === "msg") { audio.pause(); audioOwner = null; }
+  player.id = null; player.state = "idle"; player.queue = []; player.all = false;
+  if (id) paintPlayer(null, id);
+  renderInboxToolbar();
+}
+function nextInQueue() {
+  const next = player.queue.shift();
+  if (next) { openMsg = next; document.querySelectorAll("#msgList .m-row").forEach(r => r.classList.toggle("open", r.dataset.id === openMsg)); playMessage(next); }
+  else stopMessage();
+}
+function renderInboxToolbar() {
+  const queueActive = player.all && player.id;
+  const hasUnread = inbox.messages.some(m => !m.read), anyRead = inbox.messages.some(m => m.read);
+  $("playAll").hidden = !hasUnread && !queueActive;
+  $("playAll").innerHTML = queueActive ? `${icon("stop", "sm solid")}<span>Ferma l'ascolto</span>` : `${icon("headphones", "sm")}<span>Ascolta i non letti</span>`;
+  $("readAll").hidden = !hasUnread; $("clearRead").hidden = !anyRead;
+  $("playAll").parentElement.hidden = $("playAll").hidden && $("readAll").hidden;
+}
+audio.addEventListener("timeupdate", () => { if (audioOwner === "msg" && player.id) paintPlayer(null, player.id); });
+audio.addEventListener("loadedmetadata", () => { if (audioOwner === "msg" && player.id) paintPlayer(null, player.id); });
+audio.addEventListener("error", () => {
+  if (audioOwner !== "msg" || !player.id || player.state === "loading") return;
+  const id = player.id;
+  stopMessage(); forgetAudio(id);
+  toast("Audio del messaggio non riproducibile: riprova.");
+});
+audio.addEventListener("ended", () => {
+  if (audioOwner !== "msg") return;
+  const id = player.id;
+  player.state = "idle"; audio.currentTime = 0;
+  if (id) paintPlayer(null, id);
+  player.all ? nextInQueue() : (audioOwner = null, player.id = null, renderInboxToolbar());
+});
+// Unread messages, oldest first: a calm catch-up, in the order they arrived.
+$("playAll").onclick = () => {
+  if (player.all && player.id) return stopMessage();
+  const ids = inbox.messages.filter(m => !m.read).map(m => m.id).reverse();
+  if (!ids.length) return;
+  player.queue = ids; player.all = true;
+  nextInQueue();
+  renderInboxToolbar();
+};
+$("readAll").onclick = () => msgAction("readAll");
+$("clearRead").onclick = () => { if (confirm("Eliminare tutti i messaggi già letti?")) msgAction("clearRead"); };
+// Relative times stay true while the list is on screen.
+setInterval(() => { if (tab === "messages") document.querySelectorAll("#msgList .m-row").forEach(r => {
+  const m = inbox.messages.find(x => x.id === r.dataset.id); if (m) r.querySelector(".m-time").textContent = relTime(m.date);
+}); }, 60000);
 
 // ---------- Notifications (Web Push) ----------
 $("pairBtn").onclick = () => { if (!pairWith($("pairInput").value)) $("pairErr").textContent = "Link non valido."; };
-$("pairInput").addEventListener("paste", e => setTimeout(() => pairWith($("pairInput").value), 50));
+$("pairInput").addEventListener("paste", () => setTimeout(() => pairWith($("pairInput").value), 50));
 
 function b64ToBytes(s) { s = s.replace(/-/g, "+").replace(/_/g, "/"); s += "=".repeat((4 - s.length % 4) % 4);
   return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
-async function refreshBell() {
-  const ok = "Notification" in window && Notification.permission === "granted";
-  $("bell").classList.toggle("hot", !ok);
-  $("bell").style.display = ok ? "none" : "";
+function sameBytes(a, b) {
+  if (!a || !b) return false;
+  a = new Uint8Array(a); b = new Uint8Array(b);
+  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
-$("bell").onclick = async () => {
-  const standalone = navigator.standalone || matchMedia("(display-mode: standalone)").matches;
-  if (!("PushManager" in window) || !("Notification" in window)) {
-    toast(standalone ? "Questo iPhone non supporta le notifiche web (serve iOS 16.4 o successivo)."
-                     : "Prima aggiungi Elio alla schermata Home (Condividi → Aggiungi a Home) e aprilo da lì.", 6000);
-    return;
-  }
-  const perm = await Notification.requestPermission();
-  if (perm !== "granted") { toast("Notifiche non consentite."); return; }
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const standalone = navigator.standalone || matchMedia("(display-mode: standalone)").matches;
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+let pushSync = { ok: null, error: "", at: 0 };
+
+// Makes sure the Mac knows where to reach this phone. Runs at every launch and foreground: iOS may drop or rotate
+// the subscription, the Mac may have a new key, or the last POST may have failed. The POST is idempotent.
+async function syncPush(force) {
+  if (!token || !pushSupported() || Notification.permission !== "granted") return refreshPushUI();
+  if (!force && Date.now() - pushSync.at < 60000) return;
+  pushSync.at = Date.now();
   try {
     const reg = await navigator.serviceWorker.ready;
-    const { key } = await (await fetch("push/key")).json();
-    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
-    const r = await fetch("push/subscribe", { method: "POST", headers: { "Content-Type": "application/json", "X-Elio-Token": token },
-                                               body: JSON.stringify(sub.toJSON()) });
-    toast(r.ok ? "Notifiche attive: arriveranno quando non sei al Mac." : "Non sono riuscito ad attivarle.");
-  } catch (e) { toast("Non sono riuscito ad attivarle: " + e.message); }
-  refreshBell();
+    const kr = await fetch("push/key");
+    if (!kr.ok) throw new Error("chiave " + kr.status);
+    const { key } = await kr.json();
+    const want = b64ToBytes(key);
+    let sub = await reg.pushManager.getSubscription();
+    let lastKey = null; try { lastKey = localStorage.getItem("elio.pushKey"); } catch {}
+    // The Mac regenerated its key: a subscription made with the old one would never deliver.
+    const stale = sub && (sub.options && sub.options.applicationServerKey ? !sameBytes(sub.options.applicationServerKey, want) : (lastKey && lastKey !== key));
+    if (stale) { await sub.unsubscribe().catch(() => {}); sub = null; }
+    if (!sub) {
+      try { sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want }); }
+      catch (e) {
+        if (e.name !== "InvalidStateError") throw e;
+        // Another subscription with a different key is in the way: drop it and try once more.
+        const old = await reg.pushManager.getSubscription();
+        if (old) await old.unsubscribe().catch(() => {});
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want });
+      }
+    }
+    const r = await fetch("push/subscribe", { method: "POST", headers: authHeaders(true), body: JSON.stringify(sub.toJSON()) });
+    if (!r.ok) throw new Error("il Mac ha risposto " + r.status);
+    try { localStorage.setItem("elio.pushKey", key); } catch {}
+    pushSync = { ok: true, error: "", at: Date.now() };
+  } catch (e) {
+    pushSync = { ok: false, error: e.message || String(e), at: Date.now() };
+    console.warn("push", e);
+  }
+  refreshPushUI();
+}
+function pushState() {
+  if (!pushSupported()) return isIOS && !standalone ? "home" : "unsupported";
+  if (Notification.permission === "denied") return "denied";
+  if (Notification.permission !== "granted") return "off";
+  if (pushSync.ok === false) return "error";
+  return pushSync.ok ? "on" : "checking";
+}
+function refreshPushUI() {
+  const s = pushState();
+  const ui = {
+    on:          ["good", "bell", "Attive", false],
+    checking:    ["", "bell", "Controllo…", false],
+    off:         ["warn", "bell-off", "Non attive: tocca per attivare", true],
+    error:       ["bad", "bell-off", "Il Mac non le ha registrate: tocca per riprovare", true],
+    denied:      ["bad", "bell-off", "Bloccate nelle impostazioni di iOS", false],
+    home:        ["warn", "share", "Aggiungi Elio alla schermata Home per riceverle", true],
+    unsupported: ["bad", "bell-off", "Non supportate su questo dispositivo", false],
+  }[s];
+  const cell = $("pushCell");
+  cell.className = "cell " + ui[0];
+  $("pushIc").innerHTML = icon(ui[1]);
+  $("pushStatus").textContent = ui[2];
+  $("pushChev").style.visibility = ui[3] ? "visible" : "hidden";
+  $("pushNote").textContent = s === "denied" ? "Per riattivarle: Impostazioni di iOS, Notifiche, Elio, Consenti notifiche."
+    : s === "home" ? "In Safari tocca Condividi, poi Aggiungi alla schermata Home, e apri Elio da lì: su iPhone le notifiche arrivano solo all'app."
+    : s === "error" ? "Errore: " + pushSync.error
+    : "Elio ti scrive qui quando non sei al Mac: domande, conferme, avvisi e messaggi da ascoltare con calma.";
+  $("pushTest").hidden = !(s === "on" || s === "error" || s === "checking");
+  $("setPip").hidden = !["off", "error", "home"].includes(s);
+}
+$("pushCell").onclick = async () => {
+  const s = pushState();
+  if (s === "home") { toast("Condividi, poi Aggiungi alla schermata Home: apri Elio da lì.", 6000); return; }
+  if (s === "error") return syncPush(true);
+  if (s !== "off") return;
+  // iOS wants the permission prompt straight from the tap: nothing awaited before it.
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") { refreshPushUI(); toast(perm === "denied" ? "Notifiche bloccate: puoi riattivarle dalle impostazioni di iOS." : "Notifiche non attivate."); return; }
+  await syncPush(true);
+  toast(pushSync.ok ? "Notifiche attive." : "Non sono riuscito ad attivarle: " + pushSync.error, 5000);
 };
-refreshBell();
+$("pushTest").onclick = async () => {
+  try {
+    const r = await fetch("push/test", { method: "POST", headers: authHeaders() });
+    if (!r.ok) throw new Error((await r.text().catch(() => "")).trim() || "errore " + r.status);
+    toast("Prova inviata: dovrebbe arrivare tra pochi secondi.");
+  } catch (e) { toast("Prova non inviata: " + e.message, 5000); }
+};
+
+// Stops repeated "call" pushes once the user has the app in front of them.
+function ack() { if (token) fetch("api/ack", { method: "POST", headers: authHeaders() }).catch(() => {}); }
+function clearBadge() {
+  kvSet("badge", 0);
+  try { if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {}); } catch {}
+}
+function onForeground() {
+  if (!token) return;
+  ack(); clearBadge(); syncPush(); loadInbox();
+  if (ambientOn && amb.ctx && amb.ctx.state === "suspended") amb.ctx.resume();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) onForeground(); });
+if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e => {
+  if (e.data && e.data.type === "open") openLink(e.data.url || "./");
+});
+
+// ---------- Settings sheet ----------
+function openSettings(show) {
+  $("settings").classList.toggle("show", show);
+  $("scrim").classList.toggle("show", show);
+  if (show) { refreshPushUI(); syncPush(); }
+}
+$("settingsBtn").onclick = () => openSettings(true);
+$("settingsClose").onclick = $("scrim").onclick = () => openSettings(false);
+$("unpair").onclick = async () => {
+  if (!confirm("Dissociare questo telefono da Elio? Per riassociarlo servirà un nuovo link dal Mac.")) return;
+  try { const reg = await navigator.serviceWorker?.ready; const sub = await reg?.pushManager?.getSubscription(); await sub?.unsubscribe(); } catch {}
+  try { localStorage.removeItem("elio.token"); localStorage.removeItem("elio.pushKey"); } catch {}
+  await kvDel("token");
+  location.replace(location.pathname);
+};
 
 // ---------- Orb ----------
 const cv = $("orb"), cx = cv.getContext("2d");
-const neurons = Array.from({ length: 56 }, (_, i) => {
+const neurons = Array.from({ length: 48 }, (_, i) => {
   let s = i * 9301 + 49297; const r = () => ((s = (s * 233280 + 49297) % 233280) / 233280);
-  return { ph: r() * 6.28, sp: (0.4 + r() * 0.9) * (r() > .5 ? 1 : -1), rad: .3 + r() * .5, tilt: .55 + r() * .45, sz: 1.4 + r() * 2.2 };
+  return { ph: r() * 6.28, sp: (0.4 + r() * 0.9) * (r() > .5 ? 1 : -1), rad: .3 + r() * .5, tilt: .55 + r() * .45, sz: 1.2 + r() * 1.8 };
 });
 function frame(t) {
+  requestAnimationFrame(frame);
+  if (document.hidden || tab !== "elio") return;
   const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
-  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  if (!w || !h) return;
+  if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
   cx.setTransform(dpr, 0, 0, dpr, 0, 0);
   cx.clearRect(0, 0, w, h);
   const tint = getComputedStyle(document.documentElement).getPropertyValue("--tint").trim() || "#FFD360";
-  const R = Math.min(w, h) / 2.1, c = { x: w / 2, y: h / 2 }, time = t / 1000;
+  // Reduced motion: the orb barely drifts, but still changes color with Elio's state.
+  const R = Math.min(w, h) / 2.15, c = { x: w / 2, y: h / 2 }, time = t / 1000 * (reduceMotion ? .15 : 1);
   const energy = { thinking: 1, speaking: .8, hearing: .75, offline: .15 }[state] ?? .35;
   level *= 0.93;
   if (analyser) { const d = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(d);
     level = Math.max(level, Math.min(1, d.reduce((a, b) => a + b, 0) / d.length / 60)); }
   const g = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R);
-  g.addColorStop(0, tint + "44"); g.addColorStop(1, "transparent");
+  g.addColorStop(0, tint + "33"); g.addColorStop(1, "transparent");
   cx.fillStyle = g; cx.beginPath(); cx.arc(c.x, c.y, R, 0, 7); cx.fill();
-  const pts = neurons.map((n, i) => {
+  const pts = neurons.map(n => {
     const a = n.ph + time * (0.12 + energy * .5) * n.sp, rr = R * (n.rad + Math.sin(time * .8 + n.ph) * .05 + level * .08);
     return [c.x + Math.cos(a) * rr, c.y + Math.sin(a) * rr * n.tilt, n.sz];
   });
   const maxD = R * (.38 + energy * .12);
-  cx.lineWidth = .7;
+  cx.lineWidth = .6;
   for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
     const d = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]);
     if (d > maxD) continue;
     const fire = state === "thinking" ? (Math.sin(time * 6 + i * 7 + j) + 1) / 2 : .3;
-    cx.strokeStyle = tint; cx.globalAlpha = (1 - d / maxD) * (.12 + .35 * energy * fire);
+    cx.strokeStyle = tint; cx.globalAlpha = (1 - d / maxD) * (.1 + .3 * energy * fire);
     cx.beginPath(); cx.moveTo(pts[i][0], pts[i][1]); cx.lineTo(pts[j][0], pts[j][1]); cx.stroke();
   }
-  cx.globalAlpha = .55 + .45 * energy; cx.fillStyle = tint;
+  cx.globalAlpha = .5 + .4 * energy; cx.fillStyle = tint;
   for (const p of pts) { cx.beginPath(); cx.arc(p[0], p[1], p[2] / 2 * (1 + level), 0, 7); cx.fill(); }
-  cx.globalAlpha = 1;
-  for (const [k, ring] of [[0, [.92, 1]], [1, [.8, -1.6]]]) {
-    const n = k ? 5 : 3;
-    for (let s = 0; s < n; s++) {
-      const st = time * (0.12 + energy * .5) * ring[1] + s * 6.283 / n;
-      cx.strokeStyle = tint; cx.globalAlpha = .35 + .3 * energy; cx.lineWidth = k ? 2.2 : 1.2;
-      cx.beginPath(); cx.arc(c.x, c.y, R * ring[0], st, st + (k ? .5 : 1.4)); cx.stroke();
-    }
+  // One thin ring, a few slow arcs: presence without the HUD.
+  for (let s = 0; s < 3; s++) {
+    const st = time * (0.1 + energy * .4) + s * 6.283 / 3;
+    cx.strokeStyle = tint; cx.globalAlpha = .25 + .3 * energy; cx.lineWidth = 1.2;
+    cx.beginPath(); cx.arc(c.x, c.y, R * .94, st, st + 1.2); cx.stroke();
   }
   cx.globalAlpha = 1;
-  const core = R * (.16 + level * .07 + (state === "speaking" ? Math.sin(time * 9) * .015 : 0));
+  const core = R * (.16 + level * .07 + (state === "speaking" && !reduceMotion ? Math.sin(time * 9) * .015 : 0));
   const cg = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, core);
   cg.addColorStop(0, "#ffffff"); cg.addColorStop(.5, tint); cg.addColorStop(1, "transparent");
   cx.fillStyle = cg; cx.beginPath(); cx.arc(c.x, c.y, core, 0, 7); cx.fill();
-  requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
+// ---------- Start ----------
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
-connect();
+renderInbox();
+refreshPushUI();
+if (token) {
+  connect();
+  onForeground();
+  // #messages, #todo, #workflow: open on that tab (links from notifications and from the report page).
+  const route = location.hash.slice(1);
+  if (TABS[route]) showTab(route);
+}
+addEventListener("hashchange", () => { const r = location.hash.slice(1); if (TABS[r] && r !== tab) showTab(r); });
 </script>
 </body>
 </html>

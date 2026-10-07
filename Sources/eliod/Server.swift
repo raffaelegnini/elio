@@ -110,20 +110,24 @@ final class Server: @unchecked Sendable {
                 }
             }
         case .answer(let id, let text):
+            Presence.noteRequest(remote: mode == .remote)
             Task { await brain.gate.reply(id: id, text: text) }
         case .taskControl(let id, let action):
             Task { await brain.tasks.control(id, action: action) }
         case .cancelTurn:
             Task { await brain.cancelCurrentTurn() }
         case .ambient(let id, let text):
-            // Always-on mic: answers to a pending question/confirmation, the wake word, or anything the
-            // classifier says is for Elio; a chat with someone else is dropped.
+            // Always-on mic: answers to a pending question/confirmation, the wake word, or (on the Mac only)
+            // anything the classifier says is for Elio; a chat with someone else is dropped. The phone is in a
+            // pocket or on a table among people, so there it takes the wake word or an awaited answer.
             Presence.noteRequest(remote: mode == .remote)
             Task {
                 let wake = WakeWord.strip(text)
                 let command = wake ?? text
                 var forElio = wake != nil
-                if !forElio {
+                if !forElio, self.mode == .remote {
+                    forElio = await brain.gate.awaitingAnswer
+                } else if !forElio {
                     let verdict = await Addressee.classify(said: text, elioSaying: nil, wakeWord: false)
                     forElio = verdict.target != .other && verdict.intent != .backchannel
                 }
@@ -132,7 +136,7 @@ final class Server: @unchecked Sendable {
                     self.send(ServerMessage(type: .done, id: id, text: "", route: .local), on: conn)
                     return
                 }
-                for await reply in await brain.handle(id: id, text: command) { self.send(reply, on: conn) }
+                for await reply in await brain.handle(id: id, text: command, overheard: true) { self.send(reply, on: conn) }
             }
         case .prepare(let id, let text):
             guard mode == .local else { return }
@@ -155,6 +159,7 @@ final class Server: @unchecked Sendable {
             }
             dispatchTool(message, on: conn)
         case .confirm(let id, let approved):
+            Presence.noteRequest(remote: mode == .remote)
             Task { await brain.gate.answer(id: id, approved: approved) }
         }
     }

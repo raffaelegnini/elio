@@ -1,6 +1,6 @@
 import Foundation
 
-/// Slack through a user token (xoxp-…, Keychain service `elio-slack`): Elio acts as Raffaele.
+/// Slack through a user token (xoxp-…, Keychain service `elio-slack`): Elio acts as the user.
 /// Every outgoing message goes through the confirmation gate.
 public actor SlackAPI {
     public static let shared = SlackAPI()

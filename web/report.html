@@ -31,27 +31,31 @@
     --good: #12803c; --warn: #b85c00; --bad: #c4312a;
     --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
-  main { max-width: 1180px; margin: 0 auto; padding: 28px 16px 64px; }
-  .eyebrow { font: 600 10.5px var(--mono); letter-spacing: .28em; color: var(--accent); text-transform: uppercase; }
-  h1 { font-size: 26px; line-height: 1.2; margin: 6px 0 8px; font-weight: 650; letter-spacing: -.01em; text-wrap: balance; }
-  h2 { font: 600 11px var(--mono); letter-spacing: .22em; text-transform: uppercase; color: var(--muted); margin: 0 0 14px; }
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  main { max-width: 1180px; margin: 0 auto;
+    padding: calc(env(safe-area-inset-top) + 12px) max(16px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 64px) max(16px, env(safe-area-inset-left)); }
+  .ic { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; vertical-align: -3px; }
+  .ic.xs { width: 14px; height: 14px; vertical-align: -2px; }
+  .back { display: inline-flex; align-items: center; gap: 2px; min-height: 44px; margin-left: -6px; color: var(--accent); text-decoration: none; font-size: 16px; }
+  .back .ic { width: 24px; height: 24px; }
+  .eyebrow { font-size: 13px; font-weight: 600; color: var(--muted); }
+  h1 { font-size: 28px; line-height: 1.2; margin: 4px 0 10px; font-weight: 700; letter-spacing: -.01em; text-wrap: balance; }
+  h2 { font-size: 15px; font-weight: 600; color: var(--text); margin: 0 0 14px; }
   .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--text-2); font-size: 13px; }
-  .pill { display: inline-flex; align-items: center; gap: 6px; font: 600 10px var(--mono); letter-spacing: .14em; text-transform: uppercase;
-    padding: 3px 8px; border-radius: 99px; border: 1px solid var(--line); }
-  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+    padding: 2px 9px; border-radius: 99px; background: var(--grid); }
   .st-running { color: var(--accent); } .st-done { color: var(--good); } .st-failed { color: var(--bad); } .st-cancelled { color: var(--muted); }
-  .summary { margin: 18px 0 0; padding: 14px 16px; border-left: 2px solid var(--accent); background: var(--surface); border-radius: 0 10px 10px 0;
+  .summary { margin: 18px 0 0; padding: 14px 16px; background: var(--surface); border-radius: 14px;
     color: var(--text-2); white-space: pre-wrap; max-height: 260px; overflow: auto; }
   section { margin-top: 28px; }
-  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .panel { background: var(--surface); border-radius: 16px; padding: 18px; }
   .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 22px; }
-  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .kpi { background: var(--surface); border-radius: 14px; padding: 12px 14px; }
   .kpi .v { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
-  .kpi .l { font: 600 10px var(--mono); letter-spacing: .16em; color: var(--muted); text-transform: uppercase; }
+  .kpi .l { font-size: 12.5px; font-weight: 600; color: var(--muted); }
   .kpi .s { color: var(--muted); font-size: 12px; }
   svg { display: block; width: 100%; overflow: visible; }
   svg text { fill: var(--muted); font: 11px var(--mono); }
@@ -59,7 +63,7 @@
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
   .legend .mk { font-style: normal; color: var(--text-2); margin-right: 4px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th { text-align: left; font: 600 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); padding: 6px 8px;
+  th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 6px 8px;
     border-bottom: 1px solid var(--line); white-space: nowrap; }
   td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
   td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -70,27 +74,30 @@
   .item { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; }
   .item .h { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--muted); margin-bottom: 3px; flex-wrap: wrap; }
   .item .b { white-space: pre-wrap; word-break: break-word; }
-  .item .r { color: var(--text-2); font-size: 12.5px; margin-top: 4px; }
-  .tag { font: 600 9.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; background: var(--grid); color: var(--text-2); }
+  .item .r { color: var(--text-2); font-size: 13px; margin-top: 4px; display: flex; gap: 6px; align-items: flex-start; }
+  .item .r .ic { margin-top: 2px; color: var(--muted); }
+  .item ul { margin: 4px 0 0; padding-left: 18px; color: var(--text-2); font-size: 13px; }
+  .tag { font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: var(--grid); color: var(--text-2); }
   .tag.fix { color: var(--warn); } .tag.ask { color: var(--accent); } .tag.ok { color: var(--good); } .tag.bad { color: var(--bad); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-  .chip { border: 1px solid var(--line); background: transparent; color: var(--text-2); border-radius: 99px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+  .chip { border: 0; background: var(--grid); color: var(--text-2); border-radius: 99px; padding: 0 12px; min-height: 32px; font-size: 13px; cursor: pointer; }
   .chip.on { background: var(--text); color: var(--bg); border-color: transparent; }
   .feed { max-height: 520px; overflow: auto; }
   .ev { display: grid; grid-template-columns: 54px 110px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
   .ev .t { font: 11px var(--mono); color: var(--muted); padding-top: 2px; }
   .ev .b { white-space: pre-wrap; word-break: break-word; color: var(--text-2); }
   .agents { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
-  .agent { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .agent { background: var(--surface); border-radius: 14px; padding: 14px; }
   .agent .role { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
   .agent details { margin-top: 8px; font-size: 12.5px; color: var(--text-2); }
-  .agent summary { cursor: pointer; color: var(--muted); font: 600 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+  .agent summary { cursor: pointer; color: var(--muted); font-size: 12.5px; font-weight: 600; min-height: 32px; display: flex; align-items: center; }
   .agent code { font: 11.5px var(--mono); display: block; white-space: pre-wrap; word-break: break-all; color: var(--text-2); padding: 2px 0; }
   .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
   #tip { position: fixed; pointer-events: none; z-index: 9; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
     padding: 8px 10px; font-size: 12px; max-width: 320px; box-shadow: 0 8px 30px rgba(0,0,0,.35); display: none; white-space: pre-wrap; }
   #tip b { display: block; margin-bottom: 2px; }
-  .wf-list a { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; }
+  .wf-list a { display: flex; gap: 12px; align-items: center; min-height: 52px; padding: 10px 0; border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; }
+  .wf-list a:last-child { border-bottom: 0; }
   .wf-list .d { color: var(--muted); font-size: 12px; margin-left: auto; white-space: nowrap; }
   footer { margin-top: 36px; color: var(--muted); font: 11px var(--mono); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   button.link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
@@ -101,6 +108,11 @@
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-reply" viewBox="0 0 24 24"><path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></symbol>
+</svg>
 <main id="root"><p class="empty">Carico il report…</p></main>
 <div id="tip"></div>
 <script>
@@ -113,6 +125,10 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const token = (() => { try { return localStorage.getItem("elio.token"); } catch { return null; } })();
 const query = new URLSearchParams(location.search);
 
+const icon = (name, cls = "") => `<svg class="ic ${cls}"><use href="#i-${name}"/></svg>`;
+// Inside the app there is no browser chrome: a way back to the Workflow tab. Not in reports saved as files.
+const back = () => EMBEDDED ? "" : `<a class="back" href="./#workflow">${icon("back")}Workflow</a>`;
+
 const SLOTS = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"];
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
@@ -124,6 +140,8 @@ const fmt = {
   usd: n => "$" + (n || 0).toFixed(2),
 };
 
+const STATUS_IT = { running: "in corso", done: "completato", failed: "fallito", cancelled: "fermato",
+  waitingConfirmation: "attende conferma", paused: "in pausa" };
 const KIND = {
   started: "Avvio", agentStarted: "Agente al lavoro", agentDone: "Agente ha finito", agentFailed: "Errore agente",
   message: "Bacheca", progress: "Aggiornamento", alert: "Problema", question: "Domanda", answer: "Risposta",
@@ -156,16 +174,16 @@ async function boot() {
     render(data, true);
     if (data.workflow.status === "running") setTimeout(boot, 10000);
   } catch (e) {
-    $("#root").innerHTML = `<p class="empty">${token ? "Report non trovato." : "Apri il report dall'app Elio sul telefono (serve l'associazione)."}</p>`;
+    $("#root").innerHTML = `${back()}<p class="empty">${token ? "Report non trovato." : "Apri il report dall'app Elio sul telefono (serve l'associazione)."}</p>`;
   }
 }
 
 async function renderList() {
   try {
     const feed = await api("api/workflows");
-    $("#root").innerHTML = `<div class="eyebrow">Elio · Workflow</div><h1>Report dei workflow</h1>
+    $("#root").innerHTML = `${back()}<div class="eyebrow">Elio · Workflow</div><h1>Report dei workflow</h1>
       <div class="panel wf-list">${feed.workflows.map(w => `<a href="?id=${encodeURIComponent(w.workflow.id)}">
-        <span class="pill st-${esc(w.workflow.status)}">${esc(w.workflow.status)}</span><span>${esc(w.workflow.title)}</span>
+        <span class="pill st-${esc(w.workflow.status)}">${esc(STATUS_IT[w.workflow.status] || w.workflow.status)}</span><span>${esc(w.workflow.title)}</span>
         <span class="d">${fmt.date(w.workflow.startedAt)}</span></a>`).join("") || `<p class="empty">Nessun workflow ancora.</p>`}</div>`;
   } catch { $("#root").innerHTML = `<p class="empty">Non riesco a raggiungere Elio.</p>`; }
 }
@@ -204,10 +222,10 @@ function render(r, live) {
   const corrections = m.count("tasteCorrection"), violations = m.count("tasteViolation");
   const decisions = m.count("autoDecision"), questions = m.count("question") - decisions;
 
-  $("#root").innerHTML = `
+  $("#root").innerHTML = `${back()}
     <div class="eyebrow">Elio · Report workflow · ${wf.kind === "squad" ? "squadra" : "task"}</div>
     <h1>${esc(wf.title)}</h1>
-    <div class="meta"><span class="pill st-${esc(wf.status)}">${esc({ running: "in corso", done: "completato", failed: "fallito", cancelled: "fermato" }[wf.status] || wf.status)}</span>
+    <div class="meta"><span class="pill st-${esc(wf.status)}">${esc(STATUS_IT[wf.status] || wf.status)}</span>
       ${wf.project ? `<span>${esc(wf.project)}</span>` : ""}<span>${fmt.date(wf.startedAt)}</span>
       <span>modalità ${r.mode === "silent" ? "silenziosa" : "parlante"}</span>
       ${live ? `<span>aggiornato ${fmt.time(r.generatedAt)}</span>` : ""}</div>
@@ -304,7 +322,7 @@ function gantt(m) {
     const x1 = x(a.start), x2 = Math.max(x1 + 4, x(a.end));
     const running = ["running", "waitingConfirmation", "paused"].includes(a.info.status);
     s += `<rect x="${x1}" y="${y - 6}" width="${x2 - x1}" height="12" rx="4" fill="${a.color}" opacity="${running ? .55 : .9}"
-      data-tip="${tipText(a.name, `\n${a.info.role || ""}\n${fmt.time(a.start)} → ${running ? "in corso" : fmt.time(a.end)} · ${fmt.dur((a.info.activeSeconds || (a.end - a.start) / 1000))} di lavoro\n${fmt.usd(a.info.costUSD)} · ${fmt.tok((a.info.tokensIn || 0) + (a.info.tokensOut || 0))} token`)}"/>`;
+      data-tip="${tipText(a.name, `\n${a.info.role || ""}\n${fmt.time(a.start)}–${running ? "in corso" : fmt.time(a.end)} · ${fmt.dur((a.info.activeSeconds || (a.end - a.start) / 1000))} di lavoro\n${fmt.usd(a.info.costUSD)} · ${fmt.tok((a.info.tokensIn || 0) + (a.info.tokensOut || 0))} token`)}"/>`;
     // Moments that matter, on the agent's row.
     for (const e of m.ev) {
       const mk = MARKS[e.kind];
@@ -389,7 +407,7 @@ function activity(m) {
   const cols = [["command", "Comandi"], ["edit", "Modifiche"], ["write", "File nuovi"], ["read", "Letture"], ["search", "Ricerche"], ["ask", "Domande"]];
   const rows = m.agents.map(a => `<tr><td><span class="who"><i style="background:${a.color}"></i>${esc(a.name)}</span>
       <div style="color:var(--muted);font-size:12px">${esc(a.info.role || a.info.title)}</div></td>
-      <td><span class="pill st-${a.info.status === "waitingConfirmation" ? "running" : esc(a.info.status)}">${esc(a.info.status)}</span></td>
+      <td><span class="pill st-${a.info.status === "waitingConfirmation" || a.info.status === "paused" ? "running" : esc(a.info.status)}">${esc(STATUS_IT[a.info.status] || a.info.status)}</span></td>
       ${cols.map(([k]) => `<td class="n">${a.activity?.[k] || "·"}</td>`).join("")}
       <td class="n">${a.files.length || "·"}</td><td class="n">${fmt.dur(a.info.activeSeconds || (a.end - a.start) / 1000)}</td>
       <td class="n">${fmt.tok((a.info.tokensIn || 0) + (a.info.tokensOut || 0))}</td><td class="n">${fmt.usd(a.info.costUSD)}</td></tr>`).join("");
@@ -404,13 +422,13 @@ function decisionsList(m) {
   for (const e of items) {
     if (e.kind === "autoDecision") {
       out.push(`<div class="item"><div class="h"><span class="tag ok">deciso da Elio</span><span>${fmt.time(e.t)}</span></div>
-        <div class="b">${esc(e.d.question || "")}</div><div class="r">→ ${esc(e.text)}</div>${e.d.reason ? `<div class="r" style="color:var(--muted)">${esc(e.d.reason)}</div>` : ""}</div>`);
+        <div class="b">${esc(e.d.question || "")}</div><div class="r">${icon("arrow", "xs")}<span>${esc(e.text)}</span></div>${e.d.reason ? `<div class="r" style="color:var(--muted)">${esc(e.d.reason)}</div>` : ""}</div>`);
     } else if (e.kind === "question") {
       const decided = m.ev.some(x => x.kind === "autoDecision" && x.d.question === e.text);
       if (decided) continue;
       const ans = m.ev.find(x => x.kind === "answer" && x.t >= e.t && x.workflow === e.workflow);
       out.push(`<div class="item"><div class="h"><span class="tag ask">chiesto a te</span><span>${esc(e.actor)} · ${fmt.time(e.t)}</span></div>
-        <div class="b">${esc(e.text)}</div>${ans ? `<div class="r">↳ ${esc(ans.text)}</div>` : ""}</div>`);
+        <div class="b">${esc(e.text)}</div>${ans ? `<div class="r">${icon("reply", "xs")}<span>${esc(ans.text)}</span></div>` : ""}</div>`);
     }
   }
   $("#decisions").innerHTML = out.join("") || `<p class="empty">Nessuna decisione: gli agenti non hanno avuto dubbi.</p>`;
@@ -435,10 +453,10 @@ function taste(m) {
       ${kpi("Correzioni", m.count("tasteCorrection"), "chieste agli agenti")}</div>
     ${sorted.map(([id, list]) => `<div class="item" style="margin-bottom:8px">
       <div class="h"><span class="tag ${list[0].d.severity === "note" ? "" : "fix"}">#${esc(id)} ${esc(rules[id]?.domain || "")}</span>
-        <span>${list.length}× · ${esc([...new Set(list.map(e => e.d.agent))].join(", "))}</span></div>
+        <span>${list.length === 1 ? "1 volta" : list.length + " volte"} · ${esc([...new Set(list.map(e => e.d.agent))].join(", "))}</span></div>
       <div class="b">${esc(rules[id]?.rule || "Regola rimossa")}</div>
       <svg viewBox="0 0 100 4" preserveAspectRatio="none" style="height:4px;margin:8px 0 4px"><rect width="${100 * list.length / max}" height="4" rx="2" fill="var(--warn)"/></svg>
-      ${list.slice(0, 3).map(e => `<div class="r">• ${esc(e.d.file ? e.d.file + ": " : "")}${esc(e.text)}</div>`).join("")}</div>`).join("")}`;
+      <ul>${list.slice(0, 3).map(e => `<li>${esc(e.d.file ? e.d.file + ": " : "")}${esc(e.text)}</li>`).join("")}</ul></div>`).join("")}`;
 }
 
 // ---------- Agent cards ----------
@@ -461,10 +479,10 @@ function feed(m, group) {
   $("#feed").innerHTML = list.map(e => {
     const a = m.byActor[e.actor];
     const tone = ["agentFailed", "alert"].includes(e.kind) ? "bad" : e.kind === "autoDecision" ? "ok" : e.kind.startsWith("taste") && e.kind !== "tasteOk" ? "fix" : "";
-    const to = e.kind === "message" && e.d.to ? ` → ${e.d.to}` : "";
+    const to = e.kind === "message" && e.d.to ? ` per ${e.d.to}` : "";
     return `<div class="ev"><div class="t">${fmt.time(e.t)}</div>
       <div class="a"><span class="who">${a ? `<i style="background:${a.color}"></i>` : ""}${esc(e.actor + to)}</span><br><span class="tag ${tone}">${esc(KIND[e.kind] || e.kind)}</span></div>
-      <div class="b">${esc(e.kind === "tasteViolation" && e.d.fix ? `${e.text}\n→ ${e.d.fix}` : e.text)}</div></div>`;
+      <div class="b">${esc(e.kind === "tasteViolation" && e.d.fix ? `${e.text}\nCorrezione: ${e.d.fix}` : e.text)}</div></div>`;
   }).join("") || `<p class="empty">Niente qui.</p>`;
 }
 

@@ -44,7 +44,7 @@ final class WebServer: @unchecked Sendable {
             if let data { buffer.append(data) }
             if let request = HTTPRequest(buffer) {
                 Task { await self.respond(request, on: conn) }
-            } else if done || error != nil || buffer.count > 9_000_000 {
+            } else if done || error != nil || buffer.count > Attachments.maxUpload + 65_536 {
                 conn.cancel()
             } else {
                 self.read(conn, buffer: buffer)
@@ -101,6 +101,8 @@ final class WebServer: @unchecked Sendable {
                 send(conn, 200, "application/json", Data(SecretFilter.redact(json).utf8))
             case "/api/todos":
                 send(conn, 200, "application/json", Data(SecretFilter.redact(await brain.memory.todoBoard().jsonString()).utf8))
+            case "/api/messages":
+                send(conn, 200, "application/json", Data(await Self.inboxJSON().utf8))
             case "/api/workflow":
                 guard let report = await WorkflowReport.build(id: id, memory: brain.memory, tasks: brain.tasks) else {
                     return send(conn, 404, "text/plain", Data("not found".utf8))
@@ -117,6 +119,40 @@ final class WebServer: @unchecked Sendable {
             }
             try? await TodoTools.quickAction(obj, ctx: await brain.toolContext)
             send(conn, 200, "application/json", Data(SecretFilter.redact(await brain.memory.todoBoard().jsonString()).utf8))
+        case ("POST", "/api/messages"):
+            // The phone's inbox actions: read, unread, delete, readAll, clearRead.
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            guard let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
+                  let action = obj["action"] as? String else {
+                return send(conn, 400, "text/plain", Data("bad request".utf8))
+            }
+            await MessageBox.shared.apply(action: action, id: obj["id"] as? String)
+            send(conn, 200, "application/json", Data(await Self.inboxJSON().utf8))
+        case ("POST", "/api/upload"):
+            // A photo or file attached to a message from the phone: saved on the Mac, its path goes in the message.
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            guard !req.body.isEmpty, req.body.count <= Attachments.maxUpload else {
+                return send(conn, 413, "text/plain", Data("File vuoto o troppo grande (massimo 60 MB).".utf8))
+            }
+            let name = (req.headers["x-filename"]?.removingPercentEncoding).flatMap { $0.isEmpty ? nil : $0 } ?? "allegato"
+            do {
+                let file = try Attachments.store(Data(req.body), name: name)
+                let json = try JSONSerialization.data(withJSONObject: ["path": file.path, "name": name, "size": req.body.count])
+                send(conn, 200, "application/json", json)
+            } catch {
+                send(conn, 500, "text/plain", Data("Non sono riuscito a salvare il file.".utf8))
+            }
+        case ("POST", "/api/ack"):
+            // The phone was opened or a call notification tapped: stop ringing.
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            await Alerts.shared.acknowledge()
+            send(conn, 200, "application/json", Data("{\"ok\":true}".utf8))
+        case ("POST", "/push/test"):
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            let n = WebPush.shared.subscriptions.count
+            guard n > 0 else { return send(conn, 409, "text/plain", Data("Nessun telefono iscritto alle notifiche.".utf8)) }
+            WebPush.shared.send(title: "Elio", body: "Prova: le notifiche funzionano.", tag: "test")
+            send(conn, 200, "application/json", Data("{\"ok\":true,\"devices\":\(n)}".utf8))
         case ("GET", "/push/key"):
             send(conn, 200, "application/json", Data("{\"key\":\"\(WebPush.shared.publicKey)\"}".utf8))
         case ("POST", "/push/subscribe"):
@@ -126,8 +162,10 @@ final class WebServer: @unchecked Sendable {
                   let keys = obj["keys"] as? [String: Any], let p = keys["p256dh"] as? String, let a = keys["auth"] as? String else {
                 return send(conn, 400, "text/plain", Data("bad request".utf8))
             }
+            let isNew = !WebPush.shared.subscriptions.contains { $0.endpoint == endpoint }
             WebPush.shared.add(.init(endpoint: endpoint, p256dh: p, auth: a))
-            WebPush.shared.send(title: "Elio", body: "Notifiche attive su questo telefono.", tag: "welcome")
+            // Sent once per phone, not at every re-subscription the app does on launch.
+            if isNew { WebPush.shared.send(title: "Elio", body: "Notifiche attive su questo telefono.", tag: "welcome") }
             send(conn, 200, "application/json", Data("{\"ok\":true}".utf8))
         case ("POST", let path) where path.hasPrefix("/hook/"):
             // Monitor webhooks: /hook/<id>?key=<secret> (each monitor has its own secret).
@@ -161,6 +199,12 @@ final class WebServer: @unchecked Sendable {
     }
 
     /// Phone voice → text with ElevenLabs Scribe (the key stays on the Mac).
+    static func inboxJSON() async -> String {
+        let messages = await MessageBox.shared.all()
+        struct Inbox: Encodable { let unread: Int; let messages: [InboxMessage] }
+        return SecretFilter.redact(Inbox(unread: messages.filter { !$0.read }.count, messages: messages).jsonString())
+    }
+
     private func stt(_ audio: Data, mime: String) async throws -> String {
         guard let key = KeychainItem.read(service: "elio-elevenlabs") else { throw ToolError("ElevenLabs key missing") }
         guard !audio.isEmpty, audio.count < 8_000_000 else { throw ToolError("audio vuoto o troppo lungo") }

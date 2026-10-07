@@ -25,6 +25,11 @@ public enum PermissionPolicy {
             return isInside(path, cwd) ? .allow : .confirm(.normal)
         case "Bash":
             let command = (input["command"] as? String) ?? ""
+            // Asking to run outside the OS sandbox (more files, network) is always the user's call.
+            if input["dangerouslyDisableSandbox"] as? Bool == true {
+                let inner = decide(tool: tool, input: input.filter { $0.key != "dangerouslyDisableSandbox" }, cwd: cwd, onMac: onMac)
+                return inner == .confirm(.dangerous) ? inner : .confirm(.normal)
+            }
             // Only destructive or outward-facing commands need an OK; "strict" brings back the safe-list.
             if strictCodeExecution, !onMac { return decideBash(command) }
             return onMac ? decideOperatorBash(command) : decideDeveloperBash(command, cwd: cwd)
@@ -112,6 +117,9 @@ public enum PermissionPolicy {
         if outward.contains(where: { cmd.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }) {
             return .confirm(.normal)
         }
+        // Writing files in the home is free here, so running one must not be: "write a script, then run it" would
+        // otherwise execute anything (rm, curl…) without a single confirmation.
+        if runsCodeFromFile(cmd) { return .confirm(.normal) }
         // mv/cp only matter when they would replace an existing file.
         let parts = cmd.splitOutsideQuotes(";|&\n").map { $0.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "(){}"))) }
         if parts.contains(where: wouldOverwrite) { return .confirm(.normal) }
@@ -123,6 +131,72 @@ public enum PermissionPolicy {
             return .confirm(.normal)
         }
         return .allow
+    }
+
+    /// An interpreter given a script (`python3 x.py`, `node x.js`, `bash x.sh`, `osascript x.scpt`…), a file run by
+    /// path (`./x`, `~/x.sh`, `/Users/…/x`), or a task runner that executes project files (make, npm run…).
+    /// Version/help flags and REPL-less checks (`python3 --version`) don't count.
+    static func runsCodeFromFile(_ cmd: String) -> Bool {
+        // Command and process substitution run a program we'd never see as "the program" (`echo $(python3 x.py)`).
+        if cmd.contains("$(") || cmd.contains("`") || cmd.contains("<(") || cmd.contains(">(") { return true }
+        let interpreters = #"python[0-9.]*|pypy[0-9.]*|node|nodejs|deno|bun|perl[0-9.]*|ruby|php[0-9.]*|osascript|swift|sh|bash|zsh|fish|dash|ksh|csh|tcsh|tclsh|wish|lua|luajit|Rscript|R|java|jshell|kotlin|scala|groovy|pwsh|awk|gawk|nawk|expect|jq|sqlite3|ipython|irb"#
+        // Wrappers that run whatever follows them (their own options are skipped too).
+        let wrappers: Set<String> = ["env", "command", "exec", "nohup", "time", "nice", "renice", "sudo", "caffeinate", "arch",
+                                     "timeout", "gtimeout", "stdbuf", "unbuffer", "script", "chronic", "ionice", "taskpolicy"]
+        // Programs that execute other commands by design.
+        let runners: Set<String> = ["xargs", "watch", "parallel", "source", ".", "eval", "make", "gmake", "just", "rake",
+                                    "gradle", "gradlew", "mvn", "ant", "npx", "pnpx", "bunx", "uvx", "pipx", "launchctl", "open"]
+        let segments = cmd.splitOutsideQuotes(";|&\n").map { $0.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "(){}"))) }
+        for seg in segments where !seg.isEmpty {
+            var words = seg.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+            // Skip env assignments and wrappers (with their flags and flag values, e.g. `nice -n 5`, `timeout 10`).
+            while let w = words.first {
+                // Words before the program must be readable literally too (`A="x y" python3`, `env $X …`).
+                if w.contains("\"") || w.contains("'") || w.contains("\\") || w.contains("$") { return true }
+                if w.contains("="), !w.hasPrefix("-") { words.removeFirst(); continue }
+                if wrappers.contains(w) {
+                    words.removeFirst()
+                    while let f = words.first, f.hasPrefix("-") || Int(f) != nil || f.range(of: #"^\d+[smhd]?$"#, options: .regularExpression) != nil {
+                        words.removeFirst()
+                        // A flag that takes a value (`-n 5`, `-u root`): drop the value as well.
+                        if f.count == 2, let v = words.first, !v.hasPrefix("-"), ["-n", "-u", "-g", "-k", "-s", "-o", "-e", "-i", "-p"].contains(f) { _ = v; words.removeFirst() }
+                    }
+                    continue
+                }
+                break
+            }
+            guard let raw = words.first else { continue }
+            // Fail closed on a program name we can't read literally: quotes, escapes, expansions ("py"thon3, p\ython3, $X).
+            if raw.contains("\"") || raw.contains("'") || raw.contains("\\") || raw.contains("$") || raw.contains("`") { return true }
+            let name = (raw as NSString).lastPathComponent
+            // A file run by path (system binaries excepted).
+            if raw.contains("/"), !["/usr/bin/", "/bin/", "/usr/sbin/", "/sbin/", "/opt/homebrew/bin/", "/usr/local/bin/"].contains(where: raw.hasPrefix) {
+                return true
+            }
+            if runners.contains(name) {
+                // `open` only runs code for apps/scripts/URLs it's given: opening a folder or a document is fine.
+                if name == "open" {
+                    let targets = words.dropFirst().filter { !$0.hasPrefix("-") }
+                    if targets.contains(where: { $0.range(of: #"\.(app|command|tool|sh|scpt|applescript|workflow|terminal|pkg|mpkg)/?$|^[a-z][a-z0-9+.-]*:"#, options: [.regularExpression, .caseInsensitive]) != nil }) { return true }
+                    continue
+                }
+                return true
+            }
+            if name.range(of: "^(\(interpreters))$", options: .regularExpression) != nil {
+                let rest = words.dropFirst()
+                // A bare interpreter fed by a pipe or a redirect runs that code (`cat x | python3`, `bash < x`).
+                if rest.isEmpty { if cmd.contains("|") || cmd.contains("<") { return true }; continue }
+                if rest.allSatisfy({ ["--version", "-V", "-v", "--help", "-h"].contains($0) }) { continue }
+                return true
+            }
+            if ["npm", "pnpm", "yarn", "bun", "composer", "swift", "cargo", "go", "dotnet", "deno", "uv", "poetry", "pip", "pip3"].contains(name),
+               words.count > 1, ["run", "run-script", "exec", "x", "dlx", "start", "test", "install", "i", "add", "build"].contains(words[1]) {
+                return true
+            }
+            // find -exec/-execdir/-ok run commands on every match.
+            if name == "find", words.contains(where: { ["-exec", "-execdir", "-ok", "-okdir", "-delete"].contains($0) }) { return true }
+        }
+        return false
     }
 
     /// Project agents (code, squads): they work like a developer in their repo. Everything local and

@@ -5,7 +5,7 @@ import Foundation
 extension TaskRunner {
     static func macPrompt(title: String, prompt: String) -> String {
         """
-        Sei un agente di Elio, l'assistente personale di Raffaele, e lavori sul suo Mac in background mentre lui fa altro.
+        Sei un agente di Elio, l'assistente personale dell'utente, e lavori sul suo Mac in background mentre lui fa altro.
 
         Compito: \(title)
         Dettagli: \(prompt)
@@ -19,7 +19,7 @@ extension TaskRunner {
         - Cancellare file, usare sudo, fermare processi, inviare messaggi o dati all'esterno passa da una conferma: \
         chiedila solo se serve davvero. Preferisci spostare nel Cestino (`mv … ~/.Trash/`) piuttosto che cancellare.
         - Nei comandi Bash scrivi il campo description in italiano, breve, all'infinito: se serve una conferma, \
-        è quello che Raffaele sente.
+        è quello che l'utente sente.
         - Per spostare/copiare usa `mv -n` / `cp -n` (mai sovrascrivere senza chiedere). Per creare o modificare file \
         usa Write/Edit, non redirect della shell (> sovrascrive e chiede conferma). Niente `python -c`/`sh -c`: \
         il codice inline chiede conferma.
@@ -39,7 +39,7 @@ extension TaskRunner {
             \($0)
             """ } ?? ""
         return """
-        Sei "\(name)", un agente di una squadra coordinata da Elio, l'assistente personale di Raffaele.
+        Sei "\(name)", un agente di una squadra coordinata da Elio, l'assistente personale dell'utente.
         Obiettivo della squadra: \(goal)
         Progetto: \(cwd)
         Il tuo ruolo: \(role)
@@ -56,14 +56,14 @@ extension TaskRunner {
         aspetti una risposta; non a ogni passo. Scrivi con mcp__elio__squad_post (`to` = un compagno, "tutti" o "elio"): \
         messaggi brevi e concreti (interfacce concordate, file che tocchi, risultati, blocchi).
         - Concorda chi tocca quali file. Se lavorate sullo stesso repo usate lo stesso branch: mettetevi d'accordo all'inizio.
-        - Se ti manca un'informazione che solo Raffaele ha, chiedi con mcp__elio__ask_user: per le scelte piccole \
+        - Se ti manca un'informazione che solo l'utente ha, chiedi con mcp__elio__ask_user: per le scelte piccole \
         risponde Elio al suo posto, conoscendo i suoi gusti.\(hasLead ? """
 
-        - Elio coordina la squadra di persona (membro "elio" sulla bacheca): fa le veci di Raffaele, risponde ai dubbi, \
+        - Elio coordina la squadra di persona (membro "elio" sulla bacheca): fa le veci dell'utente, risponde ai dubbi, \
         rivede il lavoro e può chiederti correzioni. Per dubbi di implementazione scrivi a "elio" e intanto prosegui sul resto. \
         Se ti chiede una correzione, falla prima di chiudere.
         """ : "")
-        - Il tuo lavoro viene controllato sui gusti di Raffaele (sotto): rispettali da subito, così non devi rifarlo.
+        - Il tuo lavoro viene controllato sui gusti dell'utente (sotto): rispettali da subito, così non devi rifarlo.
         - Termina con un riassunto di massimo due frasi del tuo lavoro.
         """
     }
@@ -72,7 +72,7 @@ extension TaskRunner {
     static func scoutPrompt(goal: String, cwd: String, members: [(name: String, role: String, task: String)]) -> String {
         let tasks = members.map { "- \($0.name) (\($0.role)): \($0.task)" }.joined(separator: "\n")
         return """
-        Sei lo scout di una squadra di agenti coordinata da Elio, l'assistente di Raffaele. Progetto: \(cwd)
+        Sei lo scout di una squadra di agenti coordinata da Elio, l'assistente dell'utente. Progetto: \(cwd)
         Obiettivo della squadra: \(goal)
         Dopo di te partiranno questi agenti, in parallelo:
         \(tasks)
@@ -95,7 +95,7 @@ extension TaskRunner {
         let members = team.isEmpty ? "(nessuno)"
             : team.map { "- \($0.member ?? "?"): \($0.role ?? "")" }.joined(separator: "\n")
         return """
-        Sei Elio, l'assistente personale di \(user), e coordini di persona una squadra di agenti Claude al posto suo. \
+        Sei Elio, l'assistente personale \(ElioConfig.of(user)), e coordini di persona una squadra di agenti Claude al posto suo. \
         Lui è impegnato: tu fai le sue veci. Conosci i suoi gusti (sotto) e li fai rispettare.
 
         Squadra: \(squad?.id ?? "")
@@ -110,7 +110,7 @@ extension TaskRunner {
         (mcp__elio__ask_user, una domanda chiara con le opzioni e la tua raccomandazione) solo per scelte importanti, \
         irreversibili, di prodotto, o che dipendono da informazioni che solo lui ha.
         - Rivedi il lavoro: quando un membro dice di aver finito, guarda cosa ha fatto (git diff, Read, Grep) e confrontalo \
-        con l'obiettivo e con i gusti di \(user). Se qualcosa non gli piacerebbe (es. AI slop nel design, naming, struttura), \
+        con l'obiettivo e con i gusti \(ElioConfig.of(user)). Se qualcosa non gli piacerebbe (es. AI slop nel design, naming, struttura), \
         diglielo con squad_send in modo preciso: file, cosa, come correggerlo. Un membro che ha finito si risveglia da solo.
         - Coordina: evita che due membri tocchino gli stessi file, sblocca chi è fermo, ridistribuisci il lavoro. \
         Se serve più forza lavoro, aggiungi un agente con mcp__elio__squad_add (massimo \(maxAgents) in totale); \
@@ -126,7 +126,7 @@ extension TaskRunner {
         risultato è come lo vorrebbe \(user), chiudi con il riassunto finale: prima due frasi da leggere a voce, poi i \
         dettagli (cosa è stato fatto, branch, decisioni che hai preso al suo posto, cose da verificare).
 
-        \(taste.isEmpty ? "Gusti di \(user): ancora nessuno registrato, usa il buon senso di un senior pignolo." : taste)
+        \(taste.isEmpty ? "Gusti \(ElioConfig.of(user)): ancora nessuno registrato, usa il buon senso di un senior pignolo." : taste)
         """
     }
 }
@@ -137,9 +137,9 @@ public enum SquadTools {
     static let macTask = ElioTool(
         name: "mac_task",
         description: """
-        Avvia un agente in background che agisce sul Mac di Raffaele: spostare/creare/riordinare file e cartelle, \
+        Avvia un agente in background che agisce sul Mac dell'utente: spostare/creare/riordinare file e cartelle, \
         cambiare o indagare impostazioni di macOS, debuggare un'app o un problema, installare strumenti, lavori di più passaggi. \
-        Restituisce subito: l'agente aggiorna Raffaele a voce ai passaggi importanti e riferisce alla fine. \
+        Restituisce subito: l'agente aggiorna l'utente a voce ai passaggi importanti e riferisce alla fine. \
         Usalo per qualunque cosa richieda più di un paio di comandi, così la conversazione resta libera.
         """,
         properties: [
@@ -158,13 +158,13 @@ public enum SquadTools {
         let info = try await ctx.tasks.start(title: args["title"] as? String ?? "Lavoro sul Mac",
                                              prompt: args["prompt"] as? String ?? "", cwd: dir, kind: .mac,
                                              difficulty: args["difficulty"] as? String)
-        return "Agente avviato (id \(info.id)). Riferirà a voce: non serve aspettarlo, rispondi a Raffaele con una frase."
+        return "Agente avviato (id \(info.id)). Riferirà a voce: non serve aspettarlo, rispondi \(ctx.config.toUser) con una frase."
     }
 
     static let progress = ElioTool(
         name: "report_progress",
         description: """
-        Aggiorna Raffaele a voce su un passaggio importante del tuo lavoro in background (una frase breve). \
+        Aggiorna l'utente a voce su un passaggio importante del tuo lavoro in background (una frase breve). \
         important: true solo per problemi o blocchi seri: è l'unica cosa che sente in modalità silenziosa.
         """,
         properties: ["text": prop("La frase da dire, breve e parlata"),
@@ -183,7 +183,7 @@ public enum SquadTools {
         await ctx.tasks.logEvent(taskId: ctx.taskId, important ? .alert : .progress, text: text)
         ctx.broadcast(ServerMessage(type: .event, text: spoken, lang: .it, kind: important ? "workflowAlert" : "progress",
                                     payload: ctx.taskId.map { "{\"task\":\"\($0)\"}" }, speak: true))
-        return Attention.mode == .silent && !important ? "Registrato (Raffaele è in modalità silenziosa: lo vedrà nel report)." : "Detto a Raffaele."
+        return Attention.mode == .silent && !important ? "Registrato (\(ctx.config.displayName.capitalizedFirst) è in modalità silenziosa: lo vedrà nel report)." : "Detto \(ctx.config.toUser)."
     }
 
     static let start = ElioTool(
@@ -191,9 +191,9 @@ public enum SquadTools {
         description: """
         Modalità squadra: avvia più agenti Claude in parallelo che collaborano su un obiettivo di codice \
         (es. backend + frontend + test, oppure analisi di più repository). COSTA MOLTO: ogni agente consuma una sessione intera di crediti: usala solo per lavori grandi e davvero parallelizzabili, altrimenti start_task (un agente). Di solito 2-3 agenti, su compiti che non toccano gli stessi file; prima parte uno scout che esplora il codice una volta per tutti. Gli agenti si parlano tra loro con una bacheca. \
-        Di default un agente coordinatore (Elio in persona, lead: true) fa le veci di Raffaele: risponde ai dubbi, rivede il \
+        Di default un agente coordinatore (Elio in persona, lead: true) fa le veci dell'utente: risponde ai dubbi, rivede il \
         lavoro sui suoi gusti, fa correggere e può aggiungere agenti. Quanti agenti servono davvero (fino al massimo \
-        configurato), ruoli distinti, compiti parallelizzabili e autosufficienti. Raffaele vede tutto nella dashboard e sul \
+        configurato), ruoli distinti, compiti parallelizzabili e autosufficienti. L'utente vede tutto nella dashboard e sul \
         telefono, con un report finale. Restituisce subito l'id della squadra.
         """,
         properties: [
@@ -209,7 +209,7 @@ public enum SquadTools {
                     "required": ["name", "role", "task"],
                 ] as [String: any Sendable],
             ] as [String: any Sendable],
-            "lead": prop("Coordinatore Elio che fa le veci di Raffaele (default true)", type: "boolean"),
+            "lead": prop("Coordinatore Elio che fa le veci dell'utente (default true)", type: "boolean"),
             "scout": prop("Uno scout esplora il codice una volta per tutti prima che partano gli altri (default true con 2+ agenti sullo stesso repo)", type: "boolean"),
         ],
         required: ["goal", "project_path", "members"]
@@ -252,11 +252,11 @@ public enum SquadTools {
                              text: "Squadra al lavoro su: \(goal). Membri: \(started.joined(separator: ", ")). Coordinatevi qui.")
         if lead {
             _ = try await ctx.tasks.start(title: "elio: coordinatore", prompt: goal, cwd: path, kind: .lead,
-                                          squad: squad.id, member: "elio", role: "coordinatore (fa le veci di \(ctx.config.userName))")
+                                          squad: squad.id, member: "elio", role: "coordinatore (fa le veci \(ctx.config.ofUser))")
         }
         ctx.broadcast(ServerMessage(type: .event, kind: "openView", payload: "{\"view\":\"squad\"}"))
-        let mode = Attention.mode == .silent ? " Sono in modalità silenziosa: Raffaele sentirà solo domande, problemi e la fine." : ""
-        return "Squadra \(squad.id) avviata con \(started.joined(separator: ", "))\(lead ? ", coordinata da un agente Elio che fa le veci di Raffaele" : ""). Report con workflow_report.\(mode)"
+        let mode = Attention.mode == .silent ? " Sono in modalità silenziosa: \(ctx.config.displayName) sentirà solo domande, problemi e la fine." : ""
+        return "Squadra \(squad.id) avviata con \(started.joined(separator: ", "))\(lead ? ", coordinata da un agente Elio che fa le veci \(ctx.config.ofUser)" : ""). Report con workflow_report.\(mode)"
     }
 
     static let add = ElioTool(

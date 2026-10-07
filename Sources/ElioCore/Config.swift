@@ -2,7 +2,19 @@ import Foundation
 
 /// Runtime configuration, persisted at ~/Library/Application Support/Elio/config.json.
 public struct ElioConfig: Codable, Sendable {
-    public var userName: String = "Raffaele"
+    public var userName: String = ""
+    /// The user's name for prompts and speech: "l'utente" when none is configured.
+    public var displayName: String {
+        let name = userName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? Self.unnamedUser : name
+    }
+    /// "di <nome>", or "dell'utente" when no name is configured.
+    public var ofUser: String { Self.of(displayName) }
+    /// "a <nome>", or "all'utente" when no name is configured.
+    public var toUser: String { Self.to(displayName) }
+    public static let unnamedUser = "l'utente"
+    public static func of(_ name: String) -> String { name == unnamedUser ? "dell'utente" : "di \(name)" }
+    public static func to(_ name: String) -> String { name == unnamedUser ? "all'utente" : "a \(name)" }
     /// Brand / identity (shared with colleagues: everything here is editable in Settings).
     public var assistantName: String = "Elio"
     public var addressAs: String = "Signore"          // how the assistant addresses the user
@@ -303,4 +315,9 @@ public enum ElioError: Error, CustomStringConvertible {
         case .database(let msg): "Database: \(msg)"
         }
     }
+}
+
+extension String {
+    /// First letter uppercased, for a name at the start of a sentence ("l'utente" → "L'utente").
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }

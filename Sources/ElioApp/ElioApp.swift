@@ -5,21 +5,23 @@ import ElioVoice
 import ServiceManagement
 import SwiftUI
 
+/// Plain AppKit entry point: with the menu bar item now an NSStatusItem there's no SwiftUI scene left, and a
+/// SwiftUI App kept replacing the Italian main menu with its own View / Window / Help.
 @main
-struct ElioApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+enum ElioApp {
+    @MainActor static let delegate = AppDelegate()
 
-    init() {
-        // Snapshot mode runs before the app connects to anything (works with the screen locked).
-        if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
-            MainActor.assumeIsolated { Snapshots.render(to: CommandLine.arguments[i + 1]) }
-            exit(0)
+    static func main() {
+        MainActor.assumeIsolated {
+            // Snapshot mode runs before the app connects to anything (works with the screen locked).
+            if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
+                Snapshots.render(to: CommandLine.arguments[i + 1])
+                exit(0)
+            }
+            let app = NSApplication.shared
+            app.delegate = delegate
+            app.run()
         }
-    }
-
-    var body: some Scene {
-        // The menu bar item is the StatusOrb (an NSStatusItem), created once the voice loop exists.
-        Settings { EmptyView() }
     }
 }
 
@@ -173,6 +175,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
         loop.onOpenIDE = { [weak self] path, line in
             IDEWindowController.shared.show(loop: self?.loop, path: path, line: line)
+        }
+        loop.onIDEConnect = { [weak self] id, what in
+            IDEWindowController.shared.show(loop: self?.loop)
+            IDEConnections.shared.open(id: id, what: what)
         }
         ideKey = HotKey(keyCode: 34 /* I */, modifiers: [.option, .command]) { [weak self] in self?.showIDE() }
         orb.attach(loop, menu: MenuContent(delegate: self), openDashboard: { [weak self] in self?.showDashboard(forceFront: true) })

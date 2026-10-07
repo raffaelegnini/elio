@@ -81,7 +81,7 @@ public actor Routines {
             """
         }
         await brain?.runRoutine(kind: "brief", prompt: """
-        [routine: briefing di oggi] L'app ha GIÀ salutato Raffaele e gli ha detto che gli fai il briefing: non salutare, \
+        [routine: briefing di oggi] L'app ha GIÀ salutato \(config.displayName) e gli ha detto che gli fai il briefing: non salutare, \
         non dire "ecco il briefing", entra subito nel contenuto.
         \(focus)
         Racconta MENTRE raccogli: dopo ogni strumento dì subito in una frase cosa hai trovato, poi passa al successivo \
@@ -105,7 +105,7 @@ public actor Routines {
         await memory.set("routine.recap.last", Self.dayKey(Date()))
         await brain?.publish(ServerMessage(type: .event, kind: "recapStart"))
         await brain?.runRoutine(kind: "recap", prompt: """
-        [routine: recap] Raffaele chiude la giornata. L'app lo ha GIÀ salutato e gli ha detto che gli fai il riassunto: \
+        [routine: recap] \(config.displayName.capitalizedFirst) chiude la giornata. L'app lo ha GIÀ salutato e gli ha detto che gli fai il riassunto: \
         non salutare, entra subito nel contenuto. Racconta MENTRE raccogli, una frase dopo ogni strumento: \
         day_summary → todo_list (quante voci ha fatto, cosa resta) → calendar_events di oggi e di domani → slack_mentions \
         e slack_dms di oggi (se c'è Slack) → list_tasks. \
@@ -119,7 +119,7 @@ public actor Routines {
 
     private var nudged: Set<String> = []
 
-    /// A Meet started 3 minutes ago and Raffaele seems not to be in it (away from the Mac,
+    /// A Meet started 3 minutes ago and the user seems not to be in it (away from the Mac,
     /// or no Meet tab open in Chrome): nudge him, on the phone too when away.
     func watchMissedMeetings() async {
         guard config.nudgeMissedMeetings, CalendarTools.isAuthorized else { return }

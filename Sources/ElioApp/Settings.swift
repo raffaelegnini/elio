@@ -471,9 +471,9 @@ private struct MonitorSettings: View {
 
     var body: some View {
         Group(title: "Monitor",
-              note: "Controlli automatici: a orario, su un canale Slack, su un sito o un'API, su un comando o tramite webhook. Quando scattano, Elio ti avvisa o fa partire un'analisi e ti manda il report.") {
+              note: "Controlli automatici: a orario, su Slack, un sito, un comando, un webhook, lo schermo, l'audio del Mac, la posta, un processo, un file o una pipeline CI. Quando scattano, Elio ti manda un messaggio, ti avvisa o ti chiama, oppure fa partire un'analisi e ti manda il report.") {
             HStack {
-                TextField("Es. quando in #kuma-ops arriva un down, analizza su Cloudflare e fammi un report", text: $request)
+                TextField("Es. chiamami quando finisce la pausa del Meet · dimmi quando finisce la pipeline di elio", text: $request)
                     .textFieldStyle(.roundedBorder)
                 Button("Crea") {
                     loop.submit(text: "Crea un monitor: \(request)")
@@ -491,7 +491,7 @@ private struct MonitorSettings: View {
     private func row(_ w: Watcher) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Circle().fill(!w.enabled ? Theme.dim : w.state == "down" ? Color(hex: "#FF6B61") : .green).frame(width: 8, height: 8)
+                Circle().fill(!w.enabled ? Theme.dim : w.state == "down" ? Color(hex: "#FF6B61") : w.urgency == .call ? .orange : .green).frame(width: 8, height: 8)
                 Text(w.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
                 Text(summary(w)).font(Theme.mono).foregroundStyle(Theme.accent).lineLimit(1)
                 Spacer()
@@ -506,14 +506,7 @@ private struct MonitorSettings: View {
     }
 
     private func summary(_ w: Watcher) -> String {
-        let trigger: String = switch w.trigger {
-        case .schedule: w.at?.isEmpty == false ? "alle \(w.at!.joined(separator: ", "))" : "ogni \(w.everyMinutes ?? 60) min"
-        case .slack: "Slack \(w.channel ?? "")\(w.match.map { " /\($0)/" } ?? "")"
-        case .http: "\(w.url ?? "") ogni \(w.everyMinutes ?? 5) min"
-        case .command: "comando ogni \(w.everyMinutes ?? 5) min"
-        case .webhook: "webhook"
-        }
-        return trigger + (w.action == .agent ? " → analisi" : " → avviso")
+        w.triggerSummary + (w.action == .agent ? " → analisi" : " → \(w.urgencyLabel)") + (w.phone ? " +telefono" : "") + (w.once ? " · una volta" : "")
     }
 
     private func detail(_ w: Watcher) -> String {

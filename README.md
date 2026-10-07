@@ -71,8 +71,6 @@ the tests, rebuilds and reinstalls, and puts the previous app back if anything f
 
 Known limits for a fork:
 
-- Many prompts and tool descriptions in `Sources/ElioCore` still say "Raffaele" instead of using the user name
-  from the config, so Elio may call you that in places. Search and replace it before building.
 - The bundle identifiers (`it.dnafactory.elio.*`) are hardcoded in the scripts; change them in
   `scripts/build-app.sh`, `scripts/install.sh` and `scripts/uninstall.sh` if you want your own.
 

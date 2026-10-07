@@ -1,8 +1,9 @@
 import CoreGraphics
 import Foundation
 
-/// Sends Elio's spoken events to the phone through ntfy (ntfy.sh, app on iPhone)
-/// — only when Raffaele is away from the Mac (screen locked or idle), to avoid duplicates.
+/// Sends Elio's spoken events to the phone (Web Push to the PWA, ntfy as a fallback) when the user is away
+/// from the Mac (screen locked or idle for 5 minutes). If they're at the Mac but don't react to something
+/// that needs them (a confirmation, a question, a monitor) within two minutes, it goes to the phone too.
 public final class PhoneNotifier: @unchecked Sendable {
     private let topic: String
     private let lock = NSLock()
@@ -30,9 +31,26 @@ public final class PhoneNotifier: @unchecked Sendable {
         lock.withLock { screenLocked } || Self.idleSeconds > 300
     }
 
+    /// Kinds worth chasing the user for when they're at the Mac but not reacting.
+    static let escalated: Set<String> = ["confirm", "question", "watch", "reminder", "timer", "meeting", "workflowAlert"]
+    static let escalateAfter: TimeInterval = 120
+
     public func handle(_ message: ServerMessage) {
         guard message.type == .event, message.speak == true, let kind = message.kind,
-              Self.kinds.contains(kind), let text = message.text, isAway else { return }
+              Self.kinds.contains(kind), let text = message.text else { return }
+        if isAway {
+            push(kind: kind, text: text)
+        } else if Self.escalated.contains(kind) {
+            // At the Mac: wait, and push only if nobody touched keyboard or mouse, or answered by voice, since.
+            let sent = Date()
+            DispatchQueue.global().asyncAfter(deadline: .now() + Self.escalateAfter) { [weak self] in
+                guard Self.idleSeconds >= Self.escalateAfter - 5, Presence.lastRequest < sent else { return }
+                self?.push(kind: kind, text: text)
+            }
+        }
+    }
+
+    private func push(kind: String, text: String) {
         let title: String = switch kind {
         case "confirm": "Serve una conferma"
         case "question": "Una domanda per te"

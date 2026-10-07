@@ -84,10 +84,11 @@ public enum ProjectTree {
 
     /// Branch, uncommitted changes, last commit: for the hover card.
     public static func info(_ path: String) -> String {
-        let git = { (args: [String]) in ((try? shell("/usr/bin/git", ["-C", path] + args)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        // Hardened: hovering a freshly cloned folder must not run its fsmonitor, filters or gpg.program.
+        let git = { (args: [String]) in GitSafety.output(path, args) }
         let branch = git(["rev-parse", "--abbrev-ref", "HEAD"])
-        let changes = git(["status", "--porcelain", "--untracked-files=normal"]).split(separator: "\n").count
-        let last = git(["log", "-1", "--format=%cr · %s"])
+        let changes = git(["status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all"]).split(separator: "\n").count
+        let last = git(["log", "--no-show-signature", "-1", "--format=%cr · %s"])
         let remote = git(["remote", "get-url", "origin"])
             .replacingOccurrences(of: #"^.*[:/]([^/:]+/[^/]+?)(\.git)?$"#, with: "$1", options: .regularExpression)
         var lines = ["Branch: \(branch.isEmpty ? "—" : branch)",

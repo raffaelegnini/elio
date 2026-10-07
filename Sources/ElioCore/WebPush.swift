@@ -49,22 +49,28 @@ public final class WebPush: @unchecked Sendable {
     }
 
     /// Sends to every subscribed device; expired subscriptions are dropped.
-    public func send(title: String, body: String, tag: String? = nil) {
-        let payload: [String: Any] = ["title": title, "body": body, "tag": tag ?? UUID().uuidString]
+    /// urgency: very-low, low, normal or high (RFC 8030); "high" also keeps the notification on screen.
+    public func send(title: String, body: String, tag: String? = nil, urgency: String? = nil) {
+        let level = urgency ?? (tag == "confirm" || tag == "question" ? "high" : "normal")
+        let payload: [String: Any] = ["title": title, "body": body, "tag": tag ?? UUID().uuidString,
+                                      "urgency": level, "url": tag == "messages" ? "./#messages" : "./"]
         guard let json = try? JSONSerialization.data(withJSONObject: payload) else { return }
-        for sub in subscriptions {
+        let subs = subscriptions
+        if subs.isEmpty { log("web push: no phone subscribed (open the phone app and enable notifications)") }
+        for sub in subs {
             Task {
                 do {
-                    let status = try await deliver(json, to: sub, urgent: tag == "confirm")
+                    let status = try await deliver(json, to: sub, urgency: level)
                     if status == 404 || status == 410 { remove(sub.endpoint) }
+                    if !(200..<300).contains(status) { log("web push: \(URL(string: sub.endpoint)?.host ?? "?") answered \(status)") }
                 } catch {
-                    FileHandle.standardError.write(Data("web push failed: \(error)\n".utf8))
+                    log("web push failed: \(error)")
                 }
             }
         }
     }
 
-    func deliver(_ plaintext: Data, to sub: Subscription, urgent: Bool) async throws -> Int {
+    func deliver(_ plaintext: Data, to sub: Subscription, urgency: String) async throws -> Int {
         guard let url = URL(string: sub.endpoint), let host = url.host,
               let uaPublicData = unb64url(sub.p256dh), let authSecret = unb64url(sub.auth) else { return 410 }
         let body = try Self.encrypt(plaintext, uaPublic: uaPublicData, authSecret: authSecret)
@@ -73,7 +79,7 @@ public final class WebPush: @unchecked Sendable {
         req.setValue("aes128gcm", forHTTPHeaderField: "Content-Encoding")
         req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         req.setValue("86400", forHTTPHeaderField: "TTL")
-        req.setValue(urgent ? "high" : "normal", forHTTPHeaderField: "Urgency")
+        req.setValue(urgency, forHTTPHeaderField: "Urgency")
         req.setValue("vapid t=\(try jwt(audience: "\(url.scheme ?? "https")://\(host)")), k=\(publicKey)", forHTTPHeaderField: "Authorization")
         req.httpBody = body
         let (_, resp) = try await URLSession.shared.data(for: req)

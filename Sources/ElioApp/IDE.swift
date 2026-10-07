@@ -40,6 +40,16 @@ final class IDEWindowController: NSObject, NSWindowDelegate {
         if ready { bridge?.emit("openAgent", open) } else { pendingAgent = open }
     }
     private var pendingAgent: [String: Any]?
+    private var pendingActions: [[String: Any]] = []
+    private let navGuard = IDENavigationGuard()
+
+    /// Runs an IDE action from outside the page (the native menu): commit, push, gitLog, terminal…
+    func perform(_ action: String, loop: VoiceLoop? = nil, _ extra: [String: Any] = [:]) {
+        show(loop: loop ?? self.loop)
+        var payload = extra
+        payload["action"] = action
+        if ready { bridge?.emit("ideAction", payload) } else { pendingActions.append(payload) }
+    }
 
     private func build() {
         let config = WKWebViewConfiguration()
@@ -49,12 +59,17 @@ final class IDEWindowController: NSObject, NSWindowDelegate {
         config.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "elio")
         let web = WKWebView(frame: .zero, configuration: config)
         web.setValue(false, forKey: "drawsBackground")
+        // The bridge runs shells and git: the web view only ever shows our own elio-ide:// page.
+        web.navigationDelegate = navGuard
+        web.uiDelegate = navGuard
         bridge.webView = web
         bridge.onReady = { [weak self] in
             guard let self else { return }
             self.ready = true
             if let open = self.pendingOpen { bridge.emit("open", open); self.pendingOpen = nil }
             if let agent = self.pendingAgent { bridge.emit("openAgent", agent); self.pendingAgent = nil }
+            self.pendingActions.forEach { bridge.emit("ideAction", $0) }
+            self.pendingActions = []
         }
         bridge.onTitle = { [weak self] title in self?.window?.title = title }
 
@@ -91,6 +106,45 @@ final class IDEWindowController: NSObject, NSWindowDelegate {
         }
         return URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("ide")
+    }
+}
+
+/// Keeps the IDE web view on its own page: main-frame navigations only to elio-ide://app/, links and
+/// window.open (Monaco links, terminal links) go to the default browser when they are http(s) or mailto, never
+/// file://, javascript: or custom schemes; no new windows.
+@MainActor
+final class IDENavigationGuard: NSObject, WKNavigationDelegate, WKUIDelegate {
+    static func isOwnPage(_ url: URL?) -> Bool { url?.scheme?.lowercased() == "elio-ide" && url?.host == "app" }
+
+    /// Only these leave the app (to the default browser / mail client).
+    static func externalURL(_ s: String) -> URL? {
+        guard let url = URL(string: s.trimmingCharacters(in: .whitespacesAndNewlines)), let scheme = url.scheme?.lowercased() else { return nil }
+        switch scheme {
+        case "http", "https": return url.host?.isEmpty == false ? url : nil
+        case "mailto": return url
+        default: return nil
+        }
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        let url = action.request.url
+        if Self.isOwnPage(url) { decisionHandler(.allow); return }
+        // Subframes may load about:blank / blob: from our own page (Monaco, xterm); never anything remote.
+        if !(action.targetFrame?.isMainFrame ?? true), let scheme = url?.scheme?.lowercased(), ["about", "blob", "data"].contains(scheme) {
+            decisionHandler(.allow); return
+        }
+        decisionHandler(.cancel)
+        if action.navigationType == .linkActivated || action.targetFrame?.isMainFrame == true,
+           let u = url.flatMap({ Self.externalURL($0.absoluteString) }) {
+            NSWorkspace.shared.open(u)
+        }
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let u = action.request.url.flatMap({ Self.externalURL($0.absoluteString) }) { NSWorkspace.shared.open(u) }
+        return nil
     }
 }
 
@@ -131,7 +185,7 @@ final class IDEBridge: NSObject, WKScriptMessageHandlerWithReply {
     var onReady: (() -> Void)?
     var onTitle: ((String) -> Void)?
     private var ptys: [String: PTY] = [:]
-    private var watcher: DirWatcher?
+    private var watchers: [String: DirWatcher] = [:]
     private var agentsObserved = false
     private var sentLogCounts: [String: Int] = [:]
 
@@ -146,6 +200,12 @@ final class IDEBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void) {
+        // Only our own page's main frame may call the bridge (not an iframe, not a page navigated elsewhere).
+        guard message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.protocol == "elio-ide",
+              message.frameInfo.securityOrigin.host == "app" else {
+            replyHandler(nil, "origine non consentita")
+            return
+        }
         guard let body = message.body as? [String: Any], let op = body["op"] as? String else {
             replyHandler(nil, "messaggio non valido")
             return
@@ -176,8 +236,50 @@ final class IDEBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "projects":
             return await Task.detached { IDEFiles.projects() }.value
         case "watch":
-            watch(str("root"))
+            // Every root of the workspace (several projects open at once).
+            watch(a["roots"] as? [String] ?? [str("root")])
             return nil
+        case "pickFolder":
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.allowsMultipleSelection = true
+            panel.prompt = "Aggiungi al workspace"
+            panel.message = "Scegli le cartelle da aprire nel workspace"
+            if let first = ElioConfig.load().projectRoots.first {
+                panel.directoryURL = URL(fileURLWithPath: (first as NSString).expandingTildeInPath)
+            }
+            let response: NSApplication.ModalResponse
+            if let window = webView?.window { response = await panel.beginSheetModal(for: window) } else { response = panel.runModal() }
+            return response == .OK ? panel.urls.map(\.path) : []
+        case "check":
+            let path = str("path")
+            return await Task.detached { IDEChecks.check(path: path) }.value
+        case "checkDeep":
+            let path = str("path"), root = str("root")
+            return await Task.detached { IDEChecks.deep(path: path, root: root) }.value
+        case "tsc":
+            let root = str("root")
+            return await Task.detached { IDEChecks.tsc(root: root) }.value
+        case "runScripts":
+            let root = str("root")
+            return await Task.detached { IDERun.detect(root: root) }.value
+        case "runConfigs.get":
+            let root = str("root")
+            return await Task.detached { IDERun.load(root: root) }.value
+        case "runConfigs.set":
+            let root = str("root"), configs = ArgsBox(["c": a["configs"] as? [[String: Any]] ?? []])
+            try await Task.detached { try IDERun.save(root: root, configs: configs.value["c"] as? [[String: Any]] ?? []) }.value
+            return nil
+        case "trust.get":
+            let root = str("root")
+            return await Task.detached { IDETrust.isTrusted(root) }.value
+        case "trust.set":
+            let root = str("root"), value = a["trusted"] as? Bool ?? false
+            try await Task.detached { try IDETrust.set(root, trusted: value) }.value
+            return nil
+        case "elioState":
+            return elioState()
         case "list":
             let path = str("path")
             return try await Task.detached { try IDEFiles.list(path) }.value
@@ -207,21 +309,34 @@ final class IDEBridge: NSObject, WKScriptMessageHandlerWithReply {
             return await Task.detached { IDEFiles.search(root: root, query: q, regex: regex, caseSensitive: cs) }.value
         case "git":
             let root = str("root"), cmd = str("cmd"), args = a["args"] as? [String] ?? []
-            return await Task.detached { IDEGit.run(root: root, cmd: cmd, args: args) }.value
+            let opts = ArgsBox(a["opts"] as? [String: Any] ?? [:])
+            return await Task.detached { IDEGit.run(root: root, cmd: cmd, args: args, opts: opts.value) }.value
         case "reveal":
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: str("path"))])
             return nil
         case "openExternal":
-            // "Apri in PhpStorm" (or any app by name), else the default app.
+            // A web link (terminal, editor): http(s)/mailto only, to the default browser.
+            if !str("url").isEmpty {
+                guard let u = IDENavigationGuard.externalURL(str("url")) else { throw ToolError("Link non consentito: solo http, https e mailto") }
+                NSWorkspace.shared.open(u)
+                return nil
+            }
+            // A local file: "Apri in PhpStorm", else its default app (never one that would run it).
             let path = str("path"), app = str("app")
+            try IDEFiles.checkOpenable(path, app: app)
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            p.arguments = app.isEmpty ? [path] : ["-a", app, path]
+            p.arguments = app.isEmpty ? [path] : ["-a", app, path]   // path is absolute: never an option
             try p.run()
             return nil
         case "ptyCreate":
-            return try createPTY(cwd: str("cwd"), cols: a["cols"] as? Int ?? 100, rows: a["rows"] as? Int ?? 30,
-                                 command: (a["command"] as? String).map { [ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", "-lc", $0] })
+            // `command`: a shell line (run by the login shell); `argv`: an exact argument list (ssh -p 22 user@host).
+            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+            var command = (a["command"] as? String).map { [shell, "-lc", $0] }
+            if let argv = a["argv"] as? [String], !argv.isEmpty {
+                command = [shell, "-lc", "exec \"$@\"", "elio"] + argv
+            }
+            return try createPTY(cwd: str("cwd"), cols: a["cols"] as? Int ?? 100, rows: a["rows"] as? Int ?? 30, command: command)
         case "ptyWrite":
             if let b64 = a["data"] as? String, let data = Data(base64Encoded: b64) { ptys[str("id")]?.write(data) }
             else { ptys[str("id")]?.write(Data(str("text").utf8)) }
@@ -251,10 +366,23 @@ final class IDEBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "askElio":
             loop?.submit(text: str("text"))
             return nil
+        case "pageError":
+            // The page has no visible console: its errors go to a log file.
+            let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Elio", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(str("kind")): \(str("message"))\n\(str("where"))\n"
+            let file = dir.appendingPathComponent("ide.log")
+            if let h = try? FileHandle(forWritingTo: file) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+            else { try? Data(line.utf8).write(to: file) }
+            return nil
         case "closeWindow":
             webView?.window?.performClose(nil)
             return nil
         default:
+            if IDEConnections.handles(op) {
+                IDEConnections.shared.emit = { [weak self] name, payload in self?.emit(name, payload) }
+                return try await IDEConnections.shared.handle(op, a)
+            }
             throw ToolError("operazione sconosciuta: \(op)")
         }
     }
@@ -277,11 +405,20 @@ final class IDEBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     // MARK: Files changing on disk (agents at work)
 
-    private func watch(_ root: String) {
-        guard !root.isEmpty else { return }
-        watcher = DirWatcher(path: root) { [weak self] paths in
-            self?.emit("fsChanged", ["paths": paths])
+    private func watch(_ roots: [String]) {
+        let wanted = Set(roots.filter { !$0.isEmpty })
+        for root in watchers.keys where !wanted.contains(root) { watchers[root] = nil }
+        for root in wanted where watchers[root] == nil {
+            watchers[root] = DirWatcher(path: root) { [weak self] paths, gitTouched in
+                if !paths.isEmpty { self?.emit("fsChanged", ["paths": paths, "root": root]) }
+                // Commits, checkouts, pulls made outside the IDE (terminal, agents): refresh git state.
+                if gitTouched { self?.emit("gitChanged", ["root": root]) }
+            }
         }
+    }
+
+    private func elioState() -> [String: Any] {
+        ["state": loop?.state.rawValue ?? "off", "connected": loop?.connected ?? false]
     }
 
     // MARK: Agents
@@ -328,6 +465,19 @@ final class IDEBridge: NSObject, WKScriptMessageHandlerWithReply {
             }
         }
         track()
+        func trackState() {
+            withObservationTracking {
+                _ = loop.state
+                _ = loop.connected
+            } onChange: {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.emit("elioState", self.elioState())
+                    trackState()
+                }
+            }
+        }
+        trackState()
     }
 }
 
@@ -394,11 +544,39 @@ enum IDEFiles {
         }
     }
 
+    /// Apps the page may name for "open with".
+    static let externalApps: Set<String> = ["PhpStorm"]
+    /// Types the default app would execute or that redirect elsewhere (a binary double-clicked in a cloned repo).
+    static let runnableExtensions: Set<String> = ["app", "command", "tool", "terminal", "sh", "zsh", "bash", "csh", "ksh", "fish",
+                                                  "py", "rb", "pl", "php", "js", "scpt", "scptd", "applescript", "workflow",
+                                                  "action", "jar", "pkg", "mpkg", "dmg", "webloc", "inetloc", "fileloc", "url",
+                                                  "shortcut", "prefpane", "saver", "kext", "plugin", "bundle", "osax", "mobileconfig",
+                                                  "configprofile", "itermcolors", "terminalprofile"]
+
+    /// An absolute path to an existing file, opened only in an allowed app or with a default app that won't run it.
+    static func checkOpenable(_ path: String, app: String) throws {
+        guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path) else { throw ToolError("File non trovato") }
+        if !app.isEmpty {
+            guard externalApps.contains(app) else { throw ToolError("App non consentita: \(app)") }
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        let ext = url.pathExtension.lowercased()
+        var isDir: ObjCBool = false
+        FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
+        let type = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType
+        let runnable = isDir.boolValue || runnableExtensions.contains(ext) || FileManager.default.isExecutableFile(atPath: path)
+            || [UTType.executable, .application, .applicationBundle, .script, .shellScript, .package, .bundle]
+                .contains { type?.conforms(to: $0) == true }
+        if runnable { throw ToolError("Per sicurezza non apro questo file con l'app predefinita: potrebbe eseguirlo. Usa Mostra nel Finder.") }
+    }
+
     /// Every file of the project (for Go to file / Search everywhere): git's view when it's a repo.
     static func allFiles(_ root: String) -> [String] {
-        if let out = try? shell("/usr/bin/git", ["-C", root, "ls-files", "--cached", "--others", "--exclude-standard"]),
-           !out.isEmpty {
-            return out.split(separator: "\n").prefix(60_000).map(String.init)
+        // Hardened like every IDE git call: a cloned repo's core.fsmonitor must not run on "Go to file".
+        let r = IDEGit.git(root, ["ls-files", "--cached", "--others", "--exclude-standard"], timeout: 30)
+        if r.ok, !r.out.isEmpty {
+            return r.out.split(separator: "\n").prefix(60_000).map(String.init)
         }
         var files: [String] = []
         let base = URL(fileURLWithPath: root)
@@ -415,10 +593,11 @@ enum IDEFiles {
     /// Find in path: git grep in repos (respects .gitignore, includes untracked), grep elsewhere.
     static func search(root: String, query: String, regex: Bool, caseSensitive: Bool) -> [[String: Any]] {
         guard !query.isEmpty else { return [] }
-        var args = ["-C", root, "grep", "-n", "-I", "--untracked", "--column", "--no-color", "-e", query]
-        if !regex { args.insert("-F", at: 4) }
-        if !caseSensitive { args.insert("-i", at: 4) }
-        var raw = (try? shell("/usr/bin/git", args)) ?? ""
+        var args = ["grep", "-n", "-I", "--untracked", "--column", "--no-color", "-e", query]
+        if !regex { args.insert("-F", at: 2) }
+        if !caseSensitive { args.insert("-i", at: 2) }
+        let g = IDEGit.git(root, args, timeout: 60)
+        var raw = g.ok ? g.out : ""
         if raw.isEmpty, !FileManager.default.fileExists(atPath: (root as NSString).appendingPathComponent(".git")) {
             var g = ["-rnI", "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=vendor", "--exclude-dir=.build"]
             if !regex { g.append("-F") }
@@ -441,94 +620,14 @@ enum IDEFiles {
     }
 }
 
-// MARK: - Git
-
-enum IDEGit {
-    /// The git operations the IDE needs, with their output parsed for the page.
-    static func run(root: String, cmd: String, args: [String]) -> [String: Any] {
-        func git(_ a: [String]) -> (String, Bool) {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            p.arguments = ["-C", root] + a
-            let out = Pipe(), err = Pipe()
-            p.standardOutput = out
-            p.standardError = err
-            do { try p.run() } catch { return ("\(error)", false) }
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            let errData = err.fileHandleForReading.readDataToEndOfFile()
-            p.waitUntilExit()
-            let text = String(decoding: data, as: UTF8.self)
-            return p.terminationStatus == 0 ? (text, true) : (text + String(decoding: errData, as: UTF8.self), false)
-        }
-        switch cmd {
-        case "status":
-            let (out, ok) = git(["status", "--porcelain=v1", "-b", "-uall"])
-            guard ok else { return ["repo": false] }
-            var branch = "", ahead = 0, behind = 0
-            var files: [[String: String]] = []
-            for line in out.split(separator: "\n", omittingEmptySubsequences: true) {
-                if line.hasPrefix("## ") {
-                    let b = line.dropFirst(3)
-                    branch = String(b.split(separator: ".").first ?? b).split(separator: " ").first.map(String.init) ?? ""
-                    if let r = b.range(of: #"ahead (\d+)"#, options: .regularExpression) { ahead = Int(b[r].split(separator: " ").last ?? "0") ?? 0 }
-                    if let r = b.range(of: #"behind (\d+)"#, options: .regularExpression) { behind = Int(b[r].split(separator: " ").last ?? "0") ?? 0 }
-                    continue
-                }
-                guard line.count > 3 else { continue }
-                let code = String(line.prefix(2))
-                var path = String(line.dropFirst(3))
-                if let arrow = path.range(of: " -> ") { path = String(path[arrow.upperBound...]) }
-                files.append(["code": code, "path": path.trimmingCharacters(in: CharacterSet(charactersIn: "\""))])
-            }
-            return ["repo": true, "branch": branch, "ahead": ahead, "behind": behind, "files": files]
-        case "show":
-            // The file as it is in HEAD (for the gutter markers and the diff).
-            let (out, ok) = git(["show", "HEAD:\(args.first ?? "")"])
-            return ["content": ok ? out : "", "exists": ok]
-        case "log":
-            let (out, _) = git(["log", "-40", "--pretty=format:%h\u{1f}%an\u{1f}%ar\u{1f}%s", "--"] + args)
-            return ["commits": out.split(separator: "\n").map { line in
-                let p = line.split(separator: "\u{1f}", omittingEmptySubsequences: false).map(String.init)
-                return ["hash": p[safe: 0] ?? "", "author": p[safe: 1] ?? "", "when": p[safe: 2] ?? "", "subject": p[safe: 3] ?? ""]
-            }]
-        case "branches":
-            let (out, _) = git(["branch", "--format=%(refname:short)"])
-            return ["branches": out.split(separator: "\n").map(String.init)]
-        case "commit":
-            // args: [message, paths…] (no paths = everything).
-            let message = args.first ?? ""
-            let paths = Array(args.dropFirst())
-            let (addOut, addOk) = git(["add"] + (paths.isEmpty ? ["-A"] : ["--"] + paths))
-            guard addOk else { return ["ok": false, "output": addOut] }
-            let (out, ok) = git(["commit", "-m", message])
-            return ["ok": ok, "output": out]
-        case "push":
-            let (out, ok) = git(["push"])
-            return ["ok": ok, "output": out]
-        case "pull":
-            let (out, ok) = git(["pull", "--ff-only"])
-            return ["ok": ok, "output": out]
-        case "checkout":
-            let (out, ok) = git(["checkout"] + args)
-            return ["ok": ok, "output": out]
-        case "rollback":
-            // Discard local changes of one file (the page asks first).
-            let (out, ok) = git(["checkout", "HEAD", "--"] + args)
-            return ["ok": ok, "output": out]
-        default:
-            return ["ok": false, "output": "comando git non previsto"]
-        }
-    }
-}
-
 // MARK: - File system events
 
 /// Folder changes (agents writing files, git checkouts) reported in batches.
 final class DirWatcher {
     private var stream: FSEventStreamRef?
-    private let onChange: @MainActor ([String]) -> Void
+    private let onChange: @MainActor ([String], Bool) -> Void
 
-    init(path: String, onChange: @escaping @MainActor ([String]) -> Void) {
+    init(path: String, onChange: @escaping @MainActor ([String], Bool) -> Void) {
         self.onChange = onChange
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
                                            retain: nil, release: nil, copyDescription: nil)
@@ -536,10 +635,17 @@ final class DirWatcher {
             guard let info else { return }
             let watcher = Unmanaged<DirWatcher>.fromOpaque(info).takeUnretainedValue()
             let list = Unmanaged<CFArray>.fromOpaque(paths).takeUnretainedValue() as? [String] ?? []
-            let relevant = list.prefix(count).filter { !$0.contains("/.git/") && !$0.contains("/node_modules/") }
-            guard !relevant.isEmpty else { return }
+            let all = list.prefix(count)
+            let relevant = all.filter { !$0.contains("/.git/") && !$0.contains("/node_modules/") }
+            // Only the files that mean "the repo moved": HEAD, the index, refs (not objects or our own reads).
+            let gitTouched = all.contains { p in
+                guard let r = p.range(of: "/.git/") else { return false }
+                let rest = p[r.upperBound...]
+                return rest == "HEAD" || rest == "index" || rest.hasPrefix("refs/") || rest == "MERGE_HEAD" || rest == "packed-refs"
+            }
+            guard !relevant.isEmpty || gitTouched else { return }
             let changed = Array(relevant)
-            DispatchQueue.main.async { MainActor.assumeIsolated { watcher.onChange(changed) } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { watcher.onChange(changed, gitTouched) } }
         }
         stream = FSEventStreamCreate(nil, callback, &context, [path] as CFArray,
                                      FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.3,

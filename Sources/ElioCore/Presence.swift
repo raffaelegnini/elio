@@ -14,6 +14,9 @@ public enum Presence {
         lock.withLock { if remote { lastRemote = Date() } else { lastLocal = Date() } }
     }
 
+    /// Last time the user talked to Elio or answered it, from either device.
+    public static var lastRequest: Date { lock.withLock { max(lastRemote, lastLocal) } }
+
     /// Seconds since the last keyboard/mouse use on the Mac.
     static var macIdle: TimeInterval {
         CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)

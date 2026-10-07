@@ -1,6 +1,6 @@
 import Foundation
 
-/// Long-term memory: durable facts about Raffaele, people, projects and preferences.
+/// Long-term memory: durable facts about the user, people, projects and preferences.
 public enum MemoryTools {
     static let categories = ["persona", "preferenza", "lavoro", "progetto", "contatto", "routine", "generale"]
 
@@ -53,7 +53,7 @@ public enum MemoryTools {
     /// Facts injected in the system prompt when the conversation session starts.
     static func promptBlock(_ facts: [Memory.Fact]) -> String {
         guard !facts.isEmpty else { return "Memoria a lungo termine: ancora vuota." }
-        return "Memoria a lungo termine (cose che sai su Raffaele):\n" +
+        return "Memoria a lungo termine (cose che sai sull'utente):\n" +
             facts.prefix(80).map { "- [\($0.category)] \($0.text)" }.joined(separator: "\n")
     }
 }

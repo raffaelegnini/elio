@@ -61,8 +61,8 @@ public enum Addressee {
     }
 
     static let instructions = """
-    Raffaele lavora al Mac con il suo assistente vocale Elio; vicino a lui possono esserci colleghi o può essere al \
-    telefono. Ricevi una frase detta da Raffaele (trascrizione automatica, con possibili errori) e, se c'è, cosa Elio \
+    L'utente lavora al Mac con il suo assistente vocale Elio; vicino a lui possono esserci colleghi o può essere al \
+    telefono. Ricevi una frase detta dall'utente (trascrizione automatica, con possibili errori) e, se c'è, cosa Elio \
     stava dicendo in quel momento. Decidi:
 
     target:
@@ -88,8 +88,8 @@ public enum Addressee {
         guard FastPath.isAvailable else { return nil }
         let prompt = """
             \(elioSaying.map { "Elio stava dicendo: «\(String($0.suffix(400)))»" } ?? "Elio era in silenzio.")
-            \(wakeWord ? "Raffaele ha iniziato la frase chiamando Elio per nome." : "Raffaele non ha detto il nome di Elio.")
-            Raffaele ha detto: «\(said)»
+            \(wakeWord ? "L'utente ha iniziato la frase chiamando Elio per nome." : "L'utente non ha detto il nome di Elio.")
+            L'utente ha detto: «\(said)»
             """
         return try? await withTimeout(1.8) {
             let session = LanguageModelSession(instructions: instructions)

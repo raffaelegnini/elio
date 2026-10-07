@@ -363,7 +363,7 @@ public enum WorkflowTools {
     static let mode = ElioTool(
         name: "workflow_mode",
         description: """
-        Modalità di Elio mentre gli agenti lavorano: "talking" (racconta i progressi e le decisioni che prende per Raffaele) \
+        Modalità di Elio mentre gli agenti lavorano: "talking" (racconta i progressi e le decisioni che prende per l'utente) \
         o "silent" (sta zitto e parla solo per domande, conferme, problemi e alla fine). Senza mode restituisce quella attuale.
         """,
         properties: ["mode": prop("talking o silent (opzionale)")]
@@ -382,7 +382,7 @@ public enum WorkflowTools {
         name: "workflow_report",
         description: """
         Genera il report di un workflow (squadra o task in background): grafici di tempi, token e costi per agente, \
-        attività, decisioni prese per Raffaele, correzioni di gusto, domande, bacheca. Lo apre nel browser del Mac \
+        attività, decisioni prese per l'utente, correzioni di gusto, domande, bacheca. Lo apre nel browser del Mac \
         (open: false per solo generarlo). Senza id usa l'ultimo workflow.
         """,
         properties: ["id": prop("Id del workflow (squadra o task, opzionale)"),

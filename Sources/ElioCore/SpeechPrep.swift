@@ -82,7 +82,7 @@ public actor SpeechPrep {
         // Wait for a few new words: one step per clause, not per syllable.
         guard sentText.isEmpty || newWords >= 5 else { return }
         let prompt = sentText.isEmpty
-            ? "Raffaele sta parlando (trascrizione parziale, continua):\n\"\(latestText)\""
+            ? "\(config.displayName.capitalizedFirst) sta parlando (trascrizione parziale, continua):\n\"\(latestText)\""
             : "Ha continuato. Ora la trascrizione è:\n\"\(latestText)\""
         sentText = latestText
         if bridge == nil { warm() }
@@ -126,7 +126,7 @@ public actor SpeechPrep {
 
     static func prompt(_ config: ElioConfig) -> String {
         """
-        Sei il "pensiero veloce" di \(config.assistantName), l'assistente di \(config.userName). \(config.userName) sta ancora \
+        Sei il "pensiero veloce" di \(config.assistantName), l'assistente \(config.ofUser). \(config.displayName.capitalizedFirst) sta ancora \
         parlando: ricevi la trascrizione parziale (può essere incompleta o con errori di riconoscimento) e prepari il terreno \
         perché, appena finisce, \(config.assistantName) possa agire subito.
 

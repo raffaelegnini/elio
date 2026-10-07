@@ -97,6 +97,7 @@ final class MainMenu: NSObject, NSMenuDelegate {
         file.addItem(.separator())
         file.addItem(own("Apri progetto nell'IDE…", #selector(openProject), "o", [.command, .shift]))
         file.addItem(own("Apri il codice di \(name) nell'IDE", #selector(openSelf)))
+        file.addItem(ideItem("Apri cartella nel workspace dell'IDE…", "addFolder"))
         file.addItem(.separator())
         file.addItem(own("Report dell'ultimo workflow", #selector(lastReport)))
         file.addItem(own("Cartella dei documenti di \(name)", #selector(openDocuments)))
@@ -130,10 +131,33 @@ final class MainMenu: NSObject, NSMenuDelegate {
         view.addItem(own("Archivio", #selector(archive), "a", [.command, .option]))
         view.addItem(own("Mostra HUD", #selector(hud)))
         view.addItem(.separator())
+        // IDE tool windows (shortcuts work inside the IDE: ⌘1, ⌘0, ⌘9, ⌘6, ⌥F12).
+        let tools = NSMenu()
+        for (title, action) in [("Progetto", "project"), ("Commit", "commitPanel"), ("Log di Git", "gitLog"), ("Struttura", "structure"),
+                                ("Problemi", "problems"), ("Terminale", "terminal"), ("Esegui", "run"), ("Database", "database"),
+                                ("Remoto (SSH/SFTP)", "remote")] {
+            tools.addItem(ideItem(title, action))
+        }
+        view.addItem(submenu("Finestre dell'IDE", tools))
+        view.addItem(.separator())
         view.addItem(own("Ripristina la disposizione della dashboard", #selector(resetLayout)))
         view.addItem(.separator())
         view.addItem(item("Schermo intero", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]))
         main.addItem(submenu("Vista", view))
+
+        // Git (acts on the IDE's current project)
+        let gitMenu = NSMenu()
+        gitMenu.addItem(ideItem("Commit…", "commit"))
+        gitMenu.addItem(ideItem("Push…", "push"))
+        gitMenu.addItem(ideItem("Update Project…", "update"))
+        gitMenu.addItem(.separator())
+        gitMenu.addItem(ideItem("Nuovo branch…", "newBranch"))
+        gitMenu.addItem(ideItem("Branch…", "branches"))
+        gitMenu.addItem(ideItem("Checkout tag o revisione…", "checkoutRevision"))
+        gitMenu.addItem(.separator())
+        gitMenu.addItem(ideItem("Log di Git", "gitLog"))
+        gitMenu.addItem(ideItem("Fetch", "fetch"))
+        main.addItem(submenu("Git", gitMenu))
 
         // Assistente
         assistantMenu.delegate = self
@@ -166,6 +190,14 @@ final class MainMenu: NSObject, NSMenuDelegate {
         main.addItem(submenu("Aiuto", help))
         NSApp.helpMenu = help
         return main
+    }
+
+    /// A menu item that runs an action inside the IDE page. No key equivalents: the same shortcuts (⌘K, ⌘9…)
+    /// belong to the IDE page and would fire from any window if bound here.
+    private func ideItem(_ title: String, _ action: String) -> NSMenuItem {
+        let i = own(title, #selector(ideAction(_:)))
+        i.representedObject = action
+        return i
     }
 
     // MARK: Live menus
@@ -351,6 +383,10 @@ final class MainMenu: NSObject, NSMenuDelegate {
         app.showDashboard(forceFront: true)
     }
     @objc private func ide() { app.showIDE() }
+    @objc private func ideAction(_ sender: NSMenuItem) {
+        guard let action = sender.representedObject as? String else { return }
+        IDEWindowController.shared.perform(action, loop: loop)
+    }
     @objc private func archive() { app.showArchive() }
     @objc private func hud() { app.hud.show(pinned: true) }
     @objc private func resetLayout() { NotificationCenter.default.post(name: .resetDashboardLayout, object: nil) }
@@ -401,7 +437,11 @@ final class MainMenu: NSObject, NSMenuDelegate {
         | Vai a file / recenti / riga | ⌘⇧O · ⌘E · ⌘L |
         | Cerca nel progetto | ⌘⇧F |
         | Terminale | ⌥F12 |
-        | Commit / push | ⌘K · ⌘⇧K |
+        | Commit / push / update | ⌘K · ⌘⇧K · ⌘T |
+        | Progetto / Commit / Log di Git | ⌘1 · ⌘0 · ⌘9 |
+        | Problemi / Struttura / Esegui | ⌘6 · ⌘7 · ⌘4 |
+        | Nuovo branch | ⌥⌘N |
+        | Nuovo file | ⌘N (nell'albero) |
         | Duplica / cancella riga | ⌘D · ⌘⌫ |
         | Chiedi a \(name) sulla selezione | ⌘⌥E |
         """)

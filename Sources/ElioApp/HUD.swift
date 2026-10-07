@@ -77,6 +77,7 @@ struct HUDView: View {
     let close: () -> Void
     let openReview: (DiffPayload) -> Void
     @State private var input = ""
+    @State private var attachments = PendingAttachments()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -211,18 +212,23 @@ struct HUDView: View {
     }
 
     private var inputBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.accent)
-            TextField("Scrivi a \(Brand.shared.name)…", text: $input)
-                .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.text)
-                .onSubmit {
-                    loop.submit(text: input)
-                    input = ""
-                }
+        VStack(alignment: .leading, spacing: 6) {
+            AttachmentChips(pending: attachments)
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.accent)
+                TextField("Scrivi a \(Brand.shared.name)…", text: $input)
+                    .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.text)
+                    .onSubmit {
+                        loop.submit(text: input, attachments: attachments.take())
+                        input = ""
+                    }
+                AttachButton(pending: attachments)
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.04)))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
+        .onDrop(of: [.fileURL], isTargeted: nil) { attachments.drop($0) }
         .padding(12)
     }
 }

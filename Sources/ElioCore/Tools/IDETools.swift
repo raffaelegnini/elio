@@ -16,8 +16,8 @@ public enum IDETools {
     static let open = ElioTool(
         name: "open_ide",
         description: """
-        Apre l'IDE di Elio (editor di codice con terminali, git e il terminale di ogni agente) su qualunque progetto di \
-        Raffaele, su un file e una riga. path può essere un percorso o il nome del progetto ("comitiva"); "elio" apre \
+        Apre l'IDE di Elio (editor di codice con terminali, git e il terminale di ogni agente) su qualunque progetto \
+        dell'utente, su un file e una riga. path può essere un percorso o il nome del progetto ("comitiva"); "elio" apre \
         il tuo stesso codice. Usalo quando vuole vedere o toccare il codice ("aprimi comitiva", "fammi vedere il \
         controller del login", "apri il tuo codice").
         """,
@@ -39,9 +39,9 @@ public enum IDETools {
     static let selfUpdate = ElioTool(
         name: "self_update",
         description: """
-        Ti aggiorni da solo dopo che il tuo codice è stato modificato (da un agente o da Raffaele nell'IDE): esegui i test \
+        Ti aggiorni da solo dopo che il tuo codice è stato modificato (da un agente o dall'utente nell'IDE): esegui i test \
         e, solo se passano, ricompili e reinstalli app e demone; la versione precedente resta come backup e torna su se \
-        qualcosa va storto. Ci mette qualche minuto e ti riavvia: avvisa Raffaele prima. Chiede conferma.
+        qualcosa va storto. Ci mette qualche minuto e ti riavvia: avvisa prima l'utente. Chiede conferma.
         """,
         properties: ["reason": prop("Cosa è cambiato, in una frase")]
     ) { args, ctx in
@@ -51,7 +51,7 @@ public enum IDETools {
         let reason = args["reason"] as? String ?? "nuove modifiche"
         let ok = await ctx.gate.request(ConfirmRequest(id: UUID().uuidString, title: "Mi aggiorno con \(reason) e mi riavvio",
                                                        detail: "Test, build e reinstallazione da \(source)", risk: .normal, taskId: ctx.taskId))
-        guard ok else { return "Raffaele non ha confermato l'aggiornamento." }
+        guard ok else { return "\(ctx.config.displayName.capitalizedFirst) non ha confermato l'aggiornamento." }
         // Its own launchd job: it keeps going while this daemon is replaced.
         _ = try? shell("/bin/launchctl", ["remove", "it.dnafactory.elio.selfupdate"])
         try shell("/bin/launchctl", ["submit", "-l", "it.dnafactory.elio.selfupdate", "--", "/bin/zsh", script])

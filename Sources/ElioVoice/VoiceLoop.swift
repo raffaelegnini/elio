@@ -213,6 +213,13 @@ public final class VoiceLoop {
         return score >= limit
     }
 
+    /// Dangerous confirmations by voice: only with an enrolled voiceprint that recognizes the owner on at least
+    /// 1.5 s of speech. No verdict (too short) or no voiceprint means no.
+    private func ownerVerifiedForDangerous() -> Bool {
+        guard ownerGateActive else { return false }
+        return isOwner(minSeconds: 1.5) == true
+    }
+
     /// Starts recording the owner's voice: they read `enrollmentSentences` aloud.
     public func startEnrollment() {
         guard speakerID != nil else { lastError = "Modello vocale mancante: reinstalla Elio."; return }
@@ -432,6 +439,8 @@ public final class VoiceLoop {
     public var onOpenView: ((String, String, String) -> Void)?
     /// "Aprimi il controller del login": the IDE on a path (and line).
     public var onOpenIDE: ((String, Int) -> Void)?
+    /// "Apri una console sul DB di staging": a saved connection (id) to open in the IDE (terminal, files, console, tables).
+    public var onIDEConnect: ((String, String) -> Void)?
     private var spokenSentences = 3
     private var briefOpeningEnabled = true
 
@@ -577,11 +586,14 @@ public final class VoiceLoop {
     public func controlTask(_ id: String, _ action: String) { client.send(.taskControl(id: id, action: action)) }
 
 
-    /// Typed input from the HUD: same path as voice, skips the wake word.
-    public func submit(text: String) {
+    /// Typed input from the HUD: same path as voice, skips the wake word. Attachments are files on this Mac:
+    /// Elio gets their paths and opens them itself.
+    public func submit(text: String, attachments: [URL] = []) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        send(trimmed)
+        guard !trimmed.isEmpty || !attachments.isEmpty else { return }
+        let names = attachments.map(\.lastPathComponent).joined(separator: ", ")
+        send(Attachments.compose(trimmed, paths: attachments.map(\.path)),
+             display: attachments.isEmpty ? nil : [trimmed, "Allegati: \(names)"].filter { !$0.isEmpty }.joined(separator: "\n"))
     }
 
     // MARK: - Mic events
@@ -776,7 +788,7 @@ public final class VoiceLoop {
 
     // MARK: - Daemon
 
-    private func send(_ text: String, voice: Bool = false) {
+    private func send(_ text: String, voice: Bool = false, display: String? = nil) {
         // "Basta" / "stop" / "fermati": stop talking and stop the work in progress, locally.
         if IntentMatcher().match(text)?.intent == .stop {
             stopEverything()
@@ -787,7 +799,7 @@ public final class VoiceLoop {
         lastCommandClosed = Self.isClosing(text)
         splitter = SentenceSplitter()
         requestStart = Date()
-        turns.append(Turn(role: "user", text: text))
+        turns.append(Turn(role: "user", text: display ?? text))
         turns.append(Turn(role: "elio", text: ""))
         spokenText = ""
         sentenceBudget = Self.wantsDetail(text) ? 50 : spokenSentences
@@ -929,6 +941,10 @@ public final class VoiceLoop {
             if let p = msg.payload, let obj = try? JSONSerialization.jsonObject(with: Data(p.utf8)) as? [String: Any] {
                 onOpenIDE?(obj["path"] as? String ?? "", obj["line"] as? Int ?? 0)
             }
+        case "ideConnect":
+            if let p = msg.payload, let obj = try? JSONSerialization.jsonObject(with: Data(p.utf8)) as? [String: Any] {
+                onIDEConnect?(obj["id"] as? String ?? "", obj["what"] as? String ?? "")
+            }
         case "openView":
             if let p = msg.payload, let obj = try? JSONSerialization.jsonObject(with: Data(p.utf8)) as? [String: String] {
                 onOpenView?(obj["view"] ?? "dashboard", obj["tab"] ?? "", obj["integration"] ?? "")
@@ -1005,6 +1021,22 @@ public final class VoiceLoop {
                     activity[i].ms = msg.latencyMs
                 }
             }
+        case "alarm":
+            // "Chiamami quando…": it rings first so it's heard from across the room, then says what happened.
+            guard let text = msg.text else { return }
+            turns.append(Turn(role: "event", text: text, route: msg.route))
+            trimTurns()
+            Task { @MainActor [weak self] in
+                for _ in 0..<3 {
+                    NSSound(named: "Glass")?.play()
+                    try? await Task.sleep(for: .milliseconds(650))
+                }
+                try? await Task.sleep(for: .milliseconds(400))
+                guard let self else { return }
+                self.spokenText = text
+                self.speaker.say(text, lang: msg.lang)
+            }
+            return
         case "card":
             if let c = CardPayload.fromJSON(msg.payload) {
                 onCard?(c)
@@ -1053,6 +1085,14 @@ public final class VoiceLoop {
             return true
         }
         switch ConfirmationAnswer.parse(text, risk: req.risk) {
+        case .approve where req.risk == .dangerous && !ownerVerifiedForDangerous():
+            // A "confermo" is under a second: too short for the voiceprint, and anyone in the room (or in a call)
+            // can say it. Dangerous actions need the owner's recognized voice on a longer phrase, or a click.
+            speaker.enqueue(ownerGateActive
+                ? "È un'azione delicata, \(addressAs): me lo confermi con una frase più lunga, per esempio \"confermo, procedi pure\", oppure col pulsante Conferma."
+                : "È un'azione delicata, \(addressAs): la confermi col pulsante Conferma.")
+            speaker.endUtterance()
+            armedUntil = Date().addingTimeInterval(30)
         case .approve:
             answer(req, approved: true)
             speaker.enqueue("Grazie, \(addressAs), procedo.")

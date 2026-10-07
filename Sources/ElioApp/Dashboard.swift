@@ -8,6 +8,7 @@ struct DashboardView: View {
     let loop: VoiceLoop
     let state: DashboardState
     @State private var input = ""
+    @State private var attachments = PendingAttachments()
     @State private var agenda: [AgendaItem] = []
     @State private var agendaNote: String?
     @State private var reminders: [String] = []
@@ -228,14 +229,17 @@ struct DashboardView: View {
                 .scrollIndicators(.automatic)
                 .frame(maxWidth: 560, maxHeight: 96)
                 .fixedSize(horizontal: false, vertical: true)
+                AttachmentChips(pending: attachments).frame(maxWidth: 560)
                 HStack(spacing: 10) {
                     Image(systemName: "chevron.right").foregroundStyle(Theme.accent)
                     TextField("Scrivi a \(Brand.shared.name)…", text: $input)
                         .textFieldStyle(.plain).font(.system(size: 15)).foregroundStyle(Theme.text)
-                        .onSubmit { loop.submit(text: input); input = "" }
+                        .onSubmit { loop.submit(text: input, attachments: attachments.take()); input = "" }
+                    AttachButton(pending: attachments)
                     Text("⌥⌘J per parlare").font(Theme.mono).foregroundStyle(Theme.dim)
                 }
                 .padding(12)
+                .onDrop(of: [.fileURL], isTargeted: nil) { attachments.drop($0) }
                 .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.05)))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
             }

@@ -251,7 +251,7 @@ public enum TodoTools {
     static let add = ElioTool(
         name: "todo_add",
         description: """
-        Aggiunge cose alla to-do list di Raffaele (una o più). Usalo quando dice cosa vuole fare ("oggi devo…", "segnati di…", \
+        Aggiunge cose alla to-do list dell'utente (una o più). Usalo quando dice cosa vuole fare ("oggi devo…", "segnati di…", \
         "mettimi in lista…") e al mattino quando pianificate la giornata. day: oggi (default), domani, un giorno della settimana, \
         yyyy-MM-dd o "prima o poi". time "HH:mm" fa partire un promemoria a quell'ora. recurring: daily o weekdays per le cose \
         di ogni giorno. Una voce = un'azione concreta, breve, all'infinito ("Rispondere a Rosario sul preventivo").

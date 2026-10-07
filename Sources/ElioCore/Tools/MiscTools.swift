@@ -66,7 +66,7 @@ public enum ProjectTools {
 
     public static func defaultBase(repo: String) -> String {
         for candidate in ["develop", "main", "master"] {
-            if (try? shell("/usr/bin/git", ["-C", repo, "rev-parse", "--verify", "--quiet", candidate])) != nil {
+            if GitSafety.run(repo, ["rev-parse", "--verify", "--quiet", candidate]).code == 0 {
                 return candidate
             }
         }
@@ -75,12 +75,18 @@ public enum ProjectTools {
 
     public static func diff(repo: String, base: String?, head: String?) throws -> DiffPayload {
         let base = base ?? defaultBase(repo: repo)
-        let current = try shell("/usr/bin/git", ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Refs come from the model: never let one be read as an option (--output=…).
+        guard !base.hasPrefix("-"), !(head ?? "").hasPrefix("-") else { throw ToolError("Branch non valido") }
+        let rp = GitSafety.run(repo, ["rev-parse", "--abbrev-ref", "HEAD"])
+        guard rp.code == 0 else { throw ToolError("git rev-parse exit \(rp.code)") }
+        let current = rp.out.trimmingCharacters(in: .whitespacesAndNewlines)
         let head = head ?? current
-        var diff = try shell("/usr/bin/git", ["-C", repo, "diff", "--no-color", "\(base)...\(head)"])
+        // No external diff or textconv from the repo's config (hardened like every automatic git call).
+        let d = GitSafety.run(repo, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "\(base)...\(head)"], timeout: 60)
+        guard d.code == 0 else { throw ToolError("git diff exit \(d.code)") }
+        var diff = d.out
         // Uncommitted work on the current branch counts too.
-        let working = (try? shell("/usr/bin/git", ["-C", repo, "diff", "--no-color", "HEAD"])) ?? ""
+        let working = GitSafety.output(repo, ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "HEAD"], timeout: 60)
         if !working.isEmpty { diff += working }
         return DiffPayload(title: "\(head) → \(base)", repo: repo, base: base, head: head, diff: diff)
     }
@@ -99,7 +105,7 @@ public enum ProjectTools {
         let payload = try diff(repo: repo, base: args["base"] as? String, head: args["head"] as? String)
         if payload.diff.isEmpty { return "Nessuna differenza tra \(payload.head) e \(payload.base)." }
         ctx.broadcast(ServerMessage(type: .event, text: "Diff \(payload.title)", kind: "diff", payload: payload.jsonString()))
-        let stat = (try? shell("/usr/bin/git", ["-C", repo, "diff", "--shortstat", "\(payload.base)...\(payload.head)"])) ?? ""
+        let stat = GitSafety.output(repo, ["diff", "--no-ext-diff", "--no-textconv", "--shortstat", "\(payload.base)...\(payload.head)"])
         return "Diff mostrato a schermo. \(stat.trimmingCharacters(in: .whitespacesAndNewlines))"
     }
 }

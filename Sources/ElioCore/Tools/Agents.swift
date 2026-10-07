@@ -24,9 +24,13 @@ public actor ConfirmationGate {
 
     /// What the user said (from any device: phone, typed, Mac) answers what Elio is waiting for: the oldest
     /// confirmation first, then a pending question. Returns what to say back, or nil if it wasn't an answer.
-    public func answerFromSpeech(_ text: String) -> String? {
+    /// `overheard`: it came from an always-on mic (anyone in the room could have said it), so it can't approve a
+    /// dangerous action — that takes a tap on Conferma, or the owner's verified voice on the Mac.
+    public func answerFromSpeech(_ text: String, overheard: Bool = false) -> String? {
         if let req = pending.values.first {
             switch ConfirmationAnswer.parse(text, risk: req.risk) {
+            case .approve where overheard && req.risk == .dangerous:
+                return "È un'azione delicata, \(addressAs): la confermi col pulsante Conferma, sul telefono o sul Mac."
             case .approve:
                 answer(id: req.id, approved: true)
                 return "Grazie, \(addressAs), procedo."
@@ -55,6 +59,9 @@ public actor ConfirmationGate {
     public private(set) var pending: [String: ConfirmRequest] = [:]
 
     public init() {}
+
+    /// A confirmation or question is waiting: the user's next words are probably the answer.
+    public var awaitingAnswer: Bool { !pending.isEmpty || !questions.isEmpty }
 
     public func setBroadcast(_ b: @escaping @Sendable (ServerMessage) -> Void) { broadcast = b }
 
@@ -150,6 +157,9 @@ public enum ApprovalTool {
 
     /// Plain-language gist of an action, for the spoken confirmation.
     static func summary(tool: String, input: [String: Any]) -> String {
+        if tool == "Bash", input["dangerouslyDisableSandbox"] as? Bool == true {
+            return summary(tool: tool, input: input.filter { $0.key != "dangerouslyDisableSandbox" }) + ", fuori dalla protezione (rete e file liberi)"
+        }
         switch tool {
         case "Bash":
             let cmd = input["command"] as? String ?? ""
@@ -350,7 +360,7 @@ public actor TaskRunner {
                                                          hasLead: squads[squad ?? ""]?.hasLead == true,
                                                          brief: squads[squad ?? ""]?.brief) + "\n\n" + taste
             case .scout: fullPrompt = prompt
-            case .lead: fullPrompt = Self.leadPrompt(squad: squads[squad ?? ""], user: config.userName,
+            case .lead: fullPrompt = Self.leadPrompt(squad: squads[squad ?? ""], user: config.displayName,
                                                       team: members(of: squad ?? "").filter { $0.kind != Kind.lead.rawValue },
                                                       maxAgents: config.maxSquadAgents, taste: taste)
             }
@@ -373,6 +383,8 @@ public actor TaskRunner {
             // Squads multiply the cost: their agents run on the (cheaper) squad model.
             "--model", model,
             "--setting-sources", "project,local",
+            // OS-level sandbox for Bash: the real boundary under PermissionPolicy's patterns.
+            "--settings", AgentSandbox.settings(kind: kind.rawValue),
             "--strict-mcp-config", "--mcp-config", mcpConfig,
             "--permission-prompt-tool", "mcp__elio__approve",
             "--allowedTools"] + allowed
@@ -380,6 +392,16 @@ public actor TaskRunner {
           + (config.browserAutonomy && kind != .lead ? ["--chrome"] : []) + ["--disallowedTools"] + forbidden
         var env = config.claudeAccount.environment()
         env["ELIO_TASK_ID"] = id
+        // Agents run read-only git freely (status/log/diff): a repo's config must not turn those into program runs
+        // (fsmonitor, signature checks via gpg.program, pagers/editors). Hooks stay: commits behave as the dev expects.
+        let gitOverrides = ["core.fsmonitor": "false", "log.showSignature": "false", "core.pager": "cat",
+                            "core.editor": "true", "sequence.editor": "true"]
+        env["GIT_CONFIG_COUNT"] = "\(gitOverrides.count)"
+        for (i, kv) in gitOverrides.sorted(by: { $0.key < $1.key }).enumerated() {
+            env["GIT_CONFIG_KEY_\(i)"] = kv.key
+            env["GIT_CONFIG_VALUE_\(i)"] = kv.value
+        }
+        env["GIT_PAGER"] = "cat"
         p.environment = env
 
         let out = Pipe()
@@ -642,7 +664,7 @@ public actor TaskRunner {
              text: "Lo scout ha mappato il codice (brief nel vostro prompt). Al lavoro: \(started.joined(separator: ", ")).")
         if queued.lead {
             _ = try? start(title: "elio: coordinatore", prompt: s.goal, cwd: s.project, kind: .lead, squad: squad, member: "elio",
-                           role: "coordinatore (fa le veci di \(config.userName))")
+                           role: "coordinatore (fa le veci \(config.ofUser))")
         }
     }
 
@@ -813,7 +835,7 @@ public actor TaskRunner {
     /// The user writes to an agent. Running: interrupted and resumed with the message (claude -p has no
     /// input while it works). Finished: woken up with it. Same session, same memory.
     public func message(agent id: String, text: String) throws -> String {
-        let note = "Messaggio di \(config.userName) (scritto nel tuo terminale): \(text)\nTienine conto e continua il lavoro."
+        let note = "Messaggio \(config.ofUser) (scritto nel tuo terminale): \(text)\nTienine conto e continua il lavoro."
         if let running = tasks[id] {
             interjections[id] = note
             if running.info.status == .paused { kill(running.process.processIdentifier, SIGCONT) }
@@ -912,7 +934,7 @@ public actor TaskRunner {
         guard !toFix.isEmpty, rounds < Self.maxReviewRounds, let sid = info.sessionId,
               info.squad.map({ squads[$0]?.endedAt == nil }) ?? true else { return afterExit(info, cwd: cwd) }
         reviewRounds[key] = rounds + 1
-        let message = TasteReviewer.correction(toFix, rules: tasteRules, addressee: config.userName)
+        let message = TasteReviewer.correction(toFix, rules: tasteRules, addressee: config.toUser)
         let who = info.member ?? "l'agente"
         let what = toFix.count == 1 ? "una cosa" : "\(toFix.count) cose"
         broadcast?(ServerMessage(type: .event, text: "Ho chiesto a \(who) di correggere \(what) che non le piacerebbero: \(toFix[0].problem)",
@@ -1024,13 +1046,13 @@ public actor TaskRunner {
 
     static func agentPrompt(title: String, prompt: String, cwd: String) -> String {
         """
-        Sei un agente di Elio, l'assistente personale di Raffaele. Lavori in background nel progetto \(cwd).
+        Sei un agente di Elio, l'assistente personale dell'utente. Lavori in background nel progetto \(cwd).
 
         Compito: \(title)
         Dettagli: \(prompt)
 
         \(workRules)
-        - Se ti manca un'informazione o devi scegliere tra opzioni con impatto, chiedi a Raffaele con \
+        - Se ti manca un'informazione o devi scegliere tra opzioni con impatto, chiedi all'utente con \
         mcp__elio__ask_user invece di indovinare (una domanda chiara, con le opzioni).
         - Termina con un riassunto in italiano di massimo due frasi, adatto a essere letto a voce, poi una sezione dettagliata.
         """
@@ -1040,7 +1062,7 @@ public actor TaskRunner {
     static let workRules = """
         Come lavori:
         - PIANO VISIBILE: all'inizio scrivi con TodoWrite un piano di 3-7 passi brevi in italiano (activeForm al presente: \
-        "Scrivo i test dell'export"), e aggiornalo quando inizi e finisci ogni passo. È l'unico modo in cui Raffaele \
+        "Scrivo i test dell'export"), e aggiornalo quando inizi e finisci ogni passo. È l'unico modo in cui l'utente \
         capisce cosa stai facendo e cosa hai fatto: tienilo sempre vero.
         - ECONOMIA: ogni token costa. Niente esplorazioni larghe del repo: Grep/Glob mirati, leggi solo i file che ti servono \
         e solo una volta, comandi con output corto (`| tail -20`, `-q`, `--compact`), test del file o della cartella toccata \
@@ -1049,9 +1071,9 @@ public actor TaskRunner {
         solo push, merge/rebase, reset --hard, cancellazioni ricorsive di codice, migrazioni distruttive, invii verso \
         l'esterno, installazioni globali e docker: evitali, non servono.
         - Codice: lavora su un branch locale `elio/<slug-breve>` e committa lì, a piccoli passi. Mai su develop/main/master, \
-        mai push, merge, rebase né PR: Raffaele rivede il diff e crea lui la PR.
+        mai push, merge, rebase né PR: l'utente rivede il diff e crea lui la PR.
         - Nei comandi Bash scrivi il campo description in italiano, breve, all'infinito ("eseguire i test del login"): \
-        se serve una conferma è quello che Raffaele sente.
+        se serve una conferma è quello che l'utente sente.
         """
 }
 
@@ -1085,7 +1107,7 @@ public enum AskTools {
                 ctx.broadcast(ServerMessage(type: .event, text: "Ho deciso io al posto suo: \(d.answer.prefix(160))", lang: .it,
                                             kind: "autoDecision", payload: ["question": question, "answer": d.answer, "reason": d.reason].jsonString(),
                                             speak: true))
-                return "Risposta di Elio per conto di \(ctx.config.userName) (conosce i suoi gusti): \(d.answer)"
+                return "Risposta di Elio per conto \(ctx.config.ofUser) (conosce i suoi gusti): \(d.answer)"
             }
         }
 

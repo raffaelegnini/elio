@@ -41,11 +41,11 @@ struct SentenceSplitterTests {
     @Test func streamsSentences() {
         var s = SentenceSplitter()
         var out: [String] = []
-        for chunk in ["Buongiorno Raffaele. ", "Oggi hai tre meet", "ing, il primo alle 10.30 con il team! Vuoi", " il riepilogo?"] {
+        for chunk in ["Buongiorno Marco. ", "Oggi hai tre meet", "ing, il primo alle 10.30 con il team! Vuoi", " il riepilogo?"] {
             out += s.push(chunk)
         }
         if let rest = s.flush() { out.append(rest) }
-        #expect(out == ["Buongiorno Raffaele.", "Oggi hai tre meeting, il primo alle 10.30 con il team!", "Vuoi il riepilogo?"])
+        #expect(out == ["Buongiorno Marco.", "Oggi hai tre meeting, il primo alle 10.30 con il team!", "Vuoi il riepilogo?"])
     }
 
     @Test func breaksLongFirstSentenceAtComma() {

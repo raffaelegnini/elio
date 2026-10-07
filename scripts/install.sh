@@ -25,6 +25,8 @@ DAEMON_APP="$SUPPORT/ElioDaemon.app"
 rm -rf "$DAEMON_APP" "$BIN/eliod"
 mkdir -p "$DAEMON_APP/Contents/MacOS"
 cp "$ROOT/.build/release/eliod" "$DAEMON_APP/Contents/MacOS/eliod"
+# Screen and audio monitors use ScreenCaptureKit + screencapture: no plist key, but the user grants
+# "Registrazione schermo" to Elio in System Settings (the daemon asks the first time it needs it).
 cat > "$DAEMON_APP/Contents/Info.plist" <<INFO
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

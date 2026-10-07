@@ -5,71 +5,91 @@
 <title>Elio IDE</title>
 <link rel="stylesheet" href="vendor/xterm/xterm.css">
 <link rel="stylesheet" href="ide.css">
+<link rel="stylesheet" href="connections.css">
 </head>
 <body>
 <div id="app">
   <header id="toolbar">
-    <button id="projectBtn" class="tb-btn" title="Cambia progetto"><span class="dot"></span><span id="projectName">Scegli un progetto</span><span class="caret">▾</span></button>
-    <button id="branchBtn" class="tb-btn" title="Branch"><span class="ico">⎇</span><span id="branchName">—</span></button>
+    <button id="projectBtn" class="tb-btn" title="Progetti del workspace"></button>
+    <button id="branchBtn" class="tb-btn" title="Branch e azioni Git"></button>
+    <span class="tb-sep"></span>
+    <button id="updateBtn" class="tb-ico update" title="Update Project… (⌘T)"></button>
+    <button id="commitBtn" class="tb-ico commit" title="Commit… (⌘K)"></button>
+    <button id="pushBtn" class="tb-ico push" title="Push… (⌘⇧K)"></button>
+    <button id="historyBtn" class="tb-ico" title="Log di Git (⌘9)"></button>
     <span class="spacer"></span>
-    <button id="searchBtn" class="tb-btn wide" title="Cerca ovunque (⇧⇧)"><span class="ico">⌕</span>Cerca ovunque <kbd>⇧⇧</kbd></button>
+    <button id="searchBtn" class="tb-btn wide" title="Cerca ovunque (⇧⇧)"></button>
     <span class="spacer"></span>
-    <button id="agentsBtn" class="tb-btn" title="Agenti"><span class="ico">◉</span><span id="agentsCount">0 agenti</span></button>
-    <button id="commitBtn" class="tb-btn" title="Commit (⌘K)">✓ Commit</button>
-    <button id="askBtn" class="tb-btn accent" title="Chiedi a Elio (⌘⌥E)">✦ Elio</button>
+    <span id="runWidget"></span>
+    <span class="tb-sep"></span>
+    <button id="agentsBtn" class="tb-btn" title="Agenti"></button>
+    <button id="askBtn" class="tb-btn accent" title="Chiedi a Elio (⌘⌥E)"></button>
   </header>
   <div id="main">
-    <aside id="side">
-      <nav id="sideTabs">
-        <button data-side="project" class="on" title="Progetto (⌘1)">Progetto</button>
-        <button data-side="changes" title="Modifiche (⌘0)">Modifiche <span id="changesCount"></span></button>
-        <button data-side="agents" title="Agenti">Agenti</button>
-      </nav>
-      <div id="sideBody">
-        <div id="tree" class="side-pane on"></div>
-        <div id="changes" class="side-pane"></div>
-        <div id="agentsList" class="side-pane"></div>
-      </div>
+    <nav id="strip"><div id="stripTop" class="grp"></div><span id="stripSep" class="grp-sep"></span><div id="stripTop2" class="grp"></div><div id="stripMore"></div><span class="spacer"></span><div id="stripBottom" class="grp"></div></nav>
+    <aside id="side" class="dock hidden">
+      <div id="sideA" class="slot hidden"><div id="sideHead" class="tw-head"></div><div id="sideBody" class="tw-body"></div></div>
+      <div id="sideSplit" class="splitter h hidden"></div>
+      <div id="sideB" class="slot hidden"><div id="sideHead2" class="tw-head"></div><div id="sideBody2" class="tw-body"></div></div>
     </aside>
-    <div id="vsplit" class="splitter v"></div>
+    <div id="vsplit" class="splitter v hidden"></div>
     <section id="center">
       <div id="tabs"></div>
-      <div id="crumbs"></div>
+      <div id="diffBar" class="hidden"></div>
       <div id="banner" class="hidden"></div>
       <div id="editorWrap">
         <div id="editor"></div>
         <div id="diffEditor" class="hidden"></div>
         <div id="welcome">
           <div class="logo">E.L.I.O. <span>IDE</span></div>
+          <div class="start"></div>
           <div class="hints">
             <div><span>Cerca ovunque</span><kbd>⇧⇧</kbd></div>
             <div><span>Vai a file</span><kbd>⌘⇧O</kbd></div>
             <div><span>File recenti</span><kbd>⌘E</kbd></div>
             <div><span>Cerca nel progetto</span><kbd>⌘⇧F</kbd></div>
-            <div><span>Terminale</span><kbd>⌥F12</kbd></div>
+            <div><span>Progetto</span><kbd>⌘1</kbd></div>
             <div><span>Commit</span><kbd>⌘K</kbd></div>
+            <div><span>Push</span><kbd>⌘⇧K</kbd></div>
+            <div><span>Update Project</span><kbd>⌘T</kbd></div>
+            <div><span>Log di Git</span><kbd>⌘9</kbd></div>
+            <div><span>Problemi</span><kbd>⌘6</kbd></div>
+            <div><span>Terminale</span><kbd>⌥F12</kbd></div>
+            <div><span>Nuovo branch</span><kbd>⌥⌘N</kbd></div>
             <div><span>Azioni</span><kbd>⌘⇧A</kbd></div>
             <div><span>Chiedi a Elio</span><kbd>⌘⌥E</kbd></div>
           </div>
         </div>
       </div>
-      <div id="hsplit" class="splitter h"></div>
-      <div id="panel">
-        <nav id="panelTabs"></nav>
-        <div id="panelBody"></div>
+      <div id="hsplit" class="splitter h hidden"></div>
+      <div id="panel" class="dock hidden">
+        <div id="panelA" class="slot hidden"><div id="panelHead" class="tw-head"></div><div id="panelBody" class="tw-body"></div></div>
+        <div id="panelSplit" class="splitter v hidden"></div>
+        <div id="panelB" class="slot hidden"><div id="panelHead2" class="tw-head"></div><div id="panelBody2" class="tw-body"></div></div>
       </div>
     </section>
+    <div id="rvsplit" class="splitter v hidden"></div>
+    <aside id="rside" class="dock hidden">
+      <div id="rsideA" class="slot hidden"><div id="rsideHead" class="tw-head"></div><div id="rsideBody" class="tw-body"></div></div>
+      <div id="rsideSplit" class="splitter h hidden"></div>
+      <div id="rsideB" class="slot hidden"><div id="rsideHead2" class="tw-head"></div><div id="rsideBody2" class="tw-body"></div></div>
+    </aside>
+    <nav id="rstrip"><div id="rstripTop" class="grp"></div><span id="rstripSep" class="grp-sep"></span><div id="rstripTop2" class="grp"></div><span class="spacer"></span><div id="rstripBottom" class="grp"></div></nav>
   </div>
   <footer id="status">
-    <span id="stBranch"></span>
-    <span id="stAgents" class="click"></span>
+    <div id="crumbs"></div>
     <span class="spacer"></span>
     <span id="stMsg"></span>
-    <span id="stPos"></span>
-    <span id="stLang"></span>
-    <span id="stIndent"></span>
-    <span>UTF-8</span>
     <span id="stSave"></span>
+    <span id="stProblems" class="click"></span>
+    <span id="stPos" class="click"></span>
+    <span id="stEol"></span>
+    <span id="stEnc"></span>
+    <span id="stIndent"></span>
+    <span id="stLang"></span>
+    <span id="stBranch" class="click"></span>
+    <span id="stAgents" class="click"></span>
+    <span id="stElio" class="click"></span>
   </footer>
 </div>
 
@@ -82,7 +102,6 @@
 </div>
 
 <div id="dialog" class="overlay hidden"><div class="dlg" id="dlgBody"></div></div>
-<div id="ctx" class="hidden"></div>
 <div id="toast" class="hidden"></div>
 
 <script src="vendor/xterm/xterm.js"></script>
@@ -90,6 +109,13 @@
 <script src="vendor/xterm/addon-search.js"></script>
 <script src="vendor/xterm/addon-web-links.js"></script>
 <script src="vendor/monaco/vs/loader.js"></script>
+<script src="icons.js"></script>
 <script src="ide.js"></script>
+<script src="git.js"></script>
+<script src="gitlog.js"></script>
+<script src="problems.js"></script>
+<script src="structure.js"></script>
+<script src="run.js"></script>
+<script src="connections.js"></script>
 </body>
 </html>

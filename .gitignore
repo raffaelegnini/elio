@@ -7,3 +7,4 @@ xcuserdata/
 *.mp3
 *.wav
 vendor/
+.playwright-mcp/

@@ -9,7 +9,7 @@ public enum Taste {
     public static func promptBlock(_ rules: [TasteRule], domain: String? = nil) -> String {
         let wanted = rules.filter { domain == nil || $0.domain == domain || $0.domain == "generale" }
         guard !wanted.isEmpty else { return "" }
-        var lines = ["Gusti e standard di Raffaele (vincolanti: un revisore controlla il tuo lavoro su queste regole):"]
+        var lines = ["Gusti e standard dell'utente (vincolanti: un revisore controlla il tuo lavoro su queste regole):"]
         for d in domains {
             let group = wanted.filter { $0.domain == d }
             guard !group.isEmpty else { continue }
@@ -60,7 +60,7 @@ public enum TasteReviewer {
                     "required": ["rule", "file", "problem", "fix", "severity"],
                 ],
             ],
-            "verdict": ["type": "string", "description": "una frase in italiano sul lavoro rispetto ai gusti di Raffaele"],
+            "verdict": ["type": "string", "description": "una frase in italiano sul lavoro rispetto ai gusti dell'utente"],
         ],
         "required": ["violations", "verdict"],
     ]
@@ -77,7 +77,7 @@ public enum TasteReviewer {
             changes.append(chunk)
         }
         let prompt = """
-            Sei il revisore personale di Raffaele: conosci i suoi gusti e controlli il lavoro di un agente come farebbe lui.
+            Sei il revisore personale \(config.ofUser): conosci i suoi gusti e controlli il lavoro di un agente come farebbe lui.
 
             \(Taste.promptBlock(rules))
 
@@ -91,7 +91,7 @@ public enum TasteReviewer {
             - Segnala SOLO violazioni concrete e sicure delle regole qui sopra, visibili nelle modifiche. Niente gusti tuoi, \
             niente stile generico, niente bug che non c'entrano con le regole.
             - severity: usa quella della regola ("fix" se l'agente deve correggere, "note" se è solo da segnalare, \
-            "ask" se serve una decisione di Raffaele).
+            "ask" se serve una decisione \(config.ofUser)).
             - fix: un'istruzione precisa ed eseguibile per l'agente (file, cosa cambiare, in cosa).
             - Se non ci sono violazioni, violations vuoto.
             """
@@ -106,14 +106,14 @@ public enum TasteReviewer {
         return Review(violations: violations, verdict: r.json["verdict"] as? String ?? "", costUSD: r.costUSD)
     }
 
-    /// What the agent is told when it has to fix things.
+    /// What the agent is told when it has to fix things. `addressee` is "a <nome>" (ElioConfig.toUser).
     static func correction(_ violations: [Violation], rules: [TasteRule], addressee: String) -> String {
         let byId = Dictionary(rules.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let items = violations.map { v in
             "- \(v.file.isEmpty ? "" : "\(v.file): ")\(v.problem)\n  Regola #\(v.rule): \(byId[v.rule]?.rule ?? "")\n  Correzione: \(v.fix)"
         }
         return """
-            Revisione di Elio: alcune cose non vanno come piace a \(addressee). Correggile, committa e chiudi di nuovo \
+            Revisione di Elio: alcune cose non vanno come piace \(addressee). Correggile, committa e chiudi di nuovo \
             con il riassunto di due frasi:
             \(items.joined(separator: "\n"))
             """
@@ -134,30 +134,30 @@ public enum Delegate {
     static let schema: [String: Any] = [
         "type": "object",
         "properties": [
-            "decide": ["type": "boolean", "description": "true solo se puoi decidere tu al posto di Raffaele"],
+            "decide": ["type": "boolean", "description": "true solo se puoi decidere tu al posto dell'utente"],
             "answer": ["type": "string", "description": "la risposta da dare all'agente, se decide è true"],
-            "reason": ["type": "string", "description": "in una frase: su quale preferenza o principio ti basi, o perché serve Raffaele"],
+            "reason": ["type": "string", "description": "in una frase: su quale preferenza o principio ti basi, o perché serve l'utente"],
         ],
         "required": ["decide", "answer", "reason"],
     ]
 
     public static func decide(question: String, from: String, goal: String, board: [SquadMessage],
                               rules: [TasteRule], facts: [Memory.Fact], config: ElioConfig) async -> Decision? {
-        let user = config.userName
+        let user = config.displayName
         let prompt = """
-            Sei \(config.assistantName), l'assistente di \(user), e fai le sue veci mentre i suoi agenti lavorano. \
+            Sei \(config.assistantName), l'assistente \(config.ofUser), e fai le sue veci mentre i suoi agenti lavorano. \
             Un agente gli fa una domanda. Rispondi tu SOLO se tutte queste condizioni sono vere:
             1. È una decisione piccola e reversibile: dettagli di implementazione, naming, stile, struttura di file, \
             scelta tra opzioni equivalenti, come procedere su un passo ovvio.
-            2. I gusti di \(user) qui sotto, i fatti che sai di lui o il buon senso di uno sviluppatore senior che lavora \
+            2. I gusti \(config.ofUser) qui sotto, i fatti che sai di lui o il buon senso di uno sviluppatore senior che lavora \
             come lui la coprono chiaramente.
             3. NON riguarda: soldi o acquisti, account, credenziali o chiavi, accettare termini, inviare cose fuori, \
             cancellare dati, push/merge/deploy, scelte di prodotto o architettura importanti, informazioni che solo lui ha.
-            In ogni altro caso decide = false: la domanda va a \(user).
+            In ogni altro caso decide = false: la domanda va \(config.toUser).
 
             \(Taste.promptBlock(rules))
 
-            Fatti su \(user):
+            Fatti che sai di lui:
             \(facts.prefix(40).map { "- \($0.text)" }.joined(separator: "\n"))
 
             Obiettivo del lavoro: \(goal)
@@ -180,7 +180,7 @@ public enum TasteTools {
     static let learn = ElioTool(
         name: "taste_learn",
         description: """
-        Impara un gusto o uno standard di Raffaele, da far rispettare agli agenti ("non voglio X", "le cose le voglio così", \
+        Impara un gusto o uno standard dell'utente, da far rispettare agli agenti ("non voglio X", "le cose le voglio così", \
         "questo è AI slop", "i commit li scrivo così", "odio quando…"). Una regola chiara e verificabile; se lui fa esempi, \
         mettili in bad/good. Gli agenti la ricevono, un revisore controlla il loro lavoro e fa correggere, e Elio la usa \
         per decidere piccole cose al suo posto. Salvala senza chiedere quando lui esprime una preferenza su come vuole il lavoro.
@@ -191,7 +191,7 @@ public enum TasteTools {
             "why": prop("Perché (opzionale, aiuta a generalizzare)"),
             "bad": prop("Esempi di cosa non vuole (opzionale)"),
             "good": prop("Esempi di cosa vuole (opzionale)"),
-            "severity": prop("fix (l'agente deve correggere, default), note (solo segnalare), ask (decide Raffaele)"),
+            "severity": prop("fix (l'agente deve correggere, default), note (solo segnalare), ask (decide l'utente)"),
         ],
         required: ["domain", "rule"]
     ) { args, ctx in
@@ -211,7 +211,7 @@ public enum TasteTools {
 
     static let list = ElioTool(
         name: "taste_list",
-        description: "I gusti e gli standard di Raffaele che Elio conosce, per dominio, con quante volte gli agenti li hanno violati.",
+        description: "I gusti e gli standard dell'utente che Elio conosce, per dominio, con quante volte gli agenti li hanno violati.",
         properties: ["domain": prop("Filtra per dominio (opzionale)")]
     ) { args, ctx in
         let domain = args["domain"] as? String
@@ -223,7 +223,7 @@ public enum TasteTools {
 
     static let forget = ElioTool(
         name: "taste_forget",
-        description: "Dimentica un gusto di Raffaele dato il suo #id (usa taste_list per trovarlo).",
+        description: "Dimentica un gusto dell'utente dato il suo #id (usa taste_list per trovarlo).",
         properties: ["id": prop("Id numerico", type: "integer")],
         required: ["id"]
     ) { args, ctx in
@@ -236,7 +236,7 @@ public enum TasteTools {
     /// For agents: the rules for the domain they're working in.
     static let rules = ElioTool(
         name: "taste_rules",
-        description: "Gusti e standard di Raffaele da rispettare (per dominio: design, frontend, backend, codice, testi, git, ux). Leggili prima di decisioni di stile.",
+        description: "Gusti e standard dell'utente da rispettare (per dominio: design, frontend, backend, codice, testi, git, ux). Leggili prima di decisioni di stile.",
         properties: ["domain": prop("Dominio (opzionale: tutti)")]
     ) { args, ctx in
         let block = Taste.promptBlock(await ctx.memory.tasteRules(), domain: args["domain"] as? String)
