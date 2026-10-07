@@ -18,6 +18,100 @@ public final class VoiceLoop {
         public var ok: Bool
         public var ms: Int?
         public let date = Date()
+        /// What it did, in words ("Cerco su Slack «deploy»"), once the live feed has said it.
+        public var text: String?
+    }
+
+    /// One step of the live feed: an action Elio took during the current reply (newest last).
+    public struct ActivityStep: Identifiable {
+        public let id: String
+        public let tool: String
+        public var text: String
+        public var outcome: String?
+        public var running: Bool
+        public var ok: Bool
+        public var ms: Int?
+        public let started = Date()
+        public var ended: Date?
+    }
+
+    /// Phase of the reply in progress: "capisco", "penso", "strumenti", "rispondo" (nil when idle).
+    public private(set) var phase: String?
+    public private(set) var phaseStarted = Date()
+    /// When the current request was sent (the feed's overall timer).
+    public private(set) var turnStarted: Date?
+    /// The action under way ("Cerco su Slack «deploy»"), nil between actions.
+    public private(set) var currentActivity: String?
+    /// The latest part of Claude's reasoning, when the session shows it (last ~400 characters).
+    public private(set) var thinkingText = ""
+    /// The last few actions with their outcome and duration.
+    public private(set) var activityTrail: [ActivityStep] = []
+
+    /// Readable label of a phase, for the feed and the tooltips.
+    public static func phaseLabel(_ phase: String?) -> String? {
+        switch phase {
+        case "ascolto": "Ascolto"
+        case "capisco": "Capisco la richiesta"
+        case "penso": "Penso"
+        case "strumenti": "Uso gli strumenti"
+        case "rispondo": "Rispondo"
+        default: nil
+        }
+    }
+
+    private func setPhase(_ p: String?, elapsedMs: Int? = nil) {
+        guard p != phase else { return }
+        phase = p
+        phaseStarted = Date()
+        if p == nil { currentActivity = nil }
+        if p == "capisco" {
+            thinkingText = ""
+            // A new reply: its timer starts when the request was sent (or now, for routines).
+            if currentRequestId == nil || turnStarted == nil {
+                turnStarted = Date().addingTimeInterval(-Double(elapsedMs ?? 0) / 1000)
+            }
+        }
+    }
+
+    /// Sample live feed for snapshots: thinking between two tool calls.
+    public func loadSampleFeed() {
+        let now = Date()
+        turnStarted = now.addingTimeInterval(-6.4)
+        phase = "penso"
+        phaseStarted = now.addingTimeInterval(-3.2)
+        thinkingText = "Le menzioni su Slack parlano del deploy di ieri sera: Marco chiede se la migrazione è passata. "
+            + "Prima di rispondere controllo la pipeline su GitHub, poi la mail di Bitbucket."
+        var a = ActivityStep(id: "s1", tool: "slack_mentions", text: "Cerco le menzioni su Slack", running: false, ok: true)
+        a.ms = 1240; a.ended = now.addingTimeInterval(-3.3); a.outcome = "4 messaggi"
+        var b = ActivityStep(id: "s2", tool: "mail_search", text: "Cerco nella posta «deploy»", running: false, ok: false)
+        b.ms = 830; b.ended = now.addingTimeInterval(-2); b.outcome = "errore: Gmail non collegato"
+        let c = ActivityStep(id: "s3", tool: "WebFetch", text: "Apro github.com", running: true, ok: true)
+        activityTrail = [a, b, c]
+        currentActivity = c.text
+        state = .thinking
+    }
+
+    private func handleActivity(_ msg: ServerMessage) {
+        guard let p = msg.payload, let obj = try? JSONSerialization.jsonObject(with: Data(p.utf8)) as? [String: Any],
+              let id = obj["id"] as? String else { return }
+        let text = obj["text"] as? String ?? ""
+        if obj["phase"] as? String == "start" {
+            if let i = activityTrail.firstIndex(where: { $0.id == id }) {
+                activityTrail[i].text = text   // the full input arrived: a more precise line
+            } else {
+                activityTrail.append(ActivityStep(id: id, tool: obj["tool"] as? String ?? "", text: text, running: true, ok: true))
+                if activityTrail.count > 8 { activityTrail.removeFirst(activityTrail.count - 8) }
+            }
+            currentActivity = text
+            if let i = activity.lastIndex(where: { $0.id == id }) { activity[i].text = text }
+        } else if let i = activityTrail.firstIndex(where: { $0.id == id }) {
+            activityTrail[i].running = false
+            activityTrail[i].ok = obj["ok"] as? Bool ?? true
+            activityTrail[i].ms = obj["ms"] as? Int
+            activityTrail[i].ended = Date()
+            if !text.isEmpty { activityTrail[i].outcome = text }
+            currentActivity = activityTrail.last(where: \.running)?.text
+        }
     }
 
     public struct Turn: Identifiable {
@@ -609,6 +703,7 @@ public final class VoiceLoop {
     public func interrupt() {
         speaker.stop()
         currentRequestId = nil
+        setPhase(nil)
         armedUntil = Date().addingTimeInterval(Self.followUpWindow)
         state = .listening
     }
@@ -874,6 +969,9 @@ public final class VoiceLoop {
         replyHadTools = false
         replySentences = 0
         scheduleFiller(for: currentRequestId, request: text)
+        turnStarted = Date()
+        phase = nil
+        setPhase("capisco")
         state = .thinking
     }
 
@@ -896,6 +994,7 @@ public final class VoiceLoop {
                 if replyStreaming { speaker.cancelStream(); replyStreaming = false }
                 if let i = turns.lastIndex(where: { $0.role == "elio" }), turns[i].text.isEmpty { turns.remove(at: i) }
                 currentRequestId = nil
+                setPhase(nil)
                 state = .listening
                 return
             }
@@ -914,6 +1013,7 @@ public final class VoiceLoop {
             }
             speaker.endUtterance()
             currentRequestId = nil
+            setPhase(nil)
             if !speaker.isSpeaking { state = .listening }
         case .error:
             if replyStreaming { speaker.cancelStream(); replyStreaming = false }
@@ -921,6 +1021,7 @@ public final class VoiceLoop {
             speaker.enqueue("Ho avuto un problema a rispondere.")
             speaker.endUtterance()
             currentRequestId = nil
+            setPhase(nil)
         default:
             break
         }
@@ -1066,6 +1167,18 @@ public final class VoiceLoop {
                 if diffs.count > 10 { diffs.removeLast() }
                 diffSignal += 1
             }
+        case "phase":
+            // "fine": the reply is written (it may still be spoken); a newer request may already be under way.
+            guard let p = msg.text else { break }
+            if p == "fine" {
+                if currentRequestId == nil || msg.id == currentRequestId { setPhase(nil) }
+            } else if currentRequestId == nil || msg.id == currentRequestId {
+                setPhase(p, elapsedMs: msg.latencyMs)
+            }
+        case "thinking":
+            if let t = msg.text { thinkingText = String(t.suffix(400)) }
+        case "activity":
+            handleActivity(msg)
         case "tool":
             guard let id = msg.id, let name = msg.text else { break }
             if msg.payload?.contains("start") == true {

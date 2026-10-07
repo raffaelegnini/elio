@@ -19,6 +19,13 @@ struct ConversationView: View {
                 .animation(.easeOut(duration: 0.3), value: typing)
             Text(model.stateLabel.prefix(1).uppercased() + model.stateLabel.dropFirst())
                 .font(.footnote).foregroundStyle(Theme.text2)
+            if let line = model.activityLine {
+                Text(line)
+                    .font(.caption).foregroundStyle(Theme.text3)
+                    .lineLimit(1).truncationMode(.tail)
+                    .padding(.horizontal, 24)
+                    .transition(.opacity)
+            }
             Text(model.voiceIn.partial)
                 .font(.subheadline).foregroundStyle(Theme.text2)
                 .lineLimit(2).multilineTextAlignment(.center)

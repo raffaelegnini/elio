@@ -68,6 +68,11 @@ enum Snapshots {
         state.squadMode = false
         save(SquadView(loop: loop, state: state, scrolls: false).frame(width: 1300, height: 700).background(Theme.bg), "\(dir)/squad-panel.png")
 
+        // The live "what Elio is doing" strip, thinking between two tools.
+        loop.loadSampleFeed()
+        save(ThoughtStrip(loop: loop).background(Theme.bg), "\(dir)/thought-strip.png")
+        save(DashboardView(loop: loop, state: state).frame(width: size.width, height: size.height), "\(dir)/dashboard-thinking.png")
+
         loop.loadSample(tasks: [], squads: [], messages: [], usage: usage, routine: true, lit: ["calendar_events"], state: .speaking)
         save(DashboardView(loop: loop, state: state).frame(width: size.width, height: size.height), "\(dir)/briefing-dormant.png")
 

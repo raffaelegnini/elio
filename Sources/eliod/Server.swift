@@ -204,12 +204,17 @@ final class Server: @unchecked Sendable {
         case .tool(let id, let name, let args):
             // The app's own background reads (dashboard, archive) are not "activity".
             let quiet = args.contains("\"_quiet\":true")
+            // Background agents have their own live log: the activity line is for the conversation.
+            let feed = !quiet && !args.contains("\"_task\"")
             Task {
                 let ctx = await brain.toolContext
                 let start = Date()
                 if !quiet {
                     brain.publish(ServerMessage(type: .event, id: id, text: name, kind: "tool",
                                                 payload: "{\"phase\":\"start\"}"))
+                }
+                if feed {
+                    brain.publish(.activity(id: id, tool: name, text: ActivityText.describe(tool: name, inputJSON: args), phase: "start"))
                 }
                 let (result, isError) = await ToolRegistry.call(name: name, argsJSON: args, ctx: ctx)
                 let ms = Int(Date().timeIntervalSince(start) * 1000)
@@ -219,6 +224,10 @@ final class Server: @unchecked Sendable {
                     // Tool results can contain anything (DMs, mail, .env files): never log their content.
                     log("tool \(name) → \(isError ? "error" : "ok"), \(result.count) chars, \(ms) ms")
                     await brain.recordToolCall(name: name, ok: !isError, ms: ms)
+                }
+                if feed {
+                    brain.publish(.activity(id: id, tool: name, text: ActivityText.outcome(tool: name, result: result, isError: isError) ?? "",
+                                            phase: "end", ok: !isError, ms: ms))
                 }
                 self.send(ServerMessage(type: .toolResult, id: id, payload: result, isError: isError), on: conn)
             }

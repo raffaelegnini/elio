@@ -76,8 +76,13 @@ public actor Brain {
     /// between tool calls, so the briefing is told while the information is being gathered.
     public func runRoutine(kind: String, prompt: String) async {
         var text = ""
+        let hub = self.hub
+        var feed = TurnFeed(requestId: "routine-\(kind)") { hub.send($0) }
+        feed.setPhase("capisco")
+        defer { feed.finish() }
         do {
             for try await event in await claude.ask(Self.withContext(prompt)) {
+                feed.handle(event)
                 switch event {
                 case .delta(let chunk):
                     broadcast(ServerMessage(type: .event, text: chunk, kind: "routineDelta"))
@@ -86,6 +91,8 @@ public actor Brain {
                                             payload: started ? "{\"phase\":\"start\"}" : "{\"phase\":\"end\"}"))
                 case .done(let full, _):
                     text = full
+                case .thinking, .toolCall, .toolResult:
+                    break
                 }
             }
         } catch {
@@ -249,6 +256,10 @@ public actor Brain {
 
         var firstDeltaMs: Int?
         var glance: URL?
+        // Live "what Elio is doing": phases, tool lines, thinking (dashboard, HUD, phone).
+        let hub = self.hub
+        var feed = TurnFeed(requestId: id) { hub.send($0) }
+        feed.setPhase("capisco")
         defer { if let glance { ScreenGlance.discard(glance) } }
         do {
             // What the prep session found while the user was talking (empty for short requests).
@@ -263,6 +274,7 @@ public actor Brain {
                 prompt += "\n\n[preparato mentre parlava — appunti di una ricerca veloce, verificali se serve, non citarli:\n\(notes)\n]"
             }
             for try await event in await claude.ask(prompt) {
+                feed.handle(event)
                 switch event {
                 case .tool(let name, let toolId, let started):
                     broadcast(ServerMessage(type: .event, id: toolId, text: name, kind: "tool",
@@ -275,9 +287,13 @@ public actor Brain {
                     gate.flush()
                     await memory.log(role: "assistant", text: full, route: Route.claude.rawValue)
                     out.yield(ServerMessage(type: .done, id: id, text: full, route: .claude, latencyMs: firstDeltaMs ?? elapsed()))
+                case .thinking, .toolCall, .toolResult:
+                    break
                 }
             }
+            feed.finish()
         } catch {
+            feed.finish()
             log("claude turn failed: \(error)")
             out.yield(ServerMessage(type: .error, id: id, text: "\(error)"))
         }

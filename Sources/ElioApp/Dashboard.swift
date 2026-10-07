@@ -72,10 +72,15 @@ struct DashboardView: View {
                         .onTapGesture { state.theater = running.id }
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+                if ThoughtStrip.visible(loop), state.theater == nil, !state.squadMode {
+                    Movable(id: "pensiero") { ThoughtStrip(loop: loop).glassCard() }
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
                 Movable(id: "console") { console }
             }
             .padding(.bottom, 18)
             .animation(.easeInOut(duration: 0.3), value: runningTask?.id)
+            .animation(.easeInOut(duration: 0.25), value: ThoughtStrip.visible(loop))
 
             if let id = state.theater {
                 AgentDetailView(loop: loop, taskId: id) { state.theater = nil }
@@ -419,7 +424,7 @@ private struct ActivityRow: View {
             Image(systemName: Capability.of(tool: item.name).icon)
                 .font(.system(size: 10)).frame(width: 14)
                 .foregroundStyle(item.running ? Theme.accent : (item.ok ? Theme.dim : .orange))
-            Text(Capability.describe(tool: item.name)).font(.system(size: 12)).foregroundStyle(Theme.text).lineLimit(1)
+            Text(item.text ?? Capability.describe(tool: item.name)).font(.system(size: 12)).foregroundStyle(Theme.text).lineLimit(1)
             Spacer()
             if item.running {
                 ProgressView().controlSize(.mini)

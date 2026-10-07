@@ -58,6 +58,21 @@ final class AppModel {
     private(set) var toast: String?
     private(set) var macResting = false
     private(set) var busyLabel: String?
+    /// What Elio is doing on the Mac right now ("Cerco su Slack «deploy»"), or the phase of the reply.
+    private(set) var currentActivity: String?
+    private(set) var phase: String?
+    @ObservationIgnored private var activityId: String?
+
+    /// The line under the orb: the action under way, otherwise the phase.
+    var activityLine: String? {
+        if let a = currentActivity { return a + "…" }
+        switch phase {
+        case "capisco": return "Capisco la richiesta…"
+        case "penso": return "Penso…"
+        case "strumenti": return "Uso gli strumenti…"
+        default: return nil
+        }
+    }
     var attachments: [Attachment] = []
     private(set) var inCall = false
     private(set) var foreground = true
@@ -528,6 +543,19 @@ final class AppModel {
     private func handleEvent(_ m: ServerMessage) {
         let kind = m.kind ?? ""
         switch kind {
+        case "phase":
+            phase = m.text == "fine" ? nil : m.text
+            if phase == nil { currentActivity = nil; activityId = nil }
+        case "activity":
+            guard let data = m.payload?.data(using: .utf8),
+                  let a = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { break }
+            if a["phase"] as? String == "start" {
+                currentActivity = (a["text"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                activityId = a["id"] as? String
+            } else if a["id"] as? String == activityId {
+                currentActivity = nil
+                activityId = nil
+            }
         case "confirm":
             if let req = JSON.decode(ConfirmRequest.self, m.payload), !feed.contains(where: { $0.cardId == req.id }) {
                 append(FeedItem(kind: .confirm(req), text: req.title))

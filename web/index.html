@@ -80,6 +80,11 @@
   body.kb #orbWrap { height: 64px; }
   #state { text-align: center; font-size: 13px; color: var(--text-2); margin-top: 2px; }
   #state::first-letter { text-transform: uppercase; }
+  /* What Elio is doing right now (tool, phase), under the orb. */
+  #activity { text-align: center; font-size: 12.5px; color: var(--text-3); min-height: 17px; margin: 2px 24px 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity .2s; }
+  #activity:empty { opacity: 0; }
+  #activity .t { font-variant-numeric: tabular-nums; opacity: .75; }
   #partial { min-height: 20px; text-align: center; color: var(--text-2); font-size: 14px; padding: 0 8px; }
   #feed { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 0 14px; display: flex; flex-direction: column; gap: 14px;
     mask-image: linear-gradient(transparent, #000 18px); -webkit-mask-image: linear-gradient(transparent, #000 18px); overscroll-behavior: contain; }
@@ -357,6 +362,7 @@
     <section id="v-elio" class="view on">
       <div id="orbWrap"><canvas id="orb"></canvas></div>
       <div id="state">connessione…</div>
+      <div id="activity"></div>
       <div id="partial"></div>
       <div id="feed">
         <div id="tasks"></div>
@@ -660,8 +666,41 @@ function handle(m) {
   }
 }
 
+// ---------- Live activity (what Elio is doing between one sentence and the next) ----------
+const PHASES = { capisco: "Capisco la richiesta", penso: "Penso", strumenti: "Uso gli strumenti", rispondo: "Rispondo" };
+const live = { phase: null, phaseAt: 0, line: null, lineId: null, timer: null };
+function renderActivity() {
+  const el = $("activity");
+  const label = live.line || PHASES[live.phase];
+  if (!live.phase || !label) { el.textContent = ""; return; }
+  const secs = ((performance.now() - live.phaseAt) / 1000).toFixed(1).replace(".", ",");
+  el.innerHTML = "";
+  el.append(document.createTextNode(label + "… "));
+  const t = document.createElement("span"); t.className = "t"; t.textContent = secs + " s"; el.append(t);
+}
+function setPhase(p) {
+  if (p === "fine") p = null;
+  if (p === live.phase) return;
+  live.phase = p; live.phaseAt = performance.now();
+  if (!p) { live.line = null; live.lineId = null; }
+  clearInterval(live.timer);
+  live.timer = p ? setInterval(renderActivity, 250) : null;
+  renderActivity();
+}
+
 function handleEvent(m) {
   switch (m.kind) {
+    case "phase":
+      setPhase(m.text);
+      break;
+    case "activity": {
+      let a = {};
+      try { a = JSON.parse(m.payload || "{}"); } catch {}
+      if (a.phase === "start") { live.line = a.text || null; live.lineId = a.id; }
+      else if (a.id === live.lineId) { live.line = null; live.lineId = null; }
+      renderActivity();
+      break;
+    }
     case "confirm": {
       const req = JSON.parse(m.payload || "{}");
       if (!req.id || confirms.has(req.id)) break;

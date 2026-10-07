@@ -5,6 +5,13 @@ public enum ClaudeEvent: Sendable {
     /// A tool Claude runs itself (browser, web search): start / end.
     case tool(name: String, id: String, started: Bool)
     case done(text: String, durationMs: Int)
+    /// Extended thinking: "" when a thinking block starts (the session's display may hide its text), then its text.
+    case thinking(String)
+    /// Any tool call, Elio's own included: at block start (`input` nil, Claude is still writing it) and when its
+    /// input is complete (JSON object string).
+    case toolCall(name: String, id: String, input: String?)
+    /// A tool's result came back (`text` capped at 2000 characters).
+    case toolResult(id: String, text: String, isError: Bool)
 }
 
 /// Keeps one Claude Code process alive in stream-json mode so each turn skips
@@ -46,7 +53,10 @@ public actor ClaudeBridge {
     private var stdin: FileHandle?
     private var readerTask: Task<Void, Never>?
     private var generation = 0
-    private var openTool: (name: String, id: String)?
+    /// External tools running (id → name): they end when their result comes back.
+    private var openTools: [String: String] = [:]
+    /// Content blocks of the message being streamed, by index: tool calls accumulate their input here.
+    private var blocks: [Int: (type: String, name: String, id: String, json: String)] = [:]
     private var shuttingDown = false
     private var consecutiveExits = 0
     private var sessionId: String?
@@ -123,6 +133,8 @@ public actor ClaudeBridge {
             if process?.isRunning != true { try spawn() }
             current = continuation
             currentText = ""
+            blocks = [:]
+            openTools = [:]
             currentStart = Date()
             lastActivity = Date()
             waitingOnTool = false
@@ -270,33 +282,64 @@ public actor ClaudeBridge {
             }
         case "user":
             waitingOnTool = false   // tool results arrived
+            for item in (event["message"] as? [String: Any])?["content"] as? [[String: Any]] ?? []
+            where item["type"] as? String == "tool_result" {
+                guard let id = item["tool_use_id"] as? String else { continue }
+                current?.yield(.toolResult(id: id, text: String(Self.resultText(item["content"]).prefix(2000)),
+                                           isError: item["is_error"] as? Bool == true))
+                if let name = openTools.removeValue(forKey: id) { current?.yield(.tool(name: name, id: id, started: false)) }
+            }
         case "stream_event":
-            if let inner = event["event"] as? [String: Any], inner["type"] as? String == "content_block_start",
-               let block = inner["content_block"] as? [String: Any] {
-                waitingOnTool = block["type"] as? String == "tool_use"
-                // Any new block means the previous external tool has finished.
-                if let open = openTool { current?.yield(.tool(name: open.name, id: open.id, started: false)); openTool = nil }
-                if block["type"] as? String == "tool_use", let name = block["name"] as? String, !name.hasPrefix("mcp__elio__") {
+            guard let inner = event["event"] as? [String: Any] else { return }
+            let index = inner["index"] as? Int ?? -1
+            switch inner["type"] as? String {
+            case "message_start":
+                blocks = [:]
+            case "content_block_start":
+                guard let block = inner["content_block"] as? [String: Any] else { return }
+                let type = block["type"] as? String ?? ""
+                waitingOnTool = type == "tool_use"
+                if type == "tool_use" {
+                    let name = block["name"] as? String ?? "tool"
                     let id = block["id"] as? String ?? UUID().uuidString
-                    openTool = (name, id)
-                    current?.yield(.tool(name: name, id: id, started: true))
+                    blocks[index] = (type, name, id, "")
+                    // Elio's own tools are reported by the daemon itself when they run.
+                    if !name.hasPrefix("mcp__elio__") {
+                        openTools[id] = name
+                        current?.yield(.tool(name: name, id: id, started: true))
+                    }
+                    current?.yield(.toolCall(name: name, id: id, input: nil))
+                } else if type == "thinking" || type == "redacted_thinking" {
+                    current?.yield(.thinking(""))
+                } else if type == "text", !currentText.isEmpty, currentText.last?.isWhitespace == false {
+                    // A new text block after a tool call ("Certo, controllo…" → tool → answer): keep them apart.
+                    currentText += "\n"
+                    current?.yield(.delta("\n"))
                 }
+            case "content_block_delta":
+                guard let delta = inner["delta"] as? [String: Any] else { return }
+                switch delta["type"] as? String {
+                case "text_delta":
+                    guard let text = delta["text"] as? String else { return }
+                    currentText += text
+                    current?.yield(.delta(text))
+                case "thinking_delta":
+                    if let text = delta["thinking"] as? String, !text.isEmpty { current?.yield(.thinking(text)) }
+                case "input_json_delta":
+                    if let part = delta["partial_json"] as? String, blocks[index] != nil { blocks[index]?.json += part }
+                default:
+                    break
+                }
+            case "content_block_stop":
+                if let b = blocks.removeValue(forKey: index), b.type == "tool_use" {
+                    current?.yield(.toolCall(name: b.name, id: b.id, input: b.json.isEmpty ? "{}" : b.json))
+                }
+            default:
+                break
             }
-            // A new text block after a tool call ("Certo, controllo…" → tool → answer): keep them apart.
-            if let inner = event["event"] as? [String: Any], inner["type"] as? String == "content_block_start",
-               (inner["content_block"] as? [String: Any])?["type"] as? String == "text", !currentText.isEmpty,
-               currentText.last?.isWhitespace == false {
-                currentText += "\n"
-                current?.yield(.delta("\n"))
-            }
-            guard let inner = event["event"] as? [String: Any],
-                  let delta = inner["delta"] as? [String: Any],
-                  delta["type"] as? String == "text_delta",
-                  let text = delta["text"] as? String else { return }
-            currentText += text
-            current?.yield(.delta(text))
         case "result":
-            if let open = openTool { current?.yield(.tool(name: open.name, id: open.id, started: false)); openTool = nil }
+            for (id, name) in openTools { current?.yield(.tool(name: name, id: id, started: false)) }
+            openTools = [:]
             let final = (event["result"] as? String) ?? currentText
             let ms = Int(Date().timeIntervalSince(currentStart) * 1000)
             if event["is_error"] as? Bool == true {
@@ -309,6 +352,13 @@ public actor ClaudeBridge {
         default:
             break
         }
+    }
+
+    /// Text of a tool_result's content: a string or a list of blocks.
+    static func resultText(_ content: Any?) -> String {
+        if let s = content as? String { return s }
+        let parts = (content as? [[String: Any]] ?? []).compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }
+        return parts.joined(separator: "\n")
     }
 }
 

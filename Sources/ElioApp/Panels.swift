@@ -449,6 +449,13 @@ struct BusyBar: View {
                 ProgressView().controlSize(.mini)
                 Text(current).font(.system(size: 11.5)).foregroundStyle(Theme.dim).lineLimit(1)
                 Spacer()
+                if loop.phase != nil {
+                    // Running seconds of the current phase (the HUD has no other clock).
+                    TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+                        Text(ThoughtStrip.seconds(ctx.date.timeIntervalSince(loop.phaseStarted)))
+                            .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.dim.opacity(0.8))
+                    }
+                }
                 Button { loop.stopEverything() } label: {
                     Label("Ferma", systemImage: "stop.fill").font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color(hex: "#FF6B61"))
@@ -462,7 +469,9 @@ struct BusyBar: View {
     }
 
     private var current: String {
+        if let line = loop.currentActivity { return line + "…" }
         if let tool = loop.activeTools.first { return Capability.describe(tool: tool) + "…" }
+        if let phase = VoiceLoop.phaseLabel(loop.phase) { return phase + "…" }
         return loop.state == .speaking ? "Sta parlando" : "Sta lavorando…"
     }
 }

@@ -483,6 +483,42 @@ struct NeuralGraphView: View {
             }
         }
 
+        // Thinking between tool calls: the core is visibly at work (a breathing halo of sparks and impulses
+        // shooting out along the synapses), so the network never looks frozen while Claude reasons.
+        if loop.phase == "penso" || loop.phase == "capisco" {
+            let core = screen(.zero)
+            let ring = 66 * scale
+            for k in 0..<12 {
+                let a = t * 1.6 + Double(k) * .pi / 6
+                let rr = ring + CGFloat(sin(t * 2.4 + Double(k) * 1.3)) * 6 * scale
+                let alpha = 0.3 + 0.5 * (0.5 + 0.5 * sin(t * 3 + Double(k)))
+                f.circle(CGPoint(x: core.x + cos(a) * rr, y: core.y + sin(a) * rr), 1.8, ink(tint, alpha), .front)
+            }
+            let caps = Capability.allCases, period = 0.32, life = 1.1
+            for back in 0..<4 {
+                let slot = (t / period).rounded(.down) - Double(back)
+                let age = (t - slot * period) / life
+                guard age >= 0, age < 1 else { continue }
+                let cap = caps[Int(GraphModel.noise("spark\(slot)") * Double(caps.count)) % caps.count]
+                guard let n = model.nodes[cap.rawValue], !isOff(n) else { continue }
+                let p = screen(n.pos)
+                let e = CGFloat(1 - (1 - age) * (1 - age))   // fast out of the core, slowing down
+                let q = CGPoint(x: core.x + (p.x - core.x) * e, y: core.y + (p.y - core.y) * e)
+                f.circle(q, 2.2, ink(.white, 0.9 * (1 - age)), .front)
+                f.glows.append(Glow(center: q, radius: 10, colors: [ink(tint, 0.5 * (1 - age)).cgColor, Ink(tint, opacity: 0).cgColor]))
+            }
+        }
+        // Capabilities whose tool just finished: a fading ring (green-ish tint for ok, red for errors).
+        var afterglow: [Capability: (k: Double, ok: Bool)] = [:]
+        for step in loop.activityTrail {
+            guard let end = step.ended else { continue }
+            let dt = now.timeIntervalSince(end)
+            guard dt < 1.4 else { continue }
+            let cap = Capability.of(tool: step.tool)
+            let k = 1 - dt / 1.4
+            if k > (afterglow[cap]?.k ?? 0) { afterglow[cap] = (k, step.ok) }
+        }
+
         // Neurons. Labels are collected and placed last, without overlaps: hovered first, then
         // capabilities, folders, projects; a label that would cover another one is skipped.
         var labels: [(priority: Int, spec: ImageSpec, at: CGPoint, anchor: UnitPoint)] = []
@@ -532,6 +568,15 @@ struct NeuralGraphView: View {
             }
             if node.kind == .capability {
                 f.circle(p, r, ink(tint, on ? 1 : 0.6, width: isSelected ? 2.2 : 1.2), .front)
+                if on {
+                    // The working capability sends out sonar rings.
+                    for j in 0..<2 {
+                        let k = (t * 1.2 + Double(j) * 0.5).truncatingRemainder(dividingBy: 1)
+                        f.circle(p, r * (1 + CGFloat(k) * 1.6), ink(tint, 0.55 * (1 - k), width: 1.2), .front)
+                    }
+                } else if let cap = node.capability, let a = afterglow[cap] {
+                    f.circle(p, r * (1 + CGFloat(1 - a.k) * 1.2), ink(a.ok ? tint : Color(hex: "#FF6B61"), a.k * 0.8, width: 1.5), .front)
+                }
                 if let cap = node.capability {
                     let color: Color = on ? .white : tint
                     f.images.append(PlacedImage(spec: ImageSpec(key: "I|\(cap.icon)|\(color.description)", content: .symbol(cap.icon, color: NSColor(color))),

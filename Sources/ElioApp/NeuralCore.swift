@@ -1,3 +1,4 @@
+import ElioCore
 import ElioVoice
 import SwiftUI
 
@@ -41,7 +42,8 @@ enum Capability: String, CaseIterable, Identifiable {
         case "show_diff", "list_projects": .codice
         case let t where t.hasPrefix("mcp__claude-in-chrome__") || t == "WebSearch" || t == "WebFetch": .browser
         case "set_reminder", "list_reminders": .promemoria
-        case "open_app", "open_url": .mac
+        case "open_app", "open_url", "Bash", "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "find_files",
+             "screen_context", "screenshot", "clipboard", "type_text", "arrange_windows", "open_file": .mac
         default: .memoria
         }
     }
@@ -89,7 +91,7 @@ enum Capability: String, CaseIterable, Identifiable {
         case "WebFetch": "Legge una pagina web"
         case let t where t.hasPrefix("mcp__claude-in-chrome__"):
             "Browser · " + t.replacingOccurrences(of: "mcp__claude-in-chrome__", with: "").replacingOccurrences(of: "_", with: " ")
-        default: tool
+        default: ActivityText.describe(tool: tool, input: [:])
         }
     }
 }

@@ -149,7 +149,9 @@ struct StatusOrbView: View {
         if !loop.connected { return "\(Brand.shared.name): daemon non raggiungibile" }
         if loop.muted, !loop.resting { return "\(Brand.shared.name): microfono spento" }
         var s = "\(Brand.shared.name): \(loop.resting ? "a riposo" : loop.state.label)"
-        if let tool = loop.activeTools.first { s += " · \(Capability.describe(tool: tool))" }
+        if let line = loop.currentActivity { s += " · \(line)" }
+        else if let tool = loop.activeTools.first { s += " · \(Capability.describe(tool: tool))" }
+        else if let phase = VoiceLoop.phaseLabel(loop.phase) { s += " · \(phase)" }
         if agents > 0 { s += " · \(agents) agenti al lavoro" }
         return s
     }
