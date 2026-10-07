@@ -15,8 +15,6 @@ public enum AgentSandbox {
         "proxy.golang.org", "sum.golang.org", "pub.dev", "*.pub.dev", "storage.googleapis.com",
         "swift.org", "download.swift.org", "cocoapods.org", "cdn.cocoapods.org",
         "services.gradle.org", "repo.maven.apache.org", "repo1.maven.org", "dl.google.com",
-        // The user's local dev servers (Herd/Valet `.test` sites, ddev, `npm run dev`): agents test their work there.
-        "localhost", "127.0.0.1", "*.test", "*.localhost", "*.ddev.site",
     ]
 
     /// Agents' own package-manager caches, separate from the user's: a poisoned cache entry can only ever be used

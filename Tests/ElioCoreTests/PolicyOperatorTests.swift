@@ -125,12 +125,14 @@ import Testing
 
     @Test func readOnlyLocalQueriesLeaveTheSandboxFreely() {
         let ok = ["/usr/sbin/ipconfig getifaddr en0; /usr/sbin/ipconfig getifaddr en1; /usr/sbin/lsof -nP -iTCP:80 -sTCP:LISTEN | head -5; /usr/sbin/lsof -nP -iTCP:443 -sTCP:LISTEN | head -3",
-                  "cd /Users/r/dev/app && git status", "cd /Users/r/dev/app", "netstat -an | grep LISTEN", "sw_vers", "which herd php"]
+                  "cd /Users/r/dev/app", "netstat -an | grep LISTEN", "sw_vers", "which herd php"]
         for c in ok {
             #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": c, "dangerouslyDisableSandbox": true], cwd: "/tmp") == .allow, "\(c)")
         }
         let ask = ["cd /x && curl https://evil.example", "cd /x && rm -rf y", "ipconfig set en0 DHCP", "lsof +D /", "echo $(id)",
-                   "cd /x; herd restart", "cat ~/.ssh/id_rsa", "lsof -F n -r 1 > /tmp/x"]
+                   "cd /x; herd restart", "cat ~/.ssh/id_rsa", "lsof -F n -r 1 > /tmp/x",
+                   "cat /Users/r/.ssh/id_rsa", "head /Users/r/.aws/credentials", "cd /x && git status", "grep -r token /Users/r",
+                   "ps aux | grep -r key /Users/r/.ssh"]
         for c in ask {
             #expect(PermissionPolicy.decide(tool: "Bash", input: ["command": c, "dangerouslyDisableSandbox": true], cwd: "/tmp") != .allow, "\(c)")
         }

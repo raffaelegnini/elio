@@ -451,11 +451,14 @@ public enum ShellCommandClassifier {
         guard let parts = splitChain(command), !parts.isEmpty else { return false }
         for part in parts {
             guard let segments = splitSegments(part), !segments.isEmpty else { return false }
-            for var words in segments {
+            for (index, var words) in segments.enumerated() {
                 if let p = words.first, ["/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/"].contains(where: { p.hasPrefix($0) }) {
                     words[0] = (p as NSString).lastPathComponent
                 }
-                guard segmentIsReadOnly(words) || localQuery(words) else { return false }
+                // Only system queries here, not the file-reading list: outside the sandbox its read protections
+                // (~/.ssh, keys, tokens) don't apply, and git would run the repo's config (fsmonitor, signing…).
+                guard localQuery(words) || (["pwd", "whoami", "uptime", "uname", "df", "ps"].contains(words[0]) && segmentIsReadOnly(words))
+                        || (index > 0 && filtersStdinOnly(words)) else { return false }
             }
         }
         return true
@@ -482,6 +485,17 @@ public enum ShellCommandClassifier {
         parts.append(cur)
         let trimmed = parts.map { $0.trimmingCharacters(in: .whitespaces) }
         return trimmed.contains(where: \.isEmpty) ? nil : trimmed
+    }
+
+    /// After a pipe: head/tail/wc/grep reading only what's piped in (no file arguments).
+    static func filtersStdinOnly(_ words: [String]) -> Bool {
+        guard let name = words.first, segmentIsReadOnly(words) else { return false }
+        let positional = words.dropFirst().filter { !$0.hasPrefix("-") && $0.range(of: #"^[0-9]+$"#, options: .regularExpression) == nil }
+        switch name {
+        case "head", "tail", "wc": return positional.isEmpty
+        case "grep": return positional.count == 1   // the pattern
+        default: return false
+        }
     }
 
     static func localQuery(_ words: [String]) -> Bool {
