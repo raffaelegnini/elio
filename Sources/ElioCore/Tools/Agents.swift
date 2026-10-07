@@ -402,6 +402,8 @@ public actor TaskRunner {
             env["GIT_CONFIG_VALUE_\(i)"] = kv.value
         }
         env["GIT_PAGER"] = "cat"
+        // Sandboxed agents get their own package caches (see AgentSandbox.agentCache).
+        for (k, v) in AgentSandbox.cacheEnvironment { env[k] = v }
         p.environment = env
 
         let out = Pipe()

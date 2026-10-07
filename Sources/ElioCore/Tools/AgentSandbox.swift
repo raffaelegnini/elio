@@ -17,15 +17,25 @@ public enum AgentSandbox {
         "services.gradle.org", "repo.maven.apache.org", "repo1.maven.org", "dl.google.com",
     ]
 
-    /// Caches that package managers and build tools write outside the project. Only data caches: no folder whose
-    /// contents something runs later outside the sandbox (~/.cargo/bin, ~/.rustup toolchains, ~/.bun/bin, Homebrew).
-    static let developerCaches = [
-        "~/.npm/_cacache", "~/.yarn/berry/cache", "~/Library/Caches/Yarn", "~/Library/pnpm/store", "~/.pnpm-store",
-        "~/.cache/pip", "~/Library/Caches/pip", "~/.cache/composer", "~/Library/Caches/composer", "~/.composer/cache",
-        "~/.gradle/caches", "~/.m2/repository", "~/.cargo/registry", "~/.cargo/git", "~/go/pkg/mod", "~/.pub-cache/hosted",
-        "~/Library/Caches/org.swift.swiftpm", "~/Library/org.swift.swiftpm", "~/Library/Developer/Xcode/DerivedData",
-        "~/.bun/install/cache", "~/Library/Caches/deno",
-    ]
+    /// Agents' own package-manager caches, separate from the user's: a poisoned cache entry can only ever be used
+    /// by another sandboxed agent, never by the user's own `npm install` / `composer install` outside the sandbox.
+    public static var agentCache: URL {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/Elio/agents", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// Environment pointing package managers at `agentCache` (set on every agent process).
+    public static var cacheEnvironment: [String: String] {
+        let c = agentCache.path
+        return ["npm_config_cache": "\(c)/npm", "YARN_CACHE_FOLDER": "\(c)/yarn", "YARN_GLOBAL_FOLDER": "\(c)/yarn-global",
+                "PNPM_STORE_DIR": "\(c)/pnpm", "COMPOSER_CACHE_DIR": "\(c)/composer", "PIP_CACHE_DIR": "\(c)/pip",
+                "GOMODCACHE": "\(c)/gomod", "GOCACHE": "\(c)/gobuild", "GRADLE_USER_HOME": "\(c)/gradle",
+                "BUN_INSTALL_CACHE_DIR": "\(c)/bun", "DENO_DIR": "\(c)/deno", "XDG_CACHE_HOME": "\(c)/xdg"]
+    }
+
+    /// Where operator ("mac") agents may write: the user's document folders and Elio's output, nothing that runs.
+    static let userFolders = ["~/Desktop", "~/Documents", "~/Downloads", "~/Pictures", "~/Movies", "~/Music", "~/Public"]
 
     /// Files and folders that run later outside the sandbox (shell startup, PATH folders, git config, login items):
     /// writing there would be a delayed escape.
@@ -53,19 +63,20 @@ public enum AgentSandbox {
             "allowUnsandboxedCommands": true,
         ]
         if kind == "mac" {
-            // Operator agents organise the user's files: the home is writable, secrets and startup items aren't.
+            // Operator agents organise the user's files: only the document folders are writable (an allowlist — a list
+            // of forbidden places is never complete), never secrets or anything that runs later.
             // Apple Events don't work inside the sandbox, so app scripting runs outside it — and PermissionPolicy
             // asks for any inline or file script.
             sandbox["excludedCommands"] = ["osascript", "open", "shortcuts"]
             sandbox["filesystem"] = [
-                "allowWrite": ["~"],
+                "allowWrite": userFolders + [agentCache.path],
                 "denyWrite": secrets() + autorun,
                 "denyRead": secrets(),
             ]
             sandbox["network"] = ["allowedDomains": [String]()]
         } else {
             sandbox["filesystem"] = [
-                "allowWrite": developerCaches,
+                "allowWrite": [agentCache.path],
                 "denyWrite": secrets() + autorun,
                 "denyRead": secrets(),
             ]
