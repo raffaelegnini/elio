@@ -32,27 +32,64 @@ public struct GitGuard: Sendable {
         (try? FileManager.default.attributesOfItem(atPath: path))?[.type] as? FileAttributeType   // lstat: doesn't follow
     }
 
-    /// Contents of the watched files; nil if a symlink sits anywhere we'd look (gitDir, hooks/, info/, a file).
+    /// Contents of the watched files; nil if a symlink (or anything but a regular file / real folder) sits anywhere
+    /// we'd look. Everything is read through descriptors opened with O_NOFOLLOW, so nothing swapped in between a
+    /// check and the read can make it read (and later write back into the repo) a file from elsewhere.
     static func read(_ gitDir: String) -> [String: Entry]? {
-        let fm = FileManager.default
-        guard type(gitDir) == .typeDirectory else { return nil }
-        for sub in ["hooks", "info"] {
-            let p = (gitDir as NSString).appendingPathComponent(sub)
-            if let t = type(p), t != .typeDirectory { return nil }
-        }
+        let root = open(gitDir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard root >= 0 else { return nil }
+        defer { close(root) }
         var files: [String: Entry] = [:]
-        func add(_ rel: String) -> Bool {
-            let path = (gitDir as NSString).appendingPathComponent(rel)
-            guard let t = type(path) else { return true }          // absent
-            guard t == .typeRegular else { return false }           // symlink, fifo, dir…: refuse
-            let attrs = try? fm.attributesOfItem(atPath: path)
-            files[rel] = Entry(data: fm.contents(atPath: path) ?? Data(), mode: (attrs?[.posixPermissions] as? Int) ?? 0o644)
-            return true
+        // nil = refuse (not a regular file); .some(nil) = absent.
+        func readFile(_ dir: Int32, _ name: String) -> Entry?? {
+            let fd = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+            if fd < 0 { return errno == ENOENT ? .some(nil) : nil }
+            defer { close(fd) }
+            var st = stat()
+            guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_size < 4_000_000 else { return nil }
+            var data = Data()
+            var buf = [UInt8](repeating: 0, count: 65536)
+            while true {
+                let n = Darwin.read(fd, &buf, buf.count)
+                if n < 0 { return nil }
+                if n == 0 { break }
+                data.append(contentsOf: buf[0..<n])
+            }
+            return .some(Entry(data: data, mode: Int(st.st_mode & 0o777)))
         }
-        for rel in watched where !add(rel) { return nil }
-        let hooks = (gitDir as NSString).appendingPathComponent("hooks")
-        for name in (try? fm.contentsOfDirectory(atPath: hooks)) ?? [] where !name.hasSuffix(".sample") {
-            if !add("hooks/" + name) { return nil }
+        func subdir(_ name: String) -> Int32?? {
+            let fd = openat(root, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            if fd < 0 { return errno == ENOENT ? .some(nil) : nil }
+            return .some(fd)
+        }
+        for rel in watched {
+            let parts = rel.split(separator: "/").map(String.init)
+            var dir = root
+            if parts.count == 2 {
+                guard let sub = subdir(parts[0]) else { return nil }
+                guard let fd = sub else { continue }
+                dir = fd
+            }
+            let r = readFile(dir, parts.last!)
+            if dir != root { close(dir) }
+            guard let entry = r else { return nil }
+            if let entry { files[rel] = entry }
+        }
+        guard let hooksFd = subdir("hooks") else { return nil }
+        if let hd = hooksFd {
+            // fdopendir takes ownership of its descriptor: give it a duplicate, read files relative to the original.
+            guard let d = fdopendir(dup(hd)) else { close(hd); return nil }
+            var names: [String] = []
+            while let e = readdir(d) {
+                let name = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix(Int(e.pointee.d_namlen)), as: UTF8.self) }
+                if name != ".", name != "..", !name.hasSuffix(".sample") { names.append(name) }
+            }
+            closedir(d)
+            for name in names {
+                guard let r = readFile(hd, name) else { close(hd); return nil }
+                if let entry = r { files["hooks/" + name] = entry }
+            }
+            close(hd)
         }
         return files
     }
