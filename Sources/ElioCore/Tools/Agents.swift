@@ -414,6 +414,8 @@ public actor TaskRunner {
             let code = proc.terminationStatus
             Task { await self?.exited(id, code: code) }
         }
+        // Hooks/config of the repo, to check (and undo) when the agent ends: they'd run outside the sandbox later.
+        if let guardSnap = GitGuard.snapshot(cwd) { gitGuards[id] = guardSnap }
         try p.run()
 
         var info = TaskInfo(id: id, title: title, project: (cwd as NSString).lastPathComponent, status: .running)
@@ -833,6 +835,7 @@ public actor TaskRunner {
 
     /// Text the user typed to a running agent: it's stopped where it is and resumed with the message.
     private var interjections: [String: String] = [:]
+    private var gitGuards: [String: GitGuard] = [:]
 
     /// The user writes to an agent. Running: interrupted and resumed with the message (claude -p has no
     /// input while it works). Finished: woken up with it. Same session, same memory.
@@ -855,6 +858,12 @@ public actor TaskRunner {
     }
 
     private func exited(_ id: String, code: Int32) {
+        if let g = gitGuards.removeValue(forKey: id), let undone = g.verifyAndRestore() {
+            let title = tasks[id]?.info.title ?? "un agente"
+            log("git guard (\(id)): \(undone)")
+            Task { await Alerts.shared.send("L'agente di \"\(title)\" ha toccato la configurazione git del progetto: \(undone). Dai un'occhiata prima del prossimo commit.",
+                                            title: "Configurazione git ripristinata", urgency: .notify, source: "agent:\(id)") }
+        }
         if let note = interjections.removeValue(forKey: id), var t = tasks.removeValue(forKey: id) {
             // Stopped on purpose to hear the user: straight back to work, with the message.
             t.info.endedAt = Date()
