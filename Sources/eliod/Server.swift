@@ -71,6 +71,8 @@ final class Server: @unchecked Sendable {
             case .ready:
                 Task {
                     await self.brain.subscribe(id: sinkId) { [weak self] msg in self?.send(msg, on: conn) }
+                    // Confirmations and questions asked while this app was offline: show them now, with their buttons.
+                    for msg in await self.brain.gate.replay() { self.send(msg, on: conn) }
                 }
                 // The phone shows whether the Mac is at rest from the moment it connects.
                 if self.mode == .remote { self.send(Self.idleState(), on: conn) }

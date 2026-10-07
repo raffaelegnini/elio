@@ -19,6 +19,7 @@ public actor ConfirmationGate {
             try? await Task.sleep(for: .seconds(timeout))
             self.reply(id: id, text: nil)
         }
+        openQuestions[q.id] = q
         return await withCheckedContinuation { questions[q.id] = $0 }
     }
 
@@ -52,11 +53,26 @@ public actor ConfirmationGate {
 
     public func reply(id: String, text: String?) {
         guard let c = questions.removeValue(forKey: id) else { return }
+        openQuestions[id] = nil
         broadcast?(ServerMessage(type: .event, id: id, text: text ?? "", kind: "questionResolved"))
         c.resume(returning: text)
     }
     private var broadcast: (@Sendable (ServerMessage) -> Void)?
     public private(set) var pending: [String: ConfirmRequest] = [:]
+    private var openQuestions: [String: QuestionRequest] = [:]
+
+    /// What's still waiting for the user, as the events that announced it (not spoken again): sent to every app
+    /// that connects, so a phone that was offline when the request came still shows the card with its buttons.
+    public func replay() -> [ServerMessage] {
+        pending.values.map { req in
+            ServerMessage(type: .event, id: req.id, text: "\(addressAs), \(Self.lowerFirst(req.title)): posso procedere?",
+                          kind: "confirm", payload: req.jsonString(), speak: false)
+        } + openQuestions.values.map { q in
+            let fromAgent = q.taskId != nil ? "\(q.from) chiede: " : ""
+            return ServerMessage(type: .event, id: q.id, text: "\(addressAs), \(fromAgent)\(q.question)", kind: "question",
+                                 payload: q.jsonString(), speak: false)
+        }
+    }
 
     public init() {}
 
