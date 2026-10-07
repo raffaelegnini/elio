@@ -787,7 +787,7 @@ public final class VoiceLoop {
         } else if let afterWake = WakeWord.strip(text) {
             command = afterWake
         } else if resting, let back = Self.restReturn(text) {
-            // At rest, "sono tornato" / "eccomi" is enough: the recognizer often hears "Elio" as "E io".
+            // At rest, "Elio, sono tornato" also when the recognizer heard the name as "E io".
             command = back
         } else {
             prepKey = nil
@@ -823,14 +823,16 @@ public final class VoiceLoop {
         continueOrSend(command, cutByLimit: Date().timeIntervalSince(utteranceBegan) >= 44)
     }
 
-    /// "Sono tornato", "eccomi", "rieccomi"… at the start of what was heard, also after a misheard "Elio"
-    /// ("E io", "Ellio", "Helio"). Returns the phrase without that prefix.
+    /// "Elio, sono tornato" when the recognizer mangled the name ("E io sono tornato", "Ellio, eccomi"): the name
+    /// (or one of those mishearings) is required, so "sono tornato" said to someone else doesn't end rest mode.
+    /// Returns the phrase without the name.
     static func restReturn(_ text: String) -> String? {
-        var t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-        t = t.replacingOccurrences(of: #"^(e io|eh io|ehi o|ellio|elio|helio|hello|e lio|ei o)[ ,]*"#, with: "", options: .regularExpression)
-        guard t.range(of: #"^(sono tornat[oa]|sono qui|ci sono|eccomi|rieccomi|son tornat[oa]|torno|svegliati)\b"#, options: .regularExpression) != nil,
-              t.split(separator: " ").count <= 8 else { return nil }
-        return t
+        let t = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        guard let r = t.range(of: #"^(e io|eh io|ehi o|ei o|e lio|ellio|elio|helio|ilio)[ ,]+"#, options: .regularExpression) else { return nil }
+        let rest = String(t[r.upperBound...])
+        guard rest.range(of: #"^(sono tornat[oa]|son tornat[oa]|sono qui|ci sono|eccomi|rieccomi|svegliati)\b"#, options: .regularExpression) != nil,
+              rest.split(separator: " ").count <= 6 else { return nil }
+        return rest
     }
 
     // MARK: - Daemon
