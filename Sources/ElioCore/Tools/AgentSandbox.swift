@@ -17,11 +17,24 @@ public enum AgentSandbox {
         "services.gradle.org", "repo.maven.apache.org", "repo1.maven.org", "dl.google.com",
     ]
 
-    /// Caches that package managers and build tools write outside the project.
+    /// Caches that package managers and build tools write outside the project. Only data caches: no folder whose
+    /// contents something runs later outside the sandbox (~/.cargo/bin, ~/.rustup toolchains, ~/.bun/bin, Homebrew).
     static let developerCaches = [
-        "~/.npm", "~/.yarn", "~/.pnpm-store", "~/Library/pnpm", "~/.cache", "~/Library/Caches", "~/.composer", "~/.config/composer",
-        "~/.gradle", "~/.m2", "~/.cargo", "~/.rustup", "~/go/pkg", "~/.pub-cache", "~/.swiftpm",
-        "~/Library/Developer/Xcode/DerivedData", "~/Library/org.swift.swiftpm", "~/.bun", "~/.deno",
+        "~/.npm/_cacache", "~/.yarn/berry/cache", "~/Library/Caches/Yarn", "~/Library/pnpm/store", "~/.pnpm-store",
+        "~/.cache/pip", "~/Library/Caches/pip", "~/.cache/composer", "~/Library/Caches/composer", "~/.composer/cache",
+        "~/.gradle/caches", "~/.m2/repository", "~/.cargo/registry", "~/.cargo/git", "~/go/pkg/mod", "~/.pub-cache/hosted",
+        "~/Library/Caches/org.swift.swiftpm", "~/Library/org.swift.swiftpm", "~/Library/Developer/Xcode/DerivedData",
+        "~/.bun/install/cache", "~/Library/Caches/deno",
+    ]
+
+    /// Files and folders that run later outside the sandbox (shell startup, PATH folders, git config, login items):
+    /// writing there would be a delayed escape.
+    static let autorun = [
+        "~/.zshrc", "~/.zprofile", "~/.zshenv", "~/.zlogin", "~/.zlogout", "~/.bashrc", "~/.bash_profile", "~/.profile",
+        "~/.config/fish", "~/.gitconfig", "~/.config/git", "~/.npmrc", "~/.yarnrc", "~/.yarnrc.yml", "~/.cargo/config.toml",
+        "~/.cargo/bin", "~/.local/bin", "~/bin", "~/.bun/bin", "~/.rustup", "~/go/bin", "~/.composer/vendor/bin",
+        "~/Applications", "~/Library/LaunchAgents", "~/Library/LaunchDaemons", "~/Library/Application Support/com.apple.backgroundtaskmanagementagent",
+        "~/Library/Scripts", "~/Library/Services", "~/Library/Workflows", "~/Library/Preferences", "~/.claude", "~/.config/claude",
     ]
 
     /// Never readable or writable from Bash: keys, credentials, Elio's own tokens.
@@ -46,14 +59,14 @@ public enum AgentSandbox {
             sandbox["excludedCommands"] = ["osascript", "open", "shortcuts"]
             sandbox["filesystem"] = [
                 "allowWrite": ["~"],
-                "denyWrite": secrets() + ["~/Library/LaunchAgents", "~/Library/LaunchDaemons", "~/Library/Application Support/com.apple.backgroundtaskmanagementagent"],
+                "denyWrite": secrets() + autorun,
                 "denyRead": secrets(),
             ]
             sandbox["network"] = ["allowedDomains": [String]()]
         } else {
             sandbox["filesystem"] = [
                 "allowWrite": developerCaches,
-                "denyWrite": secrets(),
+                "denyWrite": secrets() + autorun,
                 "denyRead": secrets(),
             ]
             sandbox["network"] = ["allowedDomains": developerDomains, "allowLocalBinding": true]
