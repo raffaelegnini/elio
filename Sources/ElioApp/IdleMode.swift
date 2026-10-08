@@ -20,6 +20,9 @@ final class IdleMode {
     @ObservationIgnored private weak var loop: VoiceLoop?
     @ObservationIgnored private weak var app: AppDelegate?
     @ObservationIgnored private var assertion: IOPMAssertionID = 0
+    /// Keeps the display on while the rest page shows: macOS's own display sleep (5 min on battery, with a dim
+    /// before it) would otherwise blank it early.
+    @ObservationIgnored private var pageAssertion: IOPMAssertionID = 0
     @ObservationIgnored private var savedBrightness: Float?
     @ObservationIgnored private var dimmed = false
     /// The mic was turned off for rest mode (idleListen off): turned back on when leaving.
@@ -113,9 +116,14 @@ final class IdleMode {
         if minutes > 0 {
             // First the rest page (sleeping orb, time, what's running), then the screen goes off/dim.
             RestScreen.shared.show(loop: loop, held: { [weak self] in self?.held.count ?? 0 })
+            if pageAssertion == 0 {
+                IOPMAssertionCreateWithName("PreventUserIdleDisplaySleep" as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                            "Elio: schermata di riposo" as CFString, &pageAssertion)
+            }
             restPage = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(Double(minutes) * 60))
                 guard !Task.isCancelled, let self, self.active else { return }
+                self.releasePageAssertion()
                 RestScreen.shared.hide()
                 self.selfWake = Date()
                 self.applyScreen()
@@ -138,6 +146,7 @@ final class IdleMode {
         lastExit = Date()
         rescreen?.cancel()
         restPage?.cancel(); restPage = nil
+        releasePageAssertion()
         RestScreen.shared.hide()
         restoreScreen()
         // Back by voice, from the phone or a switch: the display slept on its own and nothing woke it (a key or
@@ -159,10 +168,15 @@ final class IdleMode {
         return line != nil && speakSummary
     }
 
+    private func releasePageAssertion() {
+        if pageAssertion != 0 { IOPMAssertionRelease(pageAssertion); pageAssertion = 0 }
+    }
+
     /// Quitting: never leave the screen dimmed or the assertion behind.
     func shutdown() {
         guard active else { return }
         restPage?.cancel()
+        releasePageAssertion()
         RestScreen.shared.hide()
         restoreScreen()
         if assertion != 0 { IOPMAssertionRelease(assertion); assertion = 0 }
