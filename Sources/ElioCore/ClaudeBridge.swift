@@ -75,6 +75,51 @@ public actor ClaudeBridge {
     public init(options: Options, resumeSessionId: String? = nil) {
         self.options = options
         self.sessionId = resumeSessionId
+        // A conversation that grew huge would make every reply slow after a pause (cache gone, all of it re-read).
+        if let id = resumeSessionId, Self.sessionFileSize(id: id, account: options.account) > Self.maxSessionBytes {
+            log("session \(id.prefix(8)) too large: starting a fresh one")
+            sessionId = nil
+            freshSession = true
+        }
+    }
+
+    /// Past this, the next turn starts a fresh conversation (recent turns and long-term memory carry over).
+    static let maxSessionBytes = 1_500_000
+    /// After this long without a turn, a not-so-small conversation is restarted too: the prompt cache is long gone
+    /// and re-reading it would cost seconds for nothing.
+    static let staleAfter: TimeInterval = 2 * 3600
+    private var lastTurnAt = Date()
+    /// True when the current/next turn starts a new conversation (the caller adds a short recap of recent turns).
+    public private(set) var freshSession = false
+
+    static func sessionFileSize(id: String, account: ClaudeAccount) -> Int {
+        let base = account.dir.isEmpty
+            ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude").path : account.dir
+        let projects = (base as NSString).appendingPathComponent("projects")
+        guard let dirs = try? FileManager.default.contentsOfDirectory(atPath: projects) else { return 0 }
+        for d in dirs {
+            let f = ((projects as NSString).appendingPathComponent(d) as NSString).appendingPathComponent("\(id).jsonl")
+            if let size = (try? FileManager.default.attributesOfItem(atPath: f))?[.size] as? Int { return size }
+        }
+        return 0
+    }
+
+    /// Called before a turn: rotates the conversation when it's too big, or big-ish and cold.
+    public func rotateIfNeeded() -> Bool {
+        guard let id = sessionId else { return freshSession }
+        let size = Self.sessionFileSize(id: id, account: options.account)
+        let idle = Date().timeIntervalSince(lastTurnAt)
+        guard size > Self.maxSessionBytes || (idle > Self.staleAfter && size > 300_000) else { return false }
+        log("rotating session \(id.prefix(8)) (\(size / 1024) KB, idle \(Int(idle / 60)) min)")
+        if process?.isRunning == true {
+            readerTask?.cancel()
+            generation += 1
+            process?.terminate()
+            process = nil
+        }
+        sessionId = nil
+        freshSession = true
+        return true
     }
 
     public func setSessionIdHandler(_ handler: @escaping @Sendable (String) -> Void) {
@@ -131,6 +176,7 @@ public actor ClaudeBridge {
                 }
             }
             if process?.isRunning != true { try spawn() }
+            lastTurnAt = Date()
             current = continuation
             currentText = ""
             blocks = [:]
@@ -278,6 +324,7 @@ public actor ClaudeBridge {
         case "system":
             if event["subtype"] as? String == "init", let id = event["session_id"] as? String {
                 sessionId = id
+                freshSession = false
                 onSessionId?(id)
             }
         case "user":

@@ -69,6 +69,15 @@ final class WebServer: @unchecked Sendable {
             let k = URLComponents(string: "http://x\(p)")?.queryItems?.first { $0.name == "k" }?.value ?? ""
             guard let text = TTSTickets.shared.redeem(k) else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
             await streamTTS(Speakable.clean(text), on: conn)
+        case ("POST", "/tts/pcm"):
+            // The iPhone app's voice: raw 16-bit mono PCM at 16 kHz (voice quality, a third less data over the tailnet) streamed as ElevenLabs makes it, played as it
+            // arrives (first sound in ~0.3 s). Authenticated by header, so no one-shot ticket to get wrong.
+            guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
+            guard let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
+                  let text = obj["text"] as? String, !text.isEmpty, text.count <= 2000 else {
+                return send(conn, 400, "text/plain", Data("bad request".utf8))
+            }
+            await streamTTS(Speakable.clean(text), on: conn, format: "pcm_16000", contentType: "audio/L16; rate=16000; channels=1")
         case ("POST", "/tts"):
             guard req.headers["x-elio-token"] == remoteToken else { return send(conn, 401, "text/plain", Data("unauthorized".utf8)) }
             guard let obj = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
@@ -309,10 +318,10 @@ final class WebServer: @unchecked Sendable {
 
     /// ElevenLabs' streaming endpoint relayed chunk by chunk (HTTP chunked encoding): first audio in ~0.3 s
     /// instead of waiting for the whole sentence.
-    private func streamTTS(_ text: String, on conn: NWConnection) async {
+    private func streamTTS(_ text: String, on conn: NWConnection, format: String = "mp3_44100_64", contentType: String = "audio/mpeg") async {
         guard let key = KeychainItem.read(service: "elio-elevenlabs") else { return send(conn, 502, "text/plain", Data("no key".utf8)) }
         let voice = ElioConfig.load().elevenLabsVoiceId
-        var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voice)/stream?output_format=mp3_44100_64&optimize_streaming_latency=3")!)
+        var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voice)/stream?output_format=\(format)&optimize_streaming_latency=3")!)
         req.httpMethod = "POST"
         req.setValue(key, forHTTPHeaderField: "xi-api-key")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -323,7 +332,7 @@ final class WebServer: @unchecked Sendable {
         do {
             let (bytes, response) = try await URLSession.shared.bytes(for: req)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return send(conn, 502, "text/plain", Data("tts".utf8)) }
-            let head = "HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nTransfer-Encoding: chunked\r\nCache-Control: no-store\r\n" +
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: \(contentType)\r\nTransfer-Encoding: chunked\r\nCache-Control: no-store\r\n" +
                 "X-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n"
             conn.send(content: Data(head.utf8), completion: .contentProcessed { _ in })
             var chunk = Data()
@@ -338,7 +347,7 @@ final class WebServer: @unchecked Sendable {
             }
             for try await byte in bytes {
                 chunk.append(byte)
-                if chunk.count >= 4096 { flush() }
+                if chunk.count >= 2048 { flush() }
             }
             flush()
             conn.send(content: Data("0\r\n\r\n".utf8), completion: .contentProcessed { _ in conn.cancel() })

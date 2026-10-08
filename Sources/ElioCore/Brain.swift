@@ -264,6 +264,15 @@ public actor Brain {
         do {
             // What the prep session found while the user was talking (empty for short requests).
             var prompt = Self.withContext(text, ackGiven: ackOn)
+            // A fresh conversation (the old one grew too big or went cold): a short recap keeps the thread.
+            if await claude.rotateIfNeeded() {
+                // Newest first; the newest is this very request.
+                let recent = Array(await memory.recentMessages(limit: 9).dropFirst().reversed())
+                if !recent.isEmpty {
+                    let lines = recent.map { "\($0.role == "user" ? "Utente" : "Elio"): \(String($0.text.prefix(300)))" }
+                    prompt = "[ultimi scambi, per continuità — la conversazione è ripartita da poco:\n\(lines.joined(separator: "\n"))\n]\n\n" + prompt
+                }
+            }
             // "Ho degli errori qui": the screen comes with the request (deleted when the reply is done).
             if config.screenGlance, !overheard, ScreenGlance.wants(text), let shot = ScreenGlance.capture() {
                 glance = shot

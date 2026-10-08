@@ -206,6 +206,40 @@ final class ElioClient {
         return url
     }
 
+    /// Elio's voice as raw PCM (16-bit mono, 16 kHz), chunk by chunk as the Mac relays it from ElevenLabs: the
+    /// first sound plays ~0.3 s after asking instead of after the whole sentence is made.
+    func ttsPCM(_ text: String) -> AsyncThrowingStream<Data, Error> {
+        let request: URLRequest? = {
+            guard var r = try? makeRequest("tts/pcm", method: "POST") else { return nil }
+            r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.httpBody = try? JSONSerialization.data(withJSONObject: ["text": String(text.prefix(2000))])
+            return r
+        }()
+        let session = self.session
+        return AsyncThrowingStream { cont in
+            guard let request else { cont.finish(throwing: ClientError.notPaired); return }
+            // Off the main actor: the bytes arrive one by one.
+            let task = Task.detached {
+                do {
+                    let (bytes, response) = try await session.bytes(for: request)
+                    let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    guard code == 200 else { throw ClientError.http(code, "") }
+                    var buf = Data()
+                    buf.reserveCapacity(4096)
+                    for try await b in bytes {
+                        buf.append(b)
+                        if buf.count >= 2048 { cont.yield(buf); buf = Data(); buf.reserveCapacity(4096) }
+                    }
+                    if !buf.isEmpty { cont.yield(buf) }
+                    cont.finish()
+                } catch {
+                    cont.finish(throwing: error)
+                }
+            }
+            cont.onTermination = { _ in task.cancel() }
+        }
+    }
+
     func ttsData(_ text: String) async throws -> Data {
         try await post("tts", json: ["text": String(text.prefix(2000))])
     }

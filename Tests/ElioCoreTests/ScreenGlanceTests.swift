@@ -17,9 +17,11 @@ struct ScreenGlanceTests {
 struct AckGroundingTests {
     @Test func acksOnlyNameWhatTheUserSaid() {
         let wrong = FastPath.grounded("Guardo Slack, Signore.", in: "mi fai il riassunto del progetto skgame?", addressAs: "Signore")
-        #expect(!wrong.lowercased().contains("slack"))
+        #expect(wrong.map { !$0.lowercased().contains("slack") } ?? true)
         let right = FastPath.grounded("Guardo Slack, Signore.", in: "ho messaggi su slack?", addressAs: "Signore")
         #expect(right == "Guardo Slack, Signore.")
-        #expect(FastPath.grounded("Controllo l'agenda di domani, Signore.", in: "che impegni ho domani", addressAs: "Signore").contains("agenda"))
+        #expect(FastPath.grounded("Controllo l'agenda di domani, Signore.", in: "che impegni ho domani", addressAs: "Signore")?.contains("agenda") == true)
+        #expect(FastPath.grounded("Il presidente della repubblica è Sergio Mattarella, Signore.", in: "chi è il presidente della repubblica?", addressAs: "Signore") == nil)
+        #expect(FastPath.grounded("Fa 391, Signore.", in: "quanto fa 17 per 23", addressAs: "Signore") == nil)
     }
 }

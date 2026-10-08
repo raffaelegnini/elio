@@ -107,8 +107,16 @@ public enum FastPath {
     ]
 
     /// The ack if it only mentions sources the request is about; otherwise a neutral one.
-    static func grounded(_ ack: String, in request: String, addressAs: String) -> String {
+    static func grounded(_ ack: String, in request: String, addressAs: String) -> String? {
         let a = ack.lowercased(), r = request.lowercased()
+        // An ack that brings names or numbers the user didn't say is answering (and may be wrong): drop it.
+        let said = Set(r.split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        let invented = ack.split { !$0.isLetter && !$0.isNumber }.map(String.init).contains { w in
+            let lw = w.lowercased()
+            guard !said.contains(lw), lw != addressAs.lowercased() else { return false }
+            return w.first?.isNumber == true || (w.first?.isUppercase == true && w != ack.split(separator: " ").first.map(String.init))
+        }
+        if invented { return nil }
         for (word, triggers) in sourceWords where a.range(of: "\\b\(word)", options: .regularExpression) != nil {
             if !triggers.contains(where: { r.contains($0) }) {
                 let neutral = ["Subito, \(addressAs).", "Ci penso io, \(addressAs).", "Un attimo, \(addressAs), me ne occupo."]
