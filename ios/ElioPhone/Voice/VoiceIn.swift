@@ -126,7 +126,7 @@ final class VoiceIn {
 
     private func applyDetector() {
         let active = (mode == .call) || (mode == .ambient && !suspended)
-        tap.configure(vad: active && !pushToTalk, silenceMs: mode == .call ? 800 : 950)
+        tap.configure(vad: active && !pushToTalk, silenceMs: mode == .call ? 750 : 800)
     }
 
     // MARK: Push-to-talk
@@ -291,8 +291,11 @@ final class VoiceIn {
             text = await withCheckedContinuation { c in
                 if let f = s.final { c.resume(returning: f); return }
                 s.waiter = c
+                // The partial transcript is almost always the final one: wait for "final" only briefly when
+                // there is one (iOS can take a second to finalize), longer when nothing was heard yet.
+                let wait: Double = s.partial.isEmpty ? 2.5 : 0.4
                 Task { [weak s] in
-                    try? await Task.sleep(for: .seconds(2.5))
+                    try? await Task.sleep(for: .seconds(wait))
                     guard let s, let w = s.waiter else { return }
                     s.waiter = nil
                     w.resume(returning: s.partial)

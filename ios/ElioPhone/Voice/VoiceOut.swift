@@ -126,7 +126,8 @@ final class VoiceOut {
                 if data.count % 2 == 1 { leftover = data.suffix(1); data = data.dropLast() }
                 guard let buffer = pcmBuffer(data) else { continue }
                 counter.add()
-                node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [counter] _ in counter.done() }
+                let counter = self.counter
+                node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { @Sendable _ in counter.done() }
                 buffered += Double(buffer.frameLength) / format.sampleRate
                 startIfNeeded(force: false)
             }
@@ -155,7 +156,9 @@ final class VoiceOut {
 }
 
 /// Buffers scheduled and not yet played back, counted on the audio thread; resumes the waiter when it reaches 0.
-private final class PlayCounter: @unchecked Sendable {
+/// `nonisolated`: the app's default isolation is the main actor, and AVAudioPlayerNode calls `done()` on its own
+/// audio thread (a main-actor check there traps).
+nonisolated private final class PlayCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var pending = 0
     private var waiter: CheckedContinuation<Void, Never>?
