@@ -1,8 +1,8 @@
 import AVFoundation
 import Observation
 
-/// Elio's voice: replies spoken sentence by sentence through the Mac's TTS. The first sentence streams
-/// (plays on its first bytes); the next ones are fetched while the current one plays, so there's no gap.
+/// Elio's voice: replies spoken sentence by sentence through the Mac's TTS. Each sentence is downloaded whole as
+/// soon as it arrives and played with AVAudioPlayer; the next one downloads while the current one plays.
 @Observable
 final class VoiceOut {
     private(set) var isSpeaking = false
@@ -16,32 +16,32 @@ final class VoiceOut {
 
     private struct Item {
         let text: String
-        let prefetch: Task<URL?, Never>?
+        let audio: Task<Data?, Never>
     }
 
     @ObservationIgnored private var queue: [Item] = []
     @ObservationIgnored private var generation = 0
-    @ObservationIgnored private var player: AVPlayer?
+    @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var waiter: CheckedContinuation<Void, Never>?
-    @ObservationIgnored private var streamWorks = true
-    @ObservationIgnored private var playedToEnd = false
+    @ObservationIgnored private var finishedOK = false
 
     func speak(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let client else { return }
-        // While something plays, the next sentence downloads in full meanwhile.
-        let prefetch: Task<URL?, Never>? = (isSpeaking || !queue.isEmpty)
-            ? Task { try? await client.ttsFile(text) } : nil
-        queue.append(Item(text: text, prefetch: prefetch))
+        // Every sentence is downloaded whole (no streaming: AVPlayer and one-shot stream tickets didn't mix), starting
+        // right away, so the next one is ready while the current one plays.
+        let audio = Task { () -> Data? in
+            do { return try await client.ttsData(text) } catch { client.log("tts download failed: \(error.localizedDescription)"); return nil }
+        }
+        queue.append(Item(text: text, audio: audio))
         if !isSpeaking { Task { await run() } }
     }
 
     func stop() {
         generation += 1
-        for item in queue { item.prefetch?.cancel() }
+        for item in queue { item.audio.cancel() }
         queue.removeAll()
-        player?.pause()
-        player?.replaceCurrentItem(with: nil)
+        player?.stop()
         wake()
         if isSpeaking {
             isSpeaking = false
@@ -75,28 +75,12 @@ final class VoiceOut {
             let item = queue.removeFirst()
             currentText = item.text
             let t0 = Date()
-            var url = await item.prefetch?.value
-            var streamed = false
-            if url == nil {
-                if streamWorks {
-                    url = try? await client?.ttsStreamURL(item.text)
-                    streamed = url != nil
-                } else {
-                    url = try? await client?.ttsFile(item.text)
-                }
-            }
-            guard gen == generation else { return }
-            guard let url else { client?.log("tts: no audio for a sentence"); continue }
-            let ok = await play(url, gen: gen)
-            if !url.isFileURL || streamed {
-                client?.log("tts \(ok ? "played" : "failed") stream after \(Int(Date().timeIntervalSince(t0) * 1000))ms")
-            }
-            if !ok, streamed, gen == generation {
-                // The stream didn't play: fall back to the whole file, and stop streaming for this session.
-                streamWorks = false
-                if let file = try? await client?.ttsFile(item.text), gen == generation { _ = await play(file, gen: gen) }
-            }
-            if url.isFileURL { try? FileManager.default.removeItem(at: url) }
+            guard let data = await item.audio.value, gen == generation else { continue }
+            let ok = await play(data, gen: gen)
+            let s = AVAudioSession.sharedInstance()
+            let route = s.currentRoute.outputs.map(\.portType.rawValue).joined(separator: "+")
+            client?.log("tts \(ok ? "played" : "FAILED") \(data.count / 1024)KB after \(Int(Date().timeIntervalSince(t0) * 1000))ms "
+                        + "route=\(route) category=\(s.category.rawValue) mode=\(s.mode.rawValue) volume=\(s.outputVolume)")
             recent.append((item.text, Date()))
         }
         guard gen == generation else { return }
@@ -106,45 +90,53 @@ final class VoiceOut {
     }
 
     /// Plays one sentence to the end. False if it failed or never started.
-    private func play(_ url: URL, gen: Int) async -> Bool {
-        let item = AVPlayerItem(url: url)
-        let p = player ?? AVPlayer()
+    private func play(_ data: Data, gen: Int) async -> Bool {
+        let p: AVAudioPlayer
+        do {
+            p = try AVAudioPlayer(data: data, fileTypeHint: AVFileType.mp3.rawValue)
+        } catch {
+            client?.log("tts: can't decode audio: \(error.localizedDescription)")
+            return false
+        }
         player = p
-        p.automaticallyWaitsToMinimizeStalling = false
-        p.replaceCurrentItem(with: item)
-        playedToEnd = false
-        let center = NotificationCenter.default
-        let done = center.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.playedToEnd = true; self?.wake() }
-        }
-        let failed = center.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.wake() }
-        }
-        // AVPlayerItem.status is only observable through KVO on any thread: a light poll is simpler and safe.
-        let watchdog = Task { [weak self] in
-            var lastTime = -1.0
-            var lastMove = Date()
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(250))
-                if item.status == .failed { self?.wake(); return }
-                let t = item.currentTime().seconds
-                if t > lastTime { lastTime = t; lastMove = Date() }
-                else if Date().timeIntervalSince(lastMove) > (lastTime <= 0 ? 8 : 5) { self?.wake(); return }
+        finishedOK = false
+        let delegate = PlayerDelegate { [weak self] ok, error in
+            MainActor.assumeIsolated {
+                if !ok { self?.client?.log("tts: player finished unsuccessfully\(error.map { ": \($0.localizedDescription)" } ?? "") (duration \(p.duration)s)") }
+                self?.finishedOK = ok; self?.wake()
             }
         }
-        await withCheckedContinuation { c in
-            waiter = c
-            p.play()
+        p.delegate = delegate
+        p.prepareToPlay()
+        let started = p.play()
+        if !started {
+            client?.log("tts: play() refused, duration \(p.duration)s, session active=\(AVAudioSession.sharedInstance().isOtherAudioPlaying ? "other audio" : "?")")
+            return false
         }
+        // A sentence never takes longer than its length plus a margin: don't hang if the delegate never fires.
+        let limit = p.duration + 3
+        let watchdog = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(limit))
+            // Cancelled when the sentence ends normally: waking now would cut the NEXT sentence short.
+            guard !Task.isCancelled else { return }
+            self?.wake()
+        }
+        await withCheckedContinuation { c in waiter = c }
         watchdog.cancel()
-        center.removeObserver(done)
-        center.removeObserver(failed)
-        if gen == generation, !playedToEnd { p.pause() }
-        return playedToEnd
+        _ = delegate
+        if gen == generation, !finishedOK { p.stop() }
+        return finishedOK
     }
 
     private func wake() {
         waiter?.resume()
         waiter = nil
     }
+}
+
+private final class PlayerDelegate: NSObject, AVAudioPlayerDelegate {
+    let done: (Bool, Error?) -> Void
+    init(_ done: @escaping (Bool, Error?) -> Void) { self.done = done }
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { done(flag, nil) }
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) { done(false, error) }
 }

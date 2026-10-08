@@ -127,6 +127,8 @@ public actor PhoneCalls {
         let acked = await Alerts.shared.lastAcknowledged > missed.startedAt
         let back = PhoneNotifier.idleSeconds < Date().timeIntervalSince(missed.startedAt) - 5
         if acked || back { return }
+        // Another call is ringing or in progress (a newer alert, a test): a retry now would land on top of it.
+        if calls.values.contains(where: { $0.id != missed.id && ($0.status == .ringing || $0.status == .answered) }) { return }
         let cfg = ElioConfig.load()
         guard canRing(), Self.mayRing(phone: missed.phone, quietStart: cfg.quietStart, quietEnd: cfg.quietEnd) else {
             return await fallback(missed)
