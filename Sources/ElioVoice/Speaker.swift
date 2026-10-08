@@ -78,6 +78,8 @@ public final class Speaker {
     @discardableResult
     public func beginStream() -> Bool {
         guard let apiKey else { return false }
+        // A pause left over from the previous reply must not mute this one.
+        rebuffer.release(player: audio.player)
         stream?.cancel()
         let gen = generation
         streamText = ""
@@ -461,7 +463,8 @@ final class Rebuffer: @unchecked Sendable {
     private var queued: Double = 0
     private var waiting = false
     private var open = false
-    static let low = 0.06, resume = 0.35
+    static let low = 0.06, resume = 0.35, maxWait = 1.0
+    private var epoch = 0
 
     func added(_ seconds: Double, player: AVAudioPlayerNode) {
         let go = lock.withLock { () -> Bool in
@@ -478,9 +481,22 @@ final class Rebuffer: @unchecked Sendable {
             queued = max(0, queued - seconds)
             guard open, !waiting, queued < Self.low else { return false }
             waiting = true
+            epoch += 1
             return true
         }
-        if pause { queue.async { player.pause() } }
+        guard pause else { return }
+        let mine = lock.withLock { epoch }
+        queue.async { player.pause() }
+        // Never wait for long: if no more audio comes (a stream that never says it's finished), play on anyway.
+        queue.asyncAfter(deadline: .now() + Self.maxWait) { [weak self] in
+            guard let self else { return }
+            let go = self.lock.withLock { () -> Bool in
+                guard self.waiting, self.epoch == mine else { return false }
+                self.waiting = false
+                return true
+            }
+            if go { player.play() }
+        }
     }
 
     func setOpen(_ on: Bool, player: AVAudioPlayerNode) {
@@ -494,4 +510,15 @@ final class Rebuffer: @unchecked Sendable {
     }
 
     func reset() { lock.withLock { queued = 0; waiting = false; open = false } }
+
+    /// Ends any pause in progress and plays again (a new reply starts).
+    func release(player: AVAudioPlayerNode) {
+        let go = lock.withLock { () -> Bool in
+            open = false
+            guard waiting else { return false }
+            waiting = false
+            return true
+        }
+        if go { queue.async { player.play() } }
+    }
 }
