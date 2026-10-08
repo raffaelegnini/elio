@@ -35,6 +35,8 @@ final class CallManager: NSObject {
     @ObservationIgnored var onMuteChanged: ((Bool) -> Void)?
     /// POSTs api/call/<action> {"id"} to the Mac.
     @ObservationIgnored var notifyMac: ((String, String) -> Void)?
+    /// Diagnostics to the Mac's phone.log (a VoIP push that doesn't ring leaves no other trace).
+    @ObservationIgnored var onLog: ((String) -> Void)?
 
     @ObservationIgnored private let provider: CXProvider
     @ObservationIgnored private let controller = CXCallController()
@@ -164,6 +166,7 @@ final class CallManager: NSObject {
         update.supportsDTMF = false
         // Already in a call, not paired, or not a call payload: still report (it's mandatory), then end it.
         let acceptable = active == nil && callId != nil && Pairing.load() != nil
+        onLog?("voip push: call=\(callId != nil) active=\(active != nil) paired=\(Pairing.load() != nil) → \(acceptable ? "ring" : "report+end")")
         if acceptable {
             active = Call(uuid: uuid, callId: callId, title: title, text: text, reason: reason, incoming: true)
         }
@@ -174,11 +177,13 @@ final class CallManager: NSObject {
                     self.provider.reportCall(with: uuid, endedAt: nil, reason: .failed)
                     return
                 }
-                if error != nil {
+                if let error {
+                    self.onLog?("callkit refused the incoming call: \((error as NSError).domain) \((error as NSError).code) \(error.localizedDescription)")
                     // Do Not Disturb or a blocked caller: nothing rings.
                     if self.active?.uuid == uuid { self.active = nil }
                     return
                 }
+                self.onLog?("ringing")
                 self.armRingTimeout(uuid)
             }
         }

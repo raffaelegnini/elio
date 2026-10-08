@@ -151,6 +151,7 @@ final class AppModel {
         push.client = client
         push.onOpen = { [weak self] kind, url in self?.openNotification(kind: kind, url: url) }
         calls.onVoipToken = { [weak self] in self?.push.setVoipToken($0) }
+        calls.onLog = { [weak self] line in self?.client.log(line) }
         calls.notifyMac = { [weak self] action, id in
             guard let client = self?.client else { return }
             Task { _ = try? await client.post("api/call/\(action)", json: ["id": id]) }
