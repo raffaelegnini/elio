@@ -15,21 +15,28 @@ public enum WakeWord {
     }
 
     /// Returns the command after the wake word ("" if only the wake word was said),
-    /// or nil if the utterance doesn't start with the wake word.
+    /// or nil if no sentence of the utterance starts with the wake word.
     public static func strip(_ utterance: String) -> String? {
         let words = utterance.split(whereSeparator: { $0 == " " }).map(String.init)
-        // The wake word may follow a short interjection the recognizer splits oddly
-        // ("ehi elio" → "e i elio"), so look at the first three words.
-        for (i, word) in words.prefix(3).enumerated() where matches(clean(word)) {
-            let before = words.prefix(i).map(clean)
-            guard before.allSatisfy({ interjections.contains($0) }) else { return nil }
-            let rest = words.dropFirst(i + 1).joined(separator: " ")
-            return rest.trimmingCharacters(in: CharacterSet(charactersIn: " ,.!?;:"))
+        // The continuous recognizer often glues what was said just before into the same segment
+        // ("non mi piace. Elio, che ore sono?"): the wake word may open any sentence, not only the first.
+        let starts = [0] + words.indices.dropLast().filter { words[$0].last.map { ".!?".contains($0) } ?? false }.map { $0 + 1 }
+        for start in starts {
+            let sentence = words[start...]
+            // The wake word may follow a short interjection the recognizer splits oddly
+            // ("ehi elio" → "e i elio"), so look at the first three words.
+            for (i, word) in sentence.prefix(3).enumerated() where matches(clean(word)) {
+                let before = sentence.prefix(i).map(clean)
+                guard before.allSatisfy({ interjections.contains($0) }) else { break }
+                let rest = sentence.dropFirst(i + 1).joined(separator: " ")
+                return rest.trimmingCharacters(in: CharacterSet(charactersIn: " ,.!?;:"))
+            }
         }
         return nil
     }
 
-    private static let interjections: Set<String> = ["ehi", "hey", "ehy", "ok", "okay", "ei", "e", "i", "hei", "ah", "oh", "allora"]
+    private static let interjections: Set<String> = ["ehi", "hey", "ehy", "ok", "okay", "ei", "e", "i", "hei", "ah", "oh", "eh", "ehm",
+                                                     "allora", "senti", "scusa", "dai", "quindi", "ciao", "sì", "si", "no"]
 
     static func matches(_ token: String) -> Bool {
         if variants.contains(token) { return true }

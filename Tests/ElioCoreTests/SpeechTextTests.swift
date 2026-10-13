@@ -20,6 +20,11 @@ struct WakeWordTests {
         ("Helio metti un timer", "metti un timer"),
         ("Elio", ""),
         ("E i Elio, cosa ho in calendario oggi?", "cosa ho in calendario oggi"),
+        ("c'è una brutta figura oggi non mi piace. Elio, che ore sono?", "che ore sono"),
+        ("Sì, sì. Elio guarda Pharma.it", "guarda Pharma.it"),
+        ("Riva Elio. Elio, che ore sono?", "che ore sono"),
+        ("Quindi Elio, che ore sono?", "che ore sono"),
+        ("Senti Elio apri Slack", "apri Slack"),
     ])
     func detects(utterance: String, command: String) {
         #expect(WakeWord.strip(utterance) == command)
@@ -30,6 +35,8 @@ struct WakeWordTests {
         "Elia vieni qui",
         "Apri Slack",
         "Ho detto a Elio di aspettare",
+        "Va bene. Ho detto a Elio di aspettare.",
+        "Grazie Elio. Apri Slack",
         "",
     ])
     func ignores(utterance: String) {
